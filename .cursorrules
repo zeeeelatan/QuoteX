@@ -1,0 +1,13 @@
+# UI 按钮风格一致性规则
+
+- 按钮组件统一使用 Element Plus 的 `el-button`。
+- 颜色与语义映射：
+  - 主操作：`type="primary"`
+  - 模板下载/成功操作：`type="success"`
+  - 导入/警示操作：`type="warning"`
+  - 清空/删除：`type="danger"`
+  - 普通操作（刷新等）：`type="primary"` 或无 `type`，根据场景选用；尽量与同模块其他按钮保持一致。
+- 按钮间距使用容器 `.actions { display:flex; gap:12px; align-items:center; }`，不要手写 margin 分散设置。
+- 文件上传使用隐藏 `<input type="file">`，由 `el-button` 触发。
+- 若新增页面含操作区，优先放置顺序为：刷新、下载模板、导入、清空（或删除）。
+- 表格页面顶部操作区保持同一排展示，不混用原生 `<button>` 与 `a.btn`，统一由 `el-button` 触发行为，下载使用 `window.open` 调用接口。

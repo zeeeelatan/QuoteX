@@ -1,0 +1,75 @@
+# 环境与密钥（勿提交）
+.env
+.env.local
+.env.*.local
+*.pem
+
+# 环境配置目录中的实际密码文件（模板文件可提交，实际部署配置不提交）
+# environments/.env.staging 和 .env.production 包含模板占位符，可提交
+# 部署时在服务器上修改 CHANGE_ME 项即可
+
+# 数据库备份
+backups/
+
+# 日志与 PID
+*.log
+backend.log
+frontend.log
+.backend.pid
+.frontend.pid
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+*.egg-info/
+.eggs/
+*.egg
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm
+.pnpm-store
+
+# 构建产物
+dist/
+dist-ssr/
+*.local
+
+# 测试与临时
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+*.db
+*.sqlite3
+test.db
+.tmp_*
+*.dump
+
+# IDE / 编辑器
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
+
+# Docker 本地覆盖（可选）
+docker-compose.override.yml
+
+# 备份与示例（若再次出现）
+*.zip
+_backup_*

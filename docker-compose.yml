@@ -1,0 +1,98 @@
+# 智能报价系统 - Docker Compose 编排（开发/基础层）
+# 使用前：复制 .env.example 为 .env 并填写数据库与密钥等配置
+#
+# 开发环境（本地构建）：
+#   docker compose up -d
+#
+# 生产环境（叠加 prod 覆盖文件，使用 GHCR 镜像）：
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+name: ai-quote
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: AI_Quote_DB
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-device_inventory_ai_quote_test}
+      POSTGRES_USER: ${POSTGRES_USER:-device_inventory_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_password}
+    volumes:
+      - ai_quote_pgdata:/var/lib/postgresql/data
+    ports:
+      - "${DB_PORT_EXPOSE:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-device_inventory_user} -d ${POSTGRES_DB:-device_inventory_ai_quote_test}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ai_quote_net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: ai_quote_backend:dev
+    container_name: AI_Quote_Backend
+    restart: unless-stopped
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-device_inventory_ai_quote_test}
+      DB_USER: ${POSTGRES_USER:-device_inventory_user}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-change_me_password}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-secret-change-in-production}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_QUOTE_MODEL: ${OLLAMA_QUOTE_MODEL:-qwen:latest}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5002/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - ai_quote_net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+        VITE_BAIDU_MAP_AK: ${VITE_BAIDU_MAP_AK:-}
+    image: ai_quote_frontend:dev
+    container_name: AI_Quote_Frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - ai_quote_net
+
+  # 可选：同 compose 内启动 Ollama，后端通过 OLLAMA_BASE_URL=http://ollama:11434 访问
+  # 启用方式：docker compose --profile ollama up -d
+  ollama:
+    image: ollama/ollama:latest
+    container_name: AI_Quote_Ollama
+    volumes:
+      - ai_quote_ollama:/root/.ollama
+    networks:
+      - ai_quote_net
+    profiles:
+      - ollama
+
+volumes:
+  ai_quote_pgdata:
+  ai_quote_ollama:
+
+networks:
+  ai_quote_net:
+    name: ai_quote_net
+    driver: bridge

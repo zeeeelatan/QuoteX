@@ -1,0 +1,50 @@
+[
+  {
+    "id": 1,
+    "service_level": "SLA B（香港、澳门）",
+    "response_time": "5*9*48（48工作小时工程师和备件到达；仅适用于香港、澳门）",
+    "coefficient": 1.0
+  },
+  {
+    "id": 2,
+    "service_level": "SLA A++（高级服务++）",
+    "response_time": "7*24*2（2小时工程师和备件到达）",
+    "coefficient": 1.5
+  },
+  {
+    "id": 3,
+    "service_level": "SLA A+（高级服务+）",
+    "response_time": "7*24*4（4小时工程师和备件到达）",
+    "coefficient": 1.25
+  },
+  {
+    "id": 4,
+    "service_level": "SLA A（高级服务）",
+    "response_time": "7*24*NCD（工程师4小时，下一自然日备件到达）",
+    "coefficient": 1.0
+  },
+  {
+    "id": 5,
+    "service_level": "SLA B+++（标准服务+++）",
+    "response_time": "7*12*2（2小时工程师和备件到达）",
+    "coefficient": 1.35
+  },
+  {
+    "id": 6,
+    "service_level": "SLA B++（标准服务++）",
+    "response_time": "5*9*4（4小时工程师和备件到达）",
+    "coefficient": 1.1
+  },
+  {
+    "id": 7,
+    "service_level": "SLA B+（标准服务+）",
+    "response_time": "5*9*NBD（工程师4小时，下一工作日备件到达）",
+    "coefficient": 0.9
+  },
+  {
+    "id": 8,
+    "service_level": "SLA B（标准服务）",
+    "response_time": "5*9*NBR（下一工作日工程师和备件到达）",
+    "coefficient": 0.8
+  }
+]

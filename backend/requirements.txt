@@ -1,0 +1,26 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+pydantic
+psycopg2-binary
+python-multipart
+openpyxl
+pandas
+python-dotenv
+PyJWT>=2.0.0
+passlib[bcrypt]
+bcrypt>=4.0,<4.1
+requests
+pypdf
+python-docx
+# 多格式文档解析依赖
+pdfplumber
+rapidocr-onnxruntime
+opencv-python-headless>=4.5
+pdf2image
+# 数据库迁移
+alembic>=1.13
+# 测试依赖
+pytest>=7.0
+httpx>=0.24
+ruff

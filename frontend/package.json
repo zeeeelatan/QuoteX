@@ -1,0 +1,35 @@
+{
+  "name": "frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "type-check": "vue-tsc -b --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.1",
+    "axios": "^1.8.4",
+    "element-plus": "^2.9.7",
+    "exceljs": "^4.4.0",
+    "file-saver": "^2.0.5",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^4.0.0",
+    "jspdf-autotable": "^5.0.7",
+    "vue": "^3.4.21",
+    "vue-router": "^4.6.4",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@stagewise-plugins/vue": "^0.4.4",
+    "@stagewise/toolbar": "^0.4.6",
+    "@stagewise/toolbar-vue": "^0.4.6",
+    "@vitejs/plugin-vue": "^5.0.4",
+    "@vue/tsconfig": "^0.7.0",
+    "typescript": "~5.3.3",
+    "vite": "^5.1.6",
+    "vue-tsc": "^2.0.6"
+  }
+}
