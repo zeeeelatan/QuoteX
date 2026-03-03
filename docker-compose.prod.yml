@@ -8,6 +8,8 @@
 services:
   postgres:
     restart: always
+    # 生产环境：不暴露数据库端口到宿主机，仅 Docker 内部网络可访问
+    ports: !reset []
     logging:
       driver: json-file
       options:
@@ -57,8 +59,9 @@ services:
     image: ${GHCR_IMAGE_FRONTEND:-ghcr.io/zeeeelatan/ai-quote-frontend}:${IMAGE_TAG:-latest}
     container_name: AI_Quote_Frontend
     restart: always
+    # 生产环境：映射到 8080，由宿主机 nginx 反向代理
     ports:
-      - "${FRONTEND_PORT:-80}:80"
+      - "${FRONTEND_PORT:-8080}:80"
     depends_on:
       backend:
         condition: service_healthy

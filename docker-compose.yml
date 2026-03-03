@@ -20,6 +20,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_password}
     volumes:
       - ai_quote_pgdata:/var/lib/postgresql/data
+    # 仅开发时暴露端口到宿主机，生产环境在 prod.yml 中覆盖移除
     ports:
       - "${DB_PORT_EXPOSE:-5433}:5432"
     healthcheck:
