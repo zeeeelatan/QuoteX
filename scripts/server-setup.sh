@@ -38,6 +38,29 @@ log_ok()    { echo -e "${GREEN}[OK]${NC}    $*"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 
+# ─── Docker Hub 国内镜像加速 ─────────────────────────────
+configure_docker_mirrors() {
+    local daemon_json="/etc/docker/daemon.json"
+    if [ -f "$daemon_json" ] && grep -q "registry-mirrors" "$daemon_json"; then
+        log_ok "Docker 镜像加速已配置"
+        return
+    fi
+
+    log_info "配置 Docker Hub 国内镜像加速..."
+    mkdir -p /etc/docker
+    cat > "$daemon_json" << 'MIRROREOF'
+{
+  "registry-mirrors": [
+    "https://docker.1ms.run",
+    "https://docker.xuanyuan.me"
+  ]
+}
+MIRROREOF
+    systemctl daemon-reload
+    systemctl restart docker
+    log_ok "Docker 镜像加速已配置"
+}
+
 # ─── 检查 root ───────────────────────────────────────────
 if [ "$(id -u)" -ne 0 ]; then
     log_error "请使用 sudo 执行此脚本"
@@ -53,6 +76,7 @@ echo ""
 install_docker() {
     if command -v docker &>/dev/null; then
         log_ok "Docker 已安装: $(docker --version)"
+        configure_docker_mirrors
         return
     fi
 
@@ -77,6 +101,9 @@ install_docker() {
     # 启动 Docker 并设为开机自启
     systemctl enable docker
     systemctl start docker
+
+    # 配置 Docker Hub 国内镜像加速
+    configure_docker_mirrors
 
     log_ok "Docker 安装完成: $(docker --version)"
 }

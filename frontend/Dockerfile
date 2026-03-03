@@ -5,8 +5,11 @@ FROM node:${NODE_VERSION}-alpine AS builder
 
 WORKDIR /app
 
+# 国内镜像加速（阿里云）：Alpine apk 源 + npm 源
+RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories
+
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN npm ci --registry=https://registry.npmmirror.com
 
 COPY . .
 
@@ -20,6 +23,9 @@ RUN npm run build
 
 # 运行阶段：nginx 提供静态文件并代理 /api 到后端
 FROM nginx:alpine
+
+# nginx 容器也使用国内源
+RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories
 
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
