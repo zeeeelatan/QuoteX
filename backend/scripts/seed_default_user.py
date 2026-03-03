@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""设置默认账户：杨昆 / yangkun / 123456（若已存在则更新用户名与密码）"""
+"""设置默认管理员账户（可通过环境变量覆盖）"""
 import os
 import sys
 
@@ -14,15 +14,15 @@ from passlib.context import CryptContext
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-DEFAULT_NAME = "杨昆"
-DEFAULT_USERNAME = "yangkun"
-DEFAULT_PASSWORD = "123456"
+DEFAULT_NAME = os.getenv("DEFAULT_ADMIN_NAME", "Admin")
+DEFAULT_USERNAME = os.getenv("DEFAULT_ADMIN_USERNAME", "admin")
+DEFAULT_PASSWORD = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin123")
 
 
 def seed_default_user():
     db = SessionLocal()
     try:
-        # 优先按姓名「杨昆」查找，其次按用户名 yangkun
+        # 优先按姓名查找，其次按用户名
         profile = (
             db.query(UserProfile).filter(UserProfile.name == DEFAULT_NAME).first()
             or db.query(UserProfile).filter(UserProfile.username == DEFAULT_USERNAME).first()
