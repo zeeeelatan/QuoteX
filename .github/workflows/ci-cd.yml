@@ -133,6 +133,7 @@ jobs:
           host: ${{ secrets.PRODUCTION_HOST }}
           username: ${{ secrets.PRODUCTION_USER }}
           key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          command_timeout: 30m
           script: |
             cd /opt/quotex
             git pull origin main
@@ -206,6 +207,7 @@ jobs:
           host: ${{ secrets.PRODUCTION_HOST }}
           username: ${{ secrets.PRODUCTION_USER }}
           key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          command_timeout: 30m
           script: |
             cd /opt/quotex
             git fetch --tags
