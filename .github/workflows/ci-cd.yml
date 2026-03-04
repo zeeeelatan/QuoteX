@@ -2,7 +2,8 @@
 #
 # 触发规则：
 #   PR → 测试 + 构建检查（不推送镜像）
-#   push main → 测试 + 构建 + 自动部署到正式环境
+#   push main → 测试 + 服务器本地构建部署（日常更新）
+#   Release → 测试 + 构建镜像推送 GHCR（关键版本存档） + 部署
 #
 # Staging 验证：本地 docker compose up -d --build
 name: CI/CD
@@ -12,6 +13,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  release:
+    types: [published]
 
 env:
   REGISTRY: ghcr.io
@@ -115,75 +118,11 @@ jobs:
           VITE_API_BASE_URL: /api
 
   # ──────────────────────────────────────────────────────────
-  # Job 3: 构建并推送 Docker 镜像
+  # Job 3: 日常部署（push main → 服务器本地构建）
   # ──────────────────────────────────────────────────────────
-  build-and-push:
-    name: Build & Push Images
-    needs: [backend-test, frontend-check]
-    runs-on: ubuntu-latest
-    # PR 时只构建不推送，push/release 时推送
-    if: github.event_name != 'pull_request'
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set image tag
-        id: meta
-        run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            TAG="${{ github.event.release.tag_name }}"
-          else
-            TAG="sha-${GITHUB_SHA::7}"
-          fi
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "镜像标签: $TAG"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push backend
-        uses: docker/build-push-action@v6
-        with:
-          context: ./backend
-          file: ./backend/Dockerfile
-          push: true
-          tags: |
-            ${{ env.IMAGE_BACKEND }}:${{ steps.meta.outputs.tag }}
-            ${{ env.IMAGE_BACKEND }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push frontend
-        uses: docker/build-push-action@v6
-        with:
-          context: ./frontend
-          file: ./frontend/Dockerfile
-          push: true
-          tags: |
-            ${{ env.IMAGE_FRONTEND }}:${{ steps.meta.outputs.tag }}
-            ${{ env.IMAGE_FRONTEND }}:latest
-          build-args: |
-            VITE_API_BASE_URL=/api
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  # ──────────────────────────────────────────────────────────
-  # Job 4: 自动部署到正式环境（push main 触发）
-  # ──────────────────────────────────────────────────────────
-  deploy-production:
+  deploy:
     name: Deploy to Production
-    needs: [build-and-push]
+    needs: [backend-test, frontend-check]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
@@ -203,6 +142,80 @@ jobs:
             sleep 15
             if curl -sf http://localhost:8080 >/dev/null 2>&1; then
               echo "部署成功"
+            else
+              echo "健康检查失败，请检查日志"
+              docker compose logs --tail=30
+              exit 1
+            fi
+
+  # ──────────────────────────────────────────────────────────
+  # Job 4: 关键版本存档（Release → 构建镜像推送 GHCR + 部署）
+  # ──────────────────────────────────────────────────────────
+  release-and-deploy:
+    name: Release & Deploy
+    needs: [backend-test, frontend-check]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_BACKEND }}:${{ github.event.release.tag_name }}
+            ${{ env.IMAGE_BACKEND }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_FRONTEND }}:${{ github.event.release.tag_name }}
+            ${{ env.IMAGE_FRONTEND }}:latest
+          build-args: |
+            VITE_API_BASE_URL=/api
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_USER }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          script: |
+            cd /opt/quotex
+            git fetch --tags
+            git checkout ${{ github.event.release.tag_name }}
+            docker compose up -d --build
+
+            echo "等待服务启动..."
+            sleep 15
+            if curl -sf http://localhost:8080 >/dev/null 2>&1; then
+              echo "版本 ${{ github.event.release.tag_name }} 部署成功"
             else
               echo "健康检查失败，请检查日志"
               docker compose logs --tail=30
