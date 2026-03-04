@@ -1,31 +1,7 @@
 import axios from 'axios';
 
-// 简化API配置，仅支持本地开发场景
-let API_URL;
-
-// 优先使用 Vite 环境变量配置（例如 http://localhost:5002）
-const ENV_API_URL = import.meta.env?.VITE_API_BASE_URL;
-
-// 先尝试自动获取当前访问地址的主机名和协议
-const currentProtocol = window.location.protocol;
-const currentHostname = window.location.hostname;
-
-// 如果是通过IP访问，则使用当前IP作为API地址
-if (currentHostname !== 'localhost' && currentHostname !== '127.0.0.1') {
-  // 使用当前主机名，但端口跟随环境变量（未配置则默认5001）
-  const envPort = (() => {
-    try {
-      if (!ENV_API_URL) return null
-      return new URL(ENV_API_URL).port || null
-    } catch {
-      return null
-    }
-  })()
-  API_URL = `${currentProtocol}//${currentHostname}:${envPort || '5001'}`;
-} else {
-  // 本地环境
-  API_URL = ENV_API_URL || 'http://localhost:5002';
-}
+// API 地址配置
+const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5002';
 
 console.log('当前使用的API地址:', API_URL);
 

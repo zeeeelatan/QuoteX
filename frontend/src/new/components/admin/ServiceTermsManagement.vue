@@ -344,11 +344,7 @@ import axios from 'axios'
 import { getProductCategoryNames } from '@/new/config/productCategories'
 
 // API Base URL
-const API_URL = import.meta.env.VITE_API_BASE_URL || (
-  window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-    ? 'http://localhost:5002'
-    : `http://${window.location.hostname}:5002`
-)
+const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5002'
 
 // 类型定义
 interface ServiceTerm {

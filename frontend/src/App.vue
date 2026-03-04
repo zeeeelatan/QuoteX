@@ -524,11 +524,7 @@ const activeModelIndex = ref(null)
 const modelOptions = ref([])
 
 // 获取API URL，支持跨域访问
-const API_URL = import.meta.env.VITE_API_BASE_URL || (
-  window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
-    ? 'http://localhost:5002'
-    : `http://${window.location.hostname}:5002`
-)
+const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5002'
 
 console.log('App.vue使用的API地址:', API_URL)
 

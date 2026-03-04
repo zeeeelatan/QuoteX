@@ -1,10 +1,7 @@
 // 维保费率与标准维保单价工具
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_API_BASE_URL ||
-  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-    ? 'http://localhost:5002'
-    : `http://${window.location.hostname}:5002`);
+const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5002';
 
 // 获取所有费率
 export async function fetchRates() {

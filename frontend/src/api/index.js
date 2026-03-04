@@ -1,17 +1,17 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 
-// 动态检测后端 API 地址（与各页面逻辑保持一致）
+// 动态检测后端 API 地址
 function detectApiBaseUrl() {
   const envUrl = import.meta.env?.VITE_API_BASE_URL
+  // 构建时注入的环境变量优先（生产环境为 /api，走 nginx 代理）
+  if (envUrl) return envUrl
+  // 本地开发：通过 IP 访问时直连后端，localhost 走 Vite 代理
   const hostname = window.location.hostname
-  const protocol = window.location.protocol
-  // 通过 IP 访问时直连后端，不走 Vite 代理
   if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-    return `${protocol}//${hostname}:5002`
+    return `${window.location.protocol}//${hostname}:5002`
   }
-  // 本地开发：优先使用环境变量，其次走 Vite 代理
-  return envUrl || '/api'
+  return '/api'
 }
 
 // 创建 axios 实例

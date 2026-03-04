@@ -452,6 +452,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter, onBeforeRouteLeave } from 'vue-router'
+import { ElMessageBox, ElMessage } from 'element-plus'
 import api from '../../api/index'
 import BranchPageHeader from '../components/BranchPageHeader.vue'
 import ProductDatabaseModal from '../components/ProductDatabaseModal.vue'
@@ -835,6 +836,17 @@ async function loadServiceTerms() {
 
 const completeQuotation = async () => {
   try {
+    // 先确认用户是否要完成报价
+    await ElMessageBox.confirm(
+      '确认完成报价？完成后将清除当前报价数据。',
+      '完成报价',
+      {
+        confirmButtonText: '确认完成',
+        cancelButtonText: '返回修改',
+        type: 'warning',
+      }
+    )
+
     // 保存历史记录到后端
     try {
       // 获取各节点数据 - 从内存 store 读取原始导入数据
@@ -976,11 +988,12 @@ const completeQuotation = async () => {
     originalTableData.value = null
     convertedTableData.value = null
 
-    alert('报价已完成！所有数据已清除。')
+    ElMessage.success('报价已完成！所有数据已清除。')
     router.push('/')
-  } catch (error) {
+  } catch (error: any) {
+    if (error === 'cancel' || error?.toString?.().includes('cancel')) return
     console.error('completeQuotation error:', error)
-    alert('完成报价时发生错误，请重试。')
+    ElMessage.error('完成报价时发生错误，请重试。')
   }
 }
 

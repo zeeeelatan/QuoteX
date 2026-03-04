@@ -68,7 +68,7 @@ import { useRouter } from 'vue-router'
 import axios from 'axios'
 import { setAuth } from '../stores/authStore'
 
-const API_URL = import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' && `${window.location.protocol}//${window.location.hostname}:5002`) || 'http://localhost:5002'
+const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5002'
 
 const router = useRouter()
 const username = ref('')
