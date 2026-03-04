@@ -2,12 +2,9 @@
 #
 # 触发规则：
 #   PR → 测试 + 构建检查（不推送镜像）
-#   push main → 测试 + 构建镜像 + 推送 GHCR（tag: sha-xxx + latest）
-#   Release → 测试 + 构建镜像 + 推送 GHCR（tag: v1.x.x + latest）
+#   push main → 测试 + 构建 + 自动部署到正式环境
 #
-# 部署：
-#   staging: main 推送后自动部署
-#   production: Release 发布后需手动审批
+# Staging 验证：本地 docker compose up -d --build
 name: CI/CD
 
 on:
@@ -15,8 +12,6 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  release:
-    types: [published]
 
 env:
   REGISTRY: ghcr.io
@@ -184,20 +179,13 @@ jobs:
           cache-to: type=gha,mode=max
 
   # ──────────────────────────────────────────────────────────
-  # Staging 测试说明：本地使用 docker compose up -d --build 验证
-  # ──────────────────────────────────────────────────────────
-
-  # ──────────────────────────────────────────────────────────
-  # Job 5: 部署到正式环境（Release 触发 + 手动审批）
+  # Job 4: 自动部署到正式环境（push main 触发）
   # ──────────────────────────────────────────────────────────
   deploy-production:
     name: Deploy to Production
     needs: [build-and-push]
     runs-on: ubuntu-latest
-    if: github.event_name == 'release'
-    environment:
-      name: production
-      url: ${{ vars.PRODUCTION_URL }}
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
       - name: Deploy via SSH
@@ -207,22 +195,16 @@ jobs:
           username: ${{ secrets.PRODUCTION_USER }}
           key: ${{ secrets.PRODUCTION_SSH_KEY }}
           script: |
-            cd ${{ vars.PRODUCTION_PROJECT_DIR || '~/ai-quote-system' }}
-            export IMAGE_TAG="${{ github.event.release.tag_name }}"
-
-            # 部署前备份数据库
-            BACKUP_FILE="backup_$(date +%Y%m%d_%H%M%S).sql"
-            docker exec AI_Quote_DB pg_dump -U ${POSTGRES_USER:-device_inventory_user} ${POSTGRES_DB:-device_inventory_ai_quote_test} > "$BACKUP_FILE" 2>/dev/null || echo "数据库备份跳过"
-
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml pull backend frontend
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+            cd /opt/quotex
+            git pull origin main
+            docker compose up -d --build
 
             echo "等待服务启动..."
             sleep 15
-            if curl -sf http://localhost:${FRONTEND_PORT:-80}/health; then
-              echo "部署成功: $IMAGE_TAG"
+            if curl -sf http://localhost:8080 >/dev/null 2>&1; then
+              echo "部署成功"
             else
               echo "健康检查失败，请检查日志"
-              docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --tail=30
+              docker compose logs --tail=30
               exit 1
             fi
