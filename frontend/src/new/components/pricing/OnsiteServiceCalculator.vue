@@ -1,7 +1,7 @@
 <template>
-  <div class="onsite-calculator-page">
-    <!-- Header -->
-    <div class="page-header">
+  <div class="onsite-calculator-page" :class="{ 'embedded-mode': embedded }">
+    <!-- Header (hidden when embedded) -->
+    <div v-if="!embedded" class="page-header">
       <div class="breadcrumb">
         <span class="breadcrumb-item">首页</span>
         <span class="material-symbols-outlined breadcrumb-separator">chevron_right</span>
@@ -823,6 +823,12 @@ import { useRouter } from 'vue-router'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import QuotationPreviewModal from '../QuotationPreviewModal.vue'
+
+const props = withDefaults(defineProps<{
+  embedded?: boolean
+}>(), {
+  embedded: false
+})
 
 const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5002'
 
@@ -3027,6 +3033,15 @@ onUnmounted(() => {
   min-height: 100%;
   background-color: #0B1120;
   color: white;
+  overflow-y: auto;
+}
+
+/* Embedded mode: remove outer padding/background, fit parent container */
+.onsite-calculator-page.embedded-mode {
+  background-color: transparent;
+  min-height: 0;
+  height: 100%;
+  border-radius: 12px;
   overflow-y: auto;
 }
 

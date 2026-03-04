@@ -978,6 +978,7 @@ async function loadData(triggerMatching: boolean = false) {
         serviceLevel: row['服务级别'] || '7*24*NCR',
         // 保留来自智能识别模块的字段，供价格调整使用
         city: row['城市'] || '',
+        quantity: parseInt(row['设备数量']) || 1,
         servicePeriod: row['服务周期'] || '1',
         servicePeriodUnit: normalizeServicePeriodUnit(row['服务周期单位']),
         // 匹配相关字段

@@ -1,7 +1,7 @@
 <template>
-  <div class="relocation-calculator-page">
-    <!-- 生成正式报价单弹窗 -->
-    <Teleport to="body">
+  <div class="relocation-calculator-page" :class="{ 'embedded-mode': embedded }">
+    <!-- 生成正式报价单弹窗（非嵌入模式） -->
+    <Teleport v-if="!embedded" to="body">
       <Transition name="relocation-modal">
         <div v-if="showQuotationView" class="relocation-quotation-overlay" @click.self="closeQuotationView">
           <div
@@ -271,8 +271,8 @@
       </Transition>
     </Teleport>
 
-    <template v-if="!showQuotationView">
-    <div class="page-header">
+    <template v-if="embedded || !showQuotationView">
+    <div v-if="!embedded" class="page-header">
       <div class="breadcrumb">
         <span class="breadcrumb-item">首页</span>
         <span class="material-symbols-outlined breadcrumb-separator">chevron_right</span>
@@ -694,7 +694,7 @@
               <div class="labor-cost-header">
                 <div class="card-title-row">
                   <span class="material-symbols-outlined card-icon primary">engineering</span>
-                  <h3 class="card-title">人工服务成本明细</h3>
+                  <h3 class="card-title">人工服务费</h3>
                 </div>
                 <div class="actions">
                   <el-button type="default" plain @click="restoreLaborDefaults">
@@ -766,7 +766,7 @@
                 <div class="labor-cost-header">
                   <div class="card-title-row">
                     <span class="material-symbols-outlined card-icon primary">inventory_2</span>
-                    <h3 class="card-title">按U数梯度包装计费</h3>
+                    <h3 class="card-title">包装耗材费</h3>
                   </div>
                   <div class="actions">
                     <button type="button" class="sync-equipment-btn" @click="syncPackagingFromEquipment">
@@ -797,12 +797,14 @@
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-for="row in packagingItemsVisible" :key="row.id" class="labor-cost-row">
+                      <tr v-for="row in packagingItemsVisible" :key="row.id" class="labor-cost-row" :class="{ 'unknown-tier-row': row.tierIndex === -1 }">
                         <td>
                           <select
                             v-model.number="row.tierIndex"
                             class="labor-input labor-select packaging-tier-select"
+                            :class="{ 'unknown-tier-select': row.tierIndex === -1 }"
                           >
+                            <option v-if="row.tierIndex === -1" :value="-1" disabled>未知</option>
                             <option
                               v-for="(tier, ti) in packagingTiers"
                               :key="ti"
@@ -813,7 +815,7 @@
                           </select>
                         </td>
                         <td>
-                          <span class="labor-input labor-input-readonly">{{ packagingTiers[row.tierIndex]?.label ?? '—' }}</span>
+                          <span class="labor-input labor-input-readonly">{{ row.tierIndex === -1 ? '请选择档位' : (packagingTiers[row.tierIndex]?.label ?? '—') }}</span>
                         </td>
                         <td class="unit-cell">台</td>
                         <td class="qty-cell">
@@ -881,7 +883,7 @@
               <div class="logistics-card-header">
                 <div class="header-left">
                   <span class="material-symbols-outlined card-icon primary">local_shipping</span>
-                  <h3 class="card-title">车辆与物流配送</h3>
+                  <h3 class="card-title">物流运输费</h3>
                 </div>
               </div>
               <!-- 标签栏 -->
@@ -949,238 +951,249 @@
               <div class="logistics-tab-content">
                 <!-- 车辆配送费 -->
                 <template v-if="logisticsSubTab === 0">
-                  <!-- 拆分批次：显示批次侧栏 + 批次详情 -->
-                  <div v-if="logisticsSplitBatch" class="batch-layout">
-                  <!-- 左侧：批次列表 -->
-                  <div class="batch-sidebar">
-                    <div class="batch-sidebar-header">
-                      <span class="material-symbols-outlined">inventory_2</span>
-                      配送批次清单
-                    </div>
-                    <div class="batch-list">
-                      <div
-                        v-for="batch in logisticsBatches"
-                        :key="batch.id"
-                        class="batch-item"
-                        :class="{ active: activeBatchId === batch.id }"
-                        @click="activeBatchId = batch.id"
-                      >
-                        <div class="batch-item-header">
-                          <span class="batch-item-name">{{ batch.name }}</span>
-                          <span class="batch-item-total">¥{{ formatMoney(calculateBatchTotal(batch)) }}</span>
-                        </div>
-                        <div class="batch-item-meta">
-                          <span class="material-symbols-outlined">calendar_today</span>
-                          {{ batch.date || '未设置日期' }}
-                        </div>
-                      </div>
-                    </div>
-                    <div class="batch-sidebar-footer">
-                      <div class="batch-footer-label">所有批次预估总计</div>
-                      <div class="batch-footer-total">¥{{ formatMoney(logisticsBatchesTotal) }}</div>
-                    </div>
-                  </div>
-
-                  <!-- 右侧：批次详情 -->
-                  <div class="batch-detail">
-                    <!-- 批次属性编辑 -->
-                    <div class="batch-info-panel">
-                      <div class="batch-info-item">
-                        <label class="batch-info-label">批次名称</label>
-                        <input
-                          type="text"
-                          class="batch-info-input"
-                          :value="currentBatch?.name"
-                          @input="(e) => updateBatchField(currentBatch?.id ?? '', 'name', (e.target as HTMLInputElement).value)"
-                        />
-                      </div>
-                      <div class="batch-info-item">
-                        <label class="batch-info-label">预计日期</label>
-                        <input
-                          type="date"
-                          class="batch-info-input"
-                          :value="currentBatch?.date"
-                          @input="(e) => updateBatchField(currentBatch?.id ?? '', 'date', (e.target as HTMLInputElement).value)"
-                        />
-                      </div>
-                      <div class="batch-info-item batch-info-desc">
-                        <label class="batch-info-label">批次备注</label>
-                        <input
-                          type="text"
-                          class="batch-info-input"
-                          placeholder="选填备注..."
-                          :value="currentBatch?.desc"
-                          @input="(e) => updateBatchField(currentBatch?.id ?? '', 'desc', (e.target as HTMLInputElement).value)"
-                        />
-                      </div>
-                      <div class="batch-info-actions">
-                        <button
-                          type="button"
-                          class="batch-delete-btn"
-                          :disabled="logisticsBatches.length <= 1"
-                          @click="removeLogisticsBatch(currentBatch?.id ?? '')"
-                        >
-                          <span class="material-symbols-outlined">delete</span>
-                          删除批次
-                        </button>
-                      </div>
-                    </div>
-
-                    <!-- 车型配置区域 -->
-                    <div class="batch-vehicles-section">
-                      <div class="batch-vehicles-header">
-                        <h4 class="batch-vehicles-title">
-                          <span class="material-symbols-outlined">local_shipping</span>
-                          本批次运力配置
-                        </h4>
-                        <button type="button" class="add-vehicle-btn" @click="addLogisticsItem">
-                          <span class="material-symbols-outlined">add</span>
-                          新增车型条目
-                        </button>
-                      </div>
-
-                      <!-- 配置表头 -->
-                      <div class="batch-table-header">
-                        <div class="col-vehicle">车型</div>
-                        <div class="col-route">运输路径</div>
-                        <div class="col-qty">数量</div>
-                        <div class="col-km">公里数</div>
-                        <div class="col-price">公里价</div>
-                        <div class="col-total">小计(¥)</div>
-                        <div class="col-action"></div>
-                      </div>
-
-                      <!-- 条目列表 -->
-                      <div v-if="logisticsItems.length > 0" class="batch-items-list">
-                        <div v-for="(row, idx) in logisticsItems" :key="row.id" class="batch-vehicle-row">
-                          <div class="batch-vehicle-card">
-                            <div class="col-vehicle">
-                              <div class="vehicle-cell">
-                                <div class="vehicle-icon">
-                                  <span class="material-symbols-outlined">local_shipping</span>
-                                </div>
-                                <select
-                                  v-model="row.vehicleId"
-                                  class="vehicle-select"
-                                  @change="onLogisticsVehicleChange(row)"
-                                >
-                                  <option :value="null">请选择车型</option>
-                                  <option
-                                    v-for="v in vehicleOptions"
-                                    :key="v.id"
-                                    :value="v.id"
-                                  >
-                                    {{ v.vehicle_name || v.vehicle_category || `车型 #${v.id}` }}
-                                  </option>
-                                </select>
-                              </div>
-                            </div>
-                            <div class="col-route">
-                              <div class="route-path-inline">
-                                <select
-                                  v-model.number="row.routeOriginIndex"
-                                  class="route-select"
-                                  :class="{ empty: row.routeOriginIndex == null }"
-                                  @change="onLogisticsRoutePathChange(row)"
-                                >
-                                  <option :value="null">始发地</option>
-                                  <option
-                                    v-for="(loc, i) in routeLocations"
-                                    :key="'o-' + loc.id"
-                                    :value="i"
-                                  >
-                                    {{ locationLabel(i) }}
-                                  </option>
-                                </select>
-                                <span class="route-arrow">→</span>
-                                <select
-                                  v-model.number="row.routeDestIndex"
-                                  class="route-select"
-                                  :class="{ empty: row.routeDestIndex == null }"
-                                  @change="onLogisticsRoutePathChange(row)"
-                                >
-                                  <option :value="null">目的地</option>
-                                  <option
-                                    v-for="(loc, i) in routeLocations"
-                                    :key="'d-' + loc.id"
-                                    :value="i"
-                                  >
-                                    {{ locationLabel(i) }}
-                                  </option>
-                                </select>
-                              </div>
-                            </div>
-                            <div class="col-qty">
-                              <input
-                                v-model.number="row.quantity"
-                                class="num-input"
-                                type="number"
-                                min="0"
-                                @change="clampLogisticsItemQuantity(idx)"
-                              />
-                            </div>
-                            <div class="col-km">
-                              <input
-                                v-model.number="row.km"
-                                class="num-input"
-                                type="number"
-                                min="0"
-                                @change="clampLogisticsItemKm(idx)"
-                              />
-                            </div>
-                            <div class="col-price">
-                              <input
-                                v-model.number="row.kmPrice"
-                                class="num-input"
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                @change="clampLogisticsItemKmPrice(idx)"
-                              />
-                            </div>
-                            <div class="col-total">
-                              <span class="total-value">{{ formatMoney(logisticsItemTotal(row)) }}</span>
-                            </div>
-                            <div class="col-action">
-                              <button
-                                type="button"
-                                class="delete-btn"
-                                title="删除"
-                                @click="removeLogisticsItem(idx)"
-                              >
-                                <span class="material-symbols-outlined">delete</span>
-                              </button>
-                            </div>
+                  <!-- 拆分批次：卡片式布局，每个批次一张卡片 -->
+                  <div v-if="logisticsSplitBatch" class="batch-cards-layout">
+                    <div
+                      v-for="(batch, batchIdx) in logisticsBatches"
+                      :key="batch.id"
+                      class="batch-card"
+                      :class="{ active: activeBatchId === batch.id }"
+                      @click="activeBatchId = batch.id"
+                    >
+                      <!-- 批次属性区域 -->
+                      <div class="batch-card-top">
+                        <div class="batch-card-fields">
+                          <div class="batch-field">
+                            <label class="batch-field-label">批次名称</label>
+                            <input
+                              type="text"
+                              class="batch-field-input"
+                              :value="batch.name"
+                              @input="(e) => updateBatchField(batch.id, 'name', (e.target as HTMLInputElement).value)"
+                              @click.stop
+                            />
+                          </div>
+                          <div class="batch-field">
+                            <label class="batch-field-label">预计日期</label>
+                            <input
+                              type="date"
+                              class="batch-field-input"
+                              :value="batch.date"
+                              @input="(e) => updateBatchField(batch.id, 'date', (e.target as HTMLInputElement).value)"
+                              @click.stop
+                            />
+                          </div>
+                          <div class="batch-field batch-field-wide">
+                            <label class="batch-field-label">批次备注</label>
+                            <input
+                              type="text"
+                              class="batch-field-input"
+                              placeholder="选填备注..."
+                              :value="batch.desc"
+                              @input="(e) => updateBatchField(batch.id, 'desc', (e.target as HTMLInputElement).value)"
+                              @click.stop
+                            />
                           </div>
                         </div>
+                        <button
+                          type="button"
+                          class="batch-card-delete"
+                          :disabled="logisticsBatches.length <= 1"
+                          title="删除批次"
+                          @click.stop="removeLogisticsBatch(batch.id)"
+                        >
+                          <span class="material-symbols-outlined">delete</span>
+                        </button>
                       </div>
-                      <div v-else class="batch-empty">
-                        <span class="material-symbols-outlined">inventory_2</span>
-                        <p>该批次尚未添加车型配置</p>
+
+                      <!-- 车型条目区域 -->
+                      <div class="batch-card-items">
+                        <div class="batch-card-items-header">
+                          <span class="batch-card-items-title">
+                            <span class="material-symbols-outlined">local_shipping</span>
+                            运力配置
+                          </span>
+                          <button type="button" class="add-vehicle-btn" @click.stop="activeBatchId = batch.id; addLogisticsItem()">
+                            <span class="material-symbols-outlined">add</span>
+                            新增车型
+                          </button>
+                        </div>
+
+                        <div class="labor-cost-table-wrap" @click.stop>
+                          <table class="labor-cost-table batch-vehicle-table">
+                            <thead>
+                              <tr>
+                                <th class="col-type">车型</th>
+                                <th class="col-desc">运输路径</th>
+                                <th class="col-qty">数量</th>
+                                <th class="col-price">公里数</th>
+                                <th class="col-price">公里价 (¥)</th>
+                                <th class="col-total">小计 (¥)</th>
+                                <th class="col-action"></th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr v-if="batch.items.length === 0">
+                                <td colspan="7" class="batch-card-empty-cell">暂无车型配置，请点击"新增车型"添加</td>
+                              </tr>
+                              <tr v-for="(row, idx) in batch.items" :key="row.id" class="labor-cost-row">
+                                <td>
+                                  <select
+                                    v-model="row.vehicleId"
+                                    class="labor-input"
+                                    @change="onLogisticsVehicleChange(row)"
+                                  >
+                                    <option :value="null">请选择车型</option>
+                                    <option
+                                      v-for="v in vehicleOptions"
+                                      :key="v.id"
+                                      :value="v.id"
+                                    >
+                                      {{ v.vehicle_name || v.vehicle_category || `车型 #${v.id}` }}
+                                    </option>
+                                  </select>
+                                </td>
+                                <td>
+                                  <div class="route-path-inline">
+                                    <select
+                                      v-model.number="row.routeOriginIndex"
+                                      class="labor-input route-inline-select"
+                                      :class="{ empty: row.routeOriginIndex == null }"
+                                      :title="getRouteLocationAddress(row.routeOriginIndex) || '选择始发地'"
+                                      @change="onLogisticsRoutePathChange(row)"
+                                    >
+                                      <option :value="null">始发地</option>
+                                      <option
+                                        v-for="(loc, i) in routeLocations"
+                                        :key="'o-' + loc.id"
+                                        :value="i"
+                                      >
+                                        {{ locationLabel(i) }}
+                                      </option>
+                                    </select>
+                                    <span class="route-arrow">→</span>
+                                    <select
+                                      v-model.number="row.routeDestIndex"
+                                      class="labor-input route-inline-select"
+                                      :class="{ empty: row.routeDestIndex == null }"
+                                      :title="getRouteLocationAddress(row.routeDestIndex) || '选择目的地'"
+                                      @change="onLogisticsRoutePathChange(row)"
+                                    >
+                                      <option :value="null">目的地</option>
+                                      <option
+                                        v-for="(loc, i) in routeLocations"
+                                        :key="'d-' + loc.id"
+                                        :value="i"
+                                      >
+                                        {{ locationLabel(i) }}
+                                      </option>
+                                    </select>
+                                    <button
+                                      v-if="row.routeOriginIndex != null && row.routeDestIndex != null && row.routeOriginIndex !== row.routeDestIndex"
+                                      type="button"
+                                      class="route-map-btn-small"
+                                      title="查看路线地图"
+                                      @click.stop="openRoutePlanningMap(row)"
+                                    >
+                                      <span class="material-symbols-outlined">map</span>
+                                    </button>
+                                  </div>
+                                </td>
+                                <td>
+                                  <input
+                                    v-model.number="row.quantity"
+                                    class="labor-input labor-input-num"
+                                    type="number"
+                                    min="0"
+                                    @change="clampLogisticsItemQuantity(idx)"
+                                  />
+                                </td>
+                                <td>
+                                  <input
+                                    v-model.number="row.km"
+                                    class="labor-input labor-input-num"
+                                    type="number"
+                                    min="0"
+                                    @change="clampLogisticsItemKm(idx)"
+                                  />
+                                </td>
+                                <td>
+                                  <input
+                                    v-model.number="row.kmPrice"
+                                    class="labor-input labor-input-num"
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    @change="clampLogisticsItemKmPrice(idx)"
+                                  />
+                                </td>
+                                <td class="total-cell">{{ formatMoney(logisticsItemTotal(row)) }}</td>
+                                <td class="action-cell">
+                                  <button
+                                    type="button"
+                                    class="row-delete-btn"
+                                    title="删除"
+                                    @click.stop="activeBatchId = batch.id; removeLogisticsItem(idx)"
+                                  >
+                                    <span class="material-symbols-outlined">delete</span>
+                                  </button>
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                      <!-- 批次小计 -->
+                      <div class="batch-card-footer">
+                        <span class="batch-card-footer-label">本批次费用</span>
+                        <span class="batch-card-footer-total">¥ {{ formatMoney(calculateBatchTotal(batch)) }}</span>
+                      </div>
+                    </div>
+
+                    <!-- 运力不足提醒 -->
+                    <div v-if="vehicleCapacityCheck.hasVehicle && !vehicleCapacityCheck.sufficient" class="capacity-warning">
+                      <span class="material-symbols-outlined capacity-warning-icon">warning</span>
+                      <div class="capacity-warning-body">
+                        <p class="capacity-warning-title">运力不足</p>
+                        <p class="capacity-warning-desc">
+                          设备清单总占用空间 <strong>{{ vehicleCapacityCheck.requiredU }}U</strong>，
+                          当前车辆总可装载 <strong>{{ vehicleCapacityCheck.totalCapacityU }}U</strong>，
+                          缺口 <strong>{{ vehicleCapacityCheck.shortage }}U</strong>。
+                        </p>
+                        <ul class="capacity-warning-list">
+                          <li v-for="v in vehicleMinQuantities" :key="v.vehicleId">
+                            <strong>{{ v.name }}</strong>（单车可装 {{ v.maxPerTrip }}U）：当前 {{ v.currentQty }} 辆，
+                            <template v-if="v.currentQty < v.minQty">
+                              <span class="capacity-short">建议至少 {{ v.minQty }} 辆</span>
+                            </template>
+                            <template v-else>已满足</template>
+                          </li>
+                        </ul>
+                      </div>
+                    </div>
+
+                    <!-- 底部汇总 -->
+                    <div class="batch-summary-bar">
+                      <div class="batch-summary-stats">
+                        <div class="summary-stat">
+                          <span class="stat-label">批次数量</span>
+                          <span class="stat-value">{{ logisticsBatches.length }} 个批次</span>
+                        </div>
+                        <div class="summary-stat">
+                          <span class="stat-label">车辆总数</span>
+                          <span class="stat-value">{{ logisticsBatchesVehicleCount }} 台</span>
+                        </div>
+                      </div>
+                      <div class="batch-summary-total">
+                        <span class="total-label">车辆配送费预估总计</span>
+                        <span class="total-value">
+                          <span class="total-currency">¥</span>
+                          {{ formatMoney(logisticsBatchesTotal) }}
+                        </span>
                       </div>
                     </div>
                   </div>
-                  <!-- 底部结算栏 -->
-                  <div class="batch-summary-bar">
-                    <div class="batch-summary-stats">
-                      <div class="summary-stat">
-                        <span class="stat-label">批次数量</span>
-                        <span class="stat-value">{{ logisticsBatches.length }} 个批次</span>
-                      </div>
-                      <div class="summary-stat">
-                        <span class="stat-label">车辆总数</span>
-                        <span class="stat-value">{{ logisticsBatchesVehicleCount }} 台</span>
-                      </div>
-                    </div>
-                    <div class="batch-summary-total">
-                      <span class="total-label">车辆配送费预估总计</span>
-                      <span class="total-value">
-                        <span class="total-currency">¥</span>
-                        {{ formatMoney(logisticsBatchesTotal) }}
-                      </span>
-                    </div>
-                  </div>
-                </div>
 
                 <!-- 不拆分批次：仅显示运力配置表与汇总，不显示批次选择框 -->
                 <div v-else class="logistics-flat-layout">
@@ -1378,6 +1391,28 @@
                       </div>
                     </div>
                   </div>
+                  <!-- 运力不足提醒 -->
+                  <div v-if="vehicleCapacityCheck.hasVehicle && !vehicleCapacityCheck.sufficient" class="capacity-warning">
+                    <span class="material-symbols-outlined capacity-warning-icon">warning</span>
+                    <div class="capacity-warning-body">
+                      <p class="capacity-warning-title">运力不足</p>
+                      <p class="capacity-warning-desc">
+                        设备清单总占用空间 <strong>{{ vehicleCapacityCheck.requiredU }}U</strong>，
+                        当前车辆总可装载 <strong>{{ vehicleCapacityCheck.totalCapacityU }}U</strong>，
+                        缺口 <strong>{{ vehicleCapacityCheck.shortage }}U</strong>。
+                      </p>
+                      <ul class="capacity-warning-list">
+                        <li v-for="v in vehicleMinQuantities" :key="v.vehicleId">
+                          <strong>{{ v.name }}</strong>（单车可装 {{ v.maxPerTrip }}U）：当前 {{ v.currentQty }} 辆，
+                          <template v-if="v.currentQty < v.minQty">
+                            <span class="capacity-short">建议至少 {{ v.minQty }} 辆</span>
+                          </template>
+                          <template v-else>已满足</template>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+
                   <div class="batch-summary-bar">
                     <div class="batch-summary-stats">
                       <div class="summary-stat">
@@ -1411,12 +1446,14 @@
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-for="(row, idx) in manualHandlingItems" :key="row.id" class="labor-cost-row">
+                      <tr v-for="(row, idx) in manualHandlingItems" :key="row.id" class="labor-cost-row" :class="{ 'unknown-tier-row': row.tierIndex === -1 }">
                         <td>
                           <select
                             v-model.number="row.tierIndex"
                             class="labor-input labor-select packaging-tier-select"
+                            :class="{ 'unknown-tier-select': row.tierIndex === -1 }"
                           >
+                            <option v-if="row.tierIndex === -1" :value="-1" disabled>未知</option>
                             <option
                               v-for="(tier, ti) in manualHandlingTiers"
                               :key="ti"
@@ -1427,7 +1464,7 @@
                           </select>
                         </td>
                         <td>
-                          <span class="labor-input labor-input-readonly">{{ manualHandlingTiers[row.tierIndex]?.label ?? '—' }}</span>
+                          <span class="labor-input labor-input-readonly">{{ row.tierIndex === -1 ? '请选择档位' : (manualHandlingTiers[row.tierIndex]?.label ?? '—') }}</span>
                         </td>
                         <td class="unit-cell">台</td>
                         <td class="qty-cell">
@@ -1572,7 +1609,7 @@
               <div class="labor-cost-header">
                 <div class="card-title-row">
                   <span class="material-symbols-outlined card-icon primary">add_task</span>
-                  <h3 class="card-title">增值服务明细</h3>
+                  <h3 class="card-title">增值服务费</h3>
                 </div>
                 <button type="button" class="add-row-btn" @click="addValueAddedItem">
                   <span class="material-symbols-outlined">add</span>
@@ -1793,7 +1830,7 @@
             <div class="card panel insurance-panel">
               <div class="card-title-row">
                 <span class="material-symbols-outlined card-icon primary">security</span>
-                <h3 class="card-title">保险费率设定</h3>
+                <h3 class="card-title">设备保险费</h3>
               </div>
               <div class="insurance-row">
                 <div class="insurance-total">
@@ -1828,16 +1865,23 @@
         </template>
         <!-- 2. 设备清单管理 -->
         <template v-else-if="activeTab === 2">
+          <!-- 导入区 -->
           <section class="overview-section card panel equipment-import-section">
             <div class="equipment-import-header">
               <div class="card-title-row">
                 <span class="material-symbols-outlined card-icon primary">upload_file</span>
                 <h3 class="card-title">设备清单导入</h3>
               </div>
-              <el-button type="primary" class="download-template-btn" @click="onDownloadTemplate">
-                <span class="material-symbols-outlined btn-icon">download</span>
-                下载标准模板
-              </el-button>
+              <div class="equipment-import-actions">
+                <el-button type="success" class="download-template-btn" @click="onDownloadTemplate">
+                  <span class="material-symbols-outlined btn-icon">download</span>
+                  下载标准模板
+                </el-button>
+                <el-button v-if="equipmentList.length > 0 && equipmentList.some(r => r.model)" type="primary" :loading="isMatchingEquipment" @click="batchMatchEquipment">
+                  <span class="material-symbols-outlined btn-icon">sync</span>
+                  重新匹配
+                </el-button>
+              </div>
             </div>
             <div
               class="upload-zone equipment-upload-zone"
@@ -1850,7 +1894,7 @@
               <span class="material-symbols-outlined upload-icon equipment-upload-icon">upload_file</span>
               <div class="equipment-upload-text">
                 <p class="upload-text">点击或拖拽 Excel/CSV 文件到此处上传</p>
-                <p class="upload-hint">支持批量导入资产信息，系统将自动识别表头</p>
+                <p class="upload-hint">支持批量导入资产信息，系统将自动识别表头并匹配设备库</p>
               </div>
               <input
                 ref="equipmentFileInputRef"
@@ -1861,6 +1905,34 @@
               />
             </div>
           </section>
+
+          <!-- 原始导入数据表格 -->
+          <section v-if="importedOriginalData.length > 0" class="card panel eq-original-table-section">
+            <div class="eq-original-table-header">
+              <div class="card-title-row">
+                <span class="material-symbols-outlined card-icon">table_view</span>
+                <h3 class="card-title">原始导入数据</h3>
+                <span class="eq-original-file-tag">{{ importedFileName }}</span>
+                <span class="eq-original-count-tag">{{ importedOriginalData.length }} 行 × {{ importedOriginalHeaders.length }} 列</span>
+              </div>
+            </div>
+            <div class="eq-original-table-wrap">
+              <table class="tech-table eq-original-table">
+                <thead>
+                  <tr>
+                    <th v-for="h in importedOriginalHeaders" :key="h">{{ h }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, ri) in importedOriginalData" :key="ri">
+                    <td v-for="h in importedOriginalHeaders" :key="h">{{ row[h] || '' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <!-- 设备明细清单（转换后表格） -->
           <section class="equipment-list-section card panel">
             <div class="equipment-list-header">
               <div class="equipment-list-title-row">
@@ -1869,41 +1941,201 @@
                   <span class="inline-edit-dot"></span>
                   支持行内编辑
                 </span>
+                <span v-if="isMatchingEquipment" class="eq-matching-tag">
+                  <span class="eq-matching-spinner"></span>
+                  匹配中...
+                </span>
               </div>
-              <el-button type="danger" plain class="clear-list-btn" @click="clearEquipmentList">
-                <span class="material-symbols-outlined btn-icon">delete_sweep</span>
-                清空列表
-              </el-button>
+              <div class="equipment-header-actions">
+                <select v-model="eqMatchDataSource" class="eq-source-select" title="匹配数据源">
+                  <option value="datacenter">数据中心</option>
+                  <option value="office">办公设备</option>
+                  <option value="hybrid">全部</option>
+                </select>
+                <el-button type="primary" :loading="isMatchingEquipment" @click="batchMatchEquipment">
+                  <span class="material-symbols-outlined btn-icon">sync</span>
+                  手动匹配
+                </el-button>
+                <el-button type="danger" plain class="clear-list-btn" @click="clearEquipmentList">
+                  <span class="material-symbols-outlined btn-icon">delete_sweep</span>
+                  清空列表
+                </el-button>
+              </div>
             </div>
             <div class="equipment-table-wrap">
               <table class="tech-table equipment-table">
                 <thead>
                   <tr>
-                    <th class="col-brand">品牌</th>
-                    <th class="col-model">型号</th>
-                    <th class="col-type">设备类型</th>
-                    <th class="col-u">机架高度(U)</th>
-                    <th class="col-qty">数量</th>
-                    <th class="col-asset">资产编号(可选)</th>
-                    <th>备注</th>
+                    <th class="col-brand eq-header-dropdown-wrap" @click="toggleEqHeaderDropdown('品牌', $event)">
+                      <div class="eq-header-cell">
+                        <span>品牌</span>
+                        <span v-if="importedOriginalHeaders.length" class="material-symbols-outlined eq-dropdown-icon">expand_more</span>
+                      </div>
+                      <span v-if="importedOriginalHeaders.length" class="eq-mapped-source" :class="{ mapped: eqColumnMappings['品牌'] }">{{ getEqMappedOriginal('品牌') }}</span>
+                      <!-- 映射下拉菜单 -->
+                      <div v-if="eqActiveDropdown === '品牌'" class="eq-mapping-dropdown" @click.stop>
+                        <div class="eq-dd-header"><span>选择对应列</span><button v-if="eqColumnMappings['品牌']" @click.stop="clearEqMapping('品牌')"><span class="material-symbols-outlined">close</span></button></div>
+                        <div class="eq-dd-options">
+                          <div v-for="oh in importedOriginalHeaders" :key="oh" class="eq-dd-option" :class="{ selected: eqColumnMappings['品牌'] === oh }" @click.stop="selectEqOriginalHeader('品牌', oh)">
+                            <span class="material-symbols-outlined">{{ eqColumnMappings['品牌'] === oh ? 'check_circle' : 'radio_button_unchecked' }}</span>
+                            <span>{{ oh }}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </th>
+                    <th class="col-model eq-header-dropdown-wrap" @click="toggleEqHeaderDropdown('型号', $event)">
+                      <div class="eq-header-cell">
+                        <span>型号</span>
+                        <span v-if="importedOriginalHeaders.length" class="material-symbols-outlined eq-dropdown-icon">expand_more</span>
+                      </div>
+                      <span v-if="importedOriginalHeaders.length" class="eq-mapped-source" :class="{ mapped: eqColumnMappings['型号'] }">{{ getEqMappedOriginal('型号') }}</span>
+                      <div v-if="eqActiveDropdown === '型号'" class="eq-mapping-dropdown" @click.stop>
+                        <div class="eq-dd-header"><span>选择对应列</span><button v-if="eqColumnMappings['型号']" @click.stop="clearEqMapping('型号')"><span class="material-symbols-outlined">close</span></button></div>
+                        <div class="eq-dd-options">
+                          <div v-for="oh in importedOriginalHeaders" :key="oh" class="eq-dd-option" :class="{ selected: eqColumnMappings['型号'] === oh }" @click.stop="selectEqOriginalHeader('型号', oh)">
+                            <span class="material-symbols-outlined">{{ eqColumnMappings['型号'] === oh ? 'check_circle' : 'radio_button_unchecked' }}</span>
+                            <span>{{ oh }}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </th>
+                    <th class="col-match-model">匹配型号</th>
+                    <th class="col-type eq-header-dropdown-wrap" @click="toggleEqHeaderDropdown('设备类型', $event)">
+                      <div class="eq-header-cell">
+                        <span>设备类型</span>
+                        <span v-if="importedOriginalHeaders.length" class="material-symbols-outlined eq-dropdown-icon">expand_more</span>
+                      </div>
+                      <span v-if="importedOriginalHeaders.length" class="eq-mapped-source" :class="{ mapped: eqColumnMappings['设备类型'] }">{{ getEqMappedOriginal('设备类型') }}</span>
+                      <div v-if="eqActiveDropdown === '设备类型'" class="eq-mapping-dropdown" @click.stop>
+                        <div class="eq-dd-header"><span>选择对应列</span><button v-if="eqColumnMappings['设备类型']" @click.stop="clearEqMapping('设备类型')"><span class="material-symbols-outlined">close</span></button></div>
+                        <div class="eq-dd-options">
+                          <div v-for="oh in importedOriginalHeaders" :key="oh" class="eq-dd-option" :class="{ selected: eqColumnMappings['设备类型'] === oh }" @click.stop="selectEqOriginalHeader('设备类型', oh)">
+                            <span class="material-symbols-outlined">{{ eqColumnMappings['设备类型'] === oh ? 'check_circle' : 'radio_button_unchecked' }}</span>
+                            <span>{{ oh }}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </th>
+                    <th class="col-match-type">匹配设备类型</th>
+                    <th class="col-u eq-header-dropdown-wrap" @click="toggleEqHeaderDropdown('机架高度(U)', $event)">
+                      <div class="eq-header-cell">
+                        <span>机架高度(U)</span>
+                        <span v-if="importedOriginalHeaders.length" class="material-symbols-outlined eq-dropdown-icon">expand_more</span>
+                      </div>
+                      <span v-if="importedOriginalHeaders.length" class="eq-mapped-source" :class="{ mapped: eqColumnMappings['机架高度(U)'] }">{{ getEqMappedOriginal('机架高度(U)') }}</span>
+                      <div v-if="eqActiveDropdown === '机架高度(U)'" class="eq-mapping-dropdown" @click.stop>
+                        <div class="eq-dd-header"><span>选择对应列</span><button v-if="eqColumnMappings['机架高度(U)']" @click.stop="clearEqMapping('机架高度(U)')"><span class="material-symbols-outlined">close</span></button></div>
+                        <div class="eq-dd-options">
+                          <div v-for="oh in importedOriginalHeaders" :key="oh" class="eq-dd-option" :class="{ selected: eqColumnMappings['机架高度(U)'] === oh }" @click.stop="selectEqOriginalHeader('机架高度(U)', oh)">
+                            <span class="material-symbols-outlined">{{ eqColumnMappings['机架高度(U)'] === oh ? 'check_circle' : 'radio_button_unchecked' }}</span>
+                            <span>{{ oh }}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </th>
+                    <th class="col-qty eq-header-dropdown-wrap" @click="toggleEqHeaderDropdown('数量', $event)">
+                      <div class="eq-header-cell">
+                        <span>数量</span>
+                        <span v-if="importedOriginalHeaders.length" class="material-symbols-outlined eq-dropdown-icon">expand_more</span>
+                      </div>
+                      <span v-if="importedOriginalHeaders.length" class="eq-mapped-source" :class="{ mapped: eqColumnMappings['数量'] }">{{ getEqMappedOriginal('数量') }}</span>
+                      <div v-if="eqActiveDropdown === '数量'" class="eq-mapping-dropdown" @click.stop>
+                        <div class="eq-dd-header"><span>选择对应列</span><button v-if="eqColumnMappings['数量']" @click.stop="clearEqMapping('数量')"><span class="material-symbols-outlined">close</span></button></div>
+                        <div class="eq-dd-options">
+                          <div v-for="oh in importedOriginalHeaders" :key="oh" class="eq-dd-option" :class="{ selected: eqColumnMappings['数量'] === oh }" @click.stop="selectEqOriginalHeader('数量', oh)">
+                            <span class="material-symbols-outlined">{{ eqColumnMappings['数量'] === oh ? 'check_circle' : 'radio_button_unchecked' }}</span>
+                            <span>{{ oh }}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </th>
+                    <th class="col-asset eq-header-dropdown-wrap" @click="toggleEqHeaderDropdown('资产编号(可选)', $event)">
+                      <div class="eq-header-cell">
+                        <span>资产编号</span>
+                        <span v-if="importedOriginalHeaders.length" class="material-symbols-outlined eq-dropdown-icon">expand_more</span>
+                      </div>
+                      <span v-if="importedOriginalHeaders.length" class="eq-mapped-source" :class="{ mapped: eqColumnMappings['资产编号(可选)'] }">{{ getEqMappedOriginal('资产编号(可选)') }}</span>
+                      <div v-if="eqActiveDropdown === '资产编号(可选)'" class="eq-mapping-dropdown" @click.stop>
+                        <div class="eq-dd-header"><span>选择对应列</span><button v-if="eqColumnMappings['资产编号(可选)']" @click.stop="clearEqMapping('资产编号(可选)')"><span class="material-symbols-outlined">close</span></button></div>
+                        <div class="eq-dd-options">
+                          <div v-for="oh in importedOriginalHeaders" :key="oh" class="eq-dd-option" :class="{ selected: eqColumnMappings['资产编号(可选)'] === oh }" @click.stop="selectEqOriginalHeader('资产编号(可选)', oh)">
+                            <span class="material-symbols-outlined">{{ eqColumnMappings['资产编号(可选)'] === oh ? 'check_circle' : 'radio_button_unchecked' }}</span>
+                            <span>{{ oh }}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </th>
+                    <th class="eq-header-dropdown-wrap" @click="toggleEqHeaderDropdown('备注', $event)">
+                      <div class="eq-header-cell">
+                        <span>备注</span>
+                        <span v-if="importedOriginalHeaders.length" class="material-symbols-outlined eq-dropdown-icon">expand_more</span>
+                      </div>
+                      <span v-if="importedOriginalHeaders.length" class="eq-mapped-source" :class="{ mapped: eqColumnMappings['备注'] }">{{ getEqMappedOriginal('备注') }}</span>
+                      <div v-if="eqActiveDropdown === '备注'" class="eq-mapping-dropdown" @click.stop>
+                        <div class="eq-dd-header"><span>选择对应列</span><button v-if="eqColumnMappings['备注']" @click.stop="clearEqMapping('备注')"><span class="material-symbols-outlined">close</span></button></div>
+                        <div class="eq-dd-options">
+                          <div v-for="oh in importedOriginalHeaders" :key="oh" class="eq-dd-option" :class="{ selected: eqColumnMappings['备注'] === oh }" @click.stop="selectEqOriginalHeader('备注', oh)">
+                            <span class="material-symbols-outlined">{{ eqColumnMappings['备注'] === oh ? 'check_circle' : 'radio_button_unchecked' }}</span>
+                            <span>{{ oh }}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </th>
                     <th class="col-action">操作</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="(row, idx) in equipmentList" :key="row.id" class="equipment-row">
+                  <tr v-for="(row, idx) in equipmentList" :key="row.id" class="equipment-row" :class="{ 'eq-row-warning': row.matchRate > 0 && row.matchRate < 70, 'eq-row-error': row.model && !row.matchedModel && !isMatchingEquipment }">
                     <td>
                       <input v-model.trim="row.brand" class="inline-input" type="text" placeholder="品牌" />
                     </td>
                     <td>
                       <input v-model.trim="row.model" class="inline-input" type="text" placeholder="型号" />
                     </td>
-                    <td>
-                      <select v-model="row.deviceType" class="inline-input inline-select">
-                        <option v-for="opt in deviceTypeOptions" :key="opt" :value="opt">{{ opt }}</option>
-                      </select>
+                    <!-- 匹配型号 -->
+                    <td class="col-match-model">
+                      <div class="eq-match-cell">
+                        <span
+                          class="eq-matched-model"
+                          :class="{
+                            'high-match': row.matchRate >= 70,
+                            'mid-match': row.matchRate >= 50 && row.matchRate < 70,
+                            'low-match': row.matchRate > 0 && row.matchRate < 50,
+                            'no-match': !row.matchedModel || row.matchRate === 0
+                          }"
+                          @click="openEqSearch(idx)"
+                          title="点击修改匹配型号"
+                        >
+                          {{ row.matchedModel || '未匹配' }}
+                        </span>
+                        <span v-if="row.matchRate > 0" class="eq-match-badge" :class="{ high: row.matchRate >= 70, mid: row.matchRate >= 50 && row.matchRate < 70, low: row.matchRate < 50 }">
+                          {{ row.matchRate }}%
+                        </span>
+                        <button v-if="row.matchedModel" class="eq-clear-match-btn" @click.stop="clearEqMatchResult(idx)" title="清空匹配">
+                          <span class="material-symbols-outlined">close</span>
+                        </button>
+                      </div>
                     </td>
                     <td>
-                      <input v-model.number="row.rackU" class="inline-input text-center" type="number" min="0" />
+                      <input
+                        v-model.trim="row.deviceType"
+                        class="inline-input eq-device-type-input"
+                        list="eq-device-type-list"
+                        type="text"
+                        placeholder="选择或输入"
+                      />
+                      <datalist id="eq-device-type-list">
+                        <option v-for="opt in deviceTypeOptions" :key="opt" :value="opt" />
+                      </datalist>
+                    </td>
+                    <!-- 匹配设备类型（仅显示三级分类） -->
+                    <td class="col-match-type">
+                      <span class="eq-match-type-text" :class="{ empty: !row.matchedDeviceType }">
+                        {{ displayTertiaryDeviceType(row.matchedDeviceType) }}
+                      </span>
+                    </td>
+                    <td>
+                      <input v-model.number="row.rackU" class="inline-input text-center" type="number" min="0" @change="syncRackUByModel(row)" />
                     </td>
                     <td>
                       <input v-model.number="row.quantity" class="inline-input text-center" type="number" min="0" />
@@ -1940,6 +2172,269 @@
               </el-button>
             </div>
           </section>
+
+          <!-- 设备匹配搜索弹窗 -->
+          <Teleport to="body">
+            <div v-if="eqSearchDialogVisible" class="eq-search-overlay" @click.self="closeEqSearch">
+              <div class="eq-search-dialog">
+                <div class="eq-search-dialog-header">
+                  <h3>搜索设备型号</h3>
+                  <button class="eq-search-close-btn" @click="closeEqSearch">
+                    <span class="material-symbols-outlined">close</span>
+                  </button>
+                </div>
+                <div class="eq-search-bar">
+                  <input
+                    ref="eqSearchInputRef"
+                    v-model="eqSearchQuery"
+                    class="eq-search-input"
+                    type="text"
+                    placeholder="输入设备型号搜索..."
+                    @input="onEqSearchInput"
+                    @keydown.enter="performEqSearch"
+                  />
+                  <div class="eq-search-source-selector">
+                    <label><input type="radio" v-model="eqSearchSource" value="datacenter" @change="performEqSearch" /> 数据中心</label>
+                    <label><input type="radio" v-model="eqSearchSource" value="office" @change="performEqSearch" /> 办公设备</label>
+                    <label><input type="radio" v-model="eqSearchSource" value="hybrid" @change="performEqSearch" /> 全部</label>
+                  </div>
+                </div>
+                <div class="eq-search-results">
+                  <div v-if="eqSearchLoading" class="eq-search-loading">
+                    <span class="eq-matching-spinner"></span> 搜索中...
+                  </div>
+                  <div v-else-if="eqSearchResults.length === 0 && eqSearchQuery" class="eq-search-empty">
+                    未找到匹配的设备
+                  </div>
+                  <div
+                    v-for="result in eqSearchResults"
+                    :key="result.id || result.model_number"
+                    class="eq-search-result-item"
+                    @click="selectEqSearchResult(result)"
+                  >
+                    <div class="eq-result-main">
+                      <span class="eq-result-manufacturer">{{ result.manufacturer || '-' }}</span>
+                      <span class="eq-result-model">{{ result.model_number }}</span>
+                    </div>
+                    <div class="eq-result-meta">
+                      <span v-if="result.primary_category" class="eq-result-category">{{ [result.primary_category, result.secondary_category, result.tertiary_category].filter(Boolean).join(' / ') }}</span>
+                      <span v-if="result.device_price" class="eq-result-price">¥{{ Number(result.device_price).toLocaleString() }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Teleport>
+        </template>
+
+        <!-- 4. 生成报价（嵌入模式内联显示） -->
+        <template v-else-if="activeTab === 4 && embedded">
+          <div class="inline-quotation-view">
+            <div class="inline-quotation-main">
+              <!-- 文档预览区域 -->
+              <div class="inline-quotation-preview">
+                <div class="inline-quotation-toolbar">
+                  <h3 class="inline-quotation-title">
+                    <span class="material-symbols-outlined">description</span>
+                    报价单预览
+                    <span class="relocation-quotation-badge">A4 打印视图</span>
+                  </h3>
+                  <div class="inline-quotation-actions">
+                    <div class="relocation-quotation-zoom">
+                      <button type="button" class="relocation-quotation-zoom-btn" @click="quotationZoomOut" title="缩小">
+                        <span class="material-symbols-outlined">remove</span>
+                      </button>
+                      <span class="relocation-quotation-zoom-level">{{ quotationZoomLevel }}%</span>
+                      <button type="button" class="relocation-quotation-zoom-btn" @click="quotationZoomIn" title="放大">
+                        <span class="material-symbols-outlined">add</span>
+                      </button>
+                    </div>
+                    <button type="button" class="rq-action-btn rq-action-secondary" @click="handleQuotationPrint">
+                      <span class="material-symbols-outlined">visibility</span>
+                      预览
+                    </button>
+                    <button type="button" class="rq-action-btn rq-action-primary" @click="handleExportQuotationPdf">
+                      <span class="material-symbols-outlined">picture_as_pdf</span>
+                      导出 PDF
+                    </button>
+                  </div>
+                </div>
+                <div class="inline-quotation-scroll">
+                  <div
+                    ref="quotationContentRef"
+                    class="relocation-quotation-paper"
+                    :style="{ transform: `scale(${quotationZoomLevel / 100})` }"
+                  >
+                    <div class="relocation-quotation-paper-inner">
+                      <!-- 文档头部 -->
+                      <div class="rq-doc-header">
+                        <div class="rq-doc-header-left">
+                          <div class="rq-doc-logo" @click="triggerRelocationLogoUpload" title="点击上传自定义 Logo" style="cursor: pointer;">
+                            <img v-if="relocationCustomLogoUrl" :src="relocationCustomLogoUrl" alt="公司Logo" style="max-height: 48px; max-width: 200px; object-fit: contain;" />
+                            <template v-else>
+                              <span class="material-symbols-outlined">rocket_launch</span>
+                              <span class="rq-doc-logo-text">{{ QUOTATION_COMPANY.name }}</span>
+                            </template>
+                            <input
+                              type="file"
+                              ref="relocationLogoInputRef"
+                              accept="image/*"
+                              style="display: none;"
+                              @change="handleRelocationLogoUpload"
+                            />
+                          </div>
+                          <h2 class="rq-doc-title">数据中心搬迁服务报价单</h2>
+                          <p class="rq-doc-subtitle">系统编号：{{ quotationData.meta.orderNo }}</p>
+                        </div>
+                        <div class="rq-doc-header-right">
+                          <div class="rq-doc-status">PREVIEW</div>
+                          <p class="rq-doc-date">打印日期：{{ quotationData.meta.date }}</p>
+                        </div>
+                      </div>
+
+                      <!-- 信息网格 -->
+                      <div class="rq-info-grid">
+                        <div class="rq-info-block">
+                          <h3 class="rq-info-label">报价方信息</h3>
+                          <p class="rq-info-title">{{ quotationData.companyName }}</p>
+                          <p class="rq-info-text">联系人：李经理</p>
+                          <p class="rq-info-text">电话：400-888-9999</p>
+                        </div>
+                        <div class="rq-info-block">
+                          <h3 class="rq-info-label">客户信息</h3>
+                          <p class="rq-info-title">{{ quotationData.customer.name }}</p>
+                          <p class="rq-info-text" v-for="(line, i) in quotationData.customer.locationLines" :key="i">{{ line }}</p>
+                        </div>
+                        <div class="rq-info-block">
+                          <h3 class="rq-info-label">项目摘要</h3>
+                          <p class="rq-info-text"><span class="rq-info-highlight">报价日期：</span>{{ quotationData.meta.date }}</p>
+                          <p class="rq-info-text"><span class="rq-info-highlight">有效期至：</span>{{ quotationData.meta.validUntil || '30天内有效' }}</p>
+                          <p class="rq-info-text"><span class="rq-info-highlight">币种：</span>人民币 (CNY)</p>
+                        </div>
+                      </div>
+
+                      <!-- 报价表格 -->
+                      <div class="rq-table-section">
+                        <table class="rq-table">
+                          <thead>
+                            <tr>
+                              <th class="rq-th">项目名称</th>
+                              <th class="rq-th">服务描述</th>
+                              <th class="rq-th">单位</th>
+                              <th class="rq-th rq-th-right">数量</th>
+                              <th class="rq-th rq-th-right">单价</th>
+                              <th class="rq-th rq-th-right">小计</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <template v-for="(group, gIdx) in groupedQuotationItems" :key="gIdx">
+                              <tr class="rq-group-row">
+                                <td colspan="6" class="rq-group-cell">【{{ group.name }}】</td>
+                              </tr>
+                              <tr v-for="(item, idx) in group.items" :key="item.id" class="rq-item-row">
+                                <td class="rq-td rq-td-name">{{ item.title }}</td>
+                                <td class="rq-td rq-td-desc">{{ item.desc || '-' }}</td>
+                                <td class="rq-td">{{ item.unit || '项' }}</td>
+                                <td class="rq-td rq-td-right">{{ item.qty }}</td>
+                                <td class="rq-td rq-td-right">¥{{ formatMoney(item.price) }}</td>
+                                <td class="rq-td rq-td-right rq-td-total">¥{{ formatMoney(item.qty * item.price) }}</td>
+                              </tr>
+                            </template>
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <!-- 汇总区域 -->
+                      <div class="rq-summary">
+                        <div class="rq-summary-box">
+                          <div class="rq-summary-row">
+                            <span class="rq-summary-label">项目小计:</span>
+                            <span class="rq-summary-value">¥{{ formatMoney(quotationData.subTotal) }}</span>
+                          </div>
+                          <div class="rq-summary-row">
+                            <span class="rq-summary-label">增值税 ({{ quotationData.taxRatePercent }}%):</span>
+                            <span class="rq-summary-value">¥{{ formatMoney(quotationData.subTotal * quotationData.taxRatePercent / 100) }}</span>
+                          </div>
+                          <div class="rq-summary-divider"></div>
+                          <div class="rq-summary-row rq-summary-total-row">
+                            <span class="rq-summary-total-label">总计金额:</span>
+                            <span class="rq-summary-total-value">¥{{ formatMoney(quotationData.finalTotal) }}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- 条款说明 -->
+                      <div class="rq-terms">
+                        <div class="rq-terms-col">
+                          <p class="rq-terms-title">支付说明：</p>
+                          <ul class="rq-terms-list">
+                            <li>预付款项：合同签订后支付 30%</li>
+                            <li>验收款项：项目完成并验收通过后支付 60%</li>
+                            <li>质保金：验收通过半年后支付 10%</li>
+                          </ul>
+                        </div>
+                        <div class="rq-terms-col">
+                          <p class="rq-terms-title">备注说明：</p>
+                          <p class="rq-terms-text">报价包含气垫车运输服务及夜间施工费用。若设备搬迁规模变动超过 10% 则需重新调整报价单。</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 配置侧边栏 -->
+              <aside class="inline-quotation-sidebar">
+                <!-- 客户选择 -->
+                <div class="rq-sidebar-section">
+                  <label class="rq-sidebar-label">选择客户</label>
+                  <div class="rq-sidebar-select-wrap">
+                    <select v-model="quotationCustomerSelect" class="rq-sidebar-select">
+                      <option value="default">{{ quotationData.customer.name }}</option>
+                    </select>
+                    <span class="material-symbols-outlined rq-sidebar-select-icon">expand_more</span>
+                  </div>
+                </div>
+
+                <!-- 价格布局 -->
+                <div class="rq-sidebar-section">
+                  <label class="rq-sidebar-label">价格布局</label>
+                  <div class="rq-sidebar-toggle-group">
+                    <button type="button" class="rq-sidebar-toggle-btn" :class="{ active: quotationPriceLayout === 'with-tax' }" @click="quotationPriceLayout = 'with-tax'">含税报价</button>
+                    <button type="button" class="rq-sidebar-toggle-btn" :class="{ active: quotationPriceLayout === 'without-tax' }" @click="quotationPriceLayout = 'without-tax'">未税报价</button>
+                  </div>
+                </div>
+
+                <!-- 报价模板 -->
+                <div class="rq-sidebar-section">
+                  <label class="rq-sidebar-label">报价模板</label>
+                  <div class="rq-sidebar-templates">
+                    <div class="rq-sidebar-template" :class="{ active: quotationTemplate === 'classic' }" @click="quotationTemplate = 'classic'">
+                      <div class="rq-template-preview rq-template-classic">
+                        <div class="rq-tpl-bar"></div><div class="rq-tpl-line"></div><div class="rq-tpl-body"></div>
+                      </div>
+                      <p class="rq-template-name">经典商务</p>
+                    </div>
+                    <div class="rq-sidebar-template" :class="{ active: quotationTemplate === 'dark' }" @click="quotationTemplate = 'dark'">
+                      <div class="rq-template-preview rq-template-dark">
+                        <div class="rq-tpl-bar"></div><div class="rq-tpl-line"></div><div class="rq-tpl-body"></div>
+                      </div>
+                      <p class="rq-template-name">暗黑科技</p>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- AI 建议 -->
+                <div class="rq-ai-suggestion">
+                  <div class="rq-ai-header">
+                    <span class="material-symbols-outlined">auto_awesome</span>
+                    <span class="rq-ai-title">AI 建议</span>
+                  </div>
+                  <p class="rq-ai-text">根据历史数据，该类项目的「项目管理」费率通常在 12%-15% 之间，当前设定略低，建议上调以覆盖风险。</p>
+                </div>
+              </aside>
+            </div>
+          </div>
         </template>
 
         <template v-else>
@@ -1949,7 +2444,7 @@
         </template>
       </div>
 
-      <aside class="right-dashboard">
+      <aside v-show="activeTab !== 4" class="right-dashboard">
         <div class="summary-card">
           <div class="glow-effect"></div>
           <h3 class="summary-title">
@@ -2020,14 +2515,24 @@
           <div class="breakdown-section">
             <h4 class="breakdown-title">成本构成</h4>
             <div class="breakdown-list">
-              <div v-for="item in costBreakdown" :key="item.name" class="breakdown-item">
-                <div class="breakdown-header">
-                  <span class="breakdown-name">{{ item.name }}</span>
-                  <span class="breakdown-amount">¥ {{ formatMoney(item.amount) }}</span>
-                  <span class="breakdown-percent">{{ item.percent }}%</span>
+              <div v-for="group in costBreakdown" :key="group.name" class="breakdown-group">
+                <!-- 大类 -->
+                <div class="breakdown-item breakdown-item-group">
+                  <div class="breakdown-header">
+                    <span class="breakdown-name">{{ group.name }}</span>
+                    <span class="breakdown-amount">¥ {{ formatMoney(group.amount) }}</span>
+                    <span class="breakdown-percent">{{ group.percent }}%</span>
+                  </div>
+                  <div class="breakdown-bar">
+                    <div class="breakdown-fill" :style="{ width: group.percent + '%', backgroundColor: group.color }"></div>
+                  </div>
                 </div>
-                <div class="breakdown-bar">
-                  <div class="breakdown-fill" :style="{ width: item.percent + '%', backgroundColor: item.color }"></div>
+                <!-- 子项 -->
+                <div v-if="group.children.length > 0" class="breakdown-children">
+                  <div v-for="sub in group.children" :key="sub.name" class="breakdown-sub-item">
+                    <span class="breakdown-sub-name">{{ sub.name }}</span>
+                    <span class="breakdown-sub-amount">¥ {{ formatMoney(sub.amount) }}</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2084,9 +2589,16 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import html2canvas from 'html2canvas'
 import { jsPDF } from 'jspdf'
+import * as XLSX from 'xlsx'
+
+const props = withDefaults(defineProps<{
+  embedded?: boolean
+}>(), {
+  embedded: false
+})
 
 const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5002'
-const BAIDU_MAP_AK = import.meta.env.VITE_BAIDU_MAP_AK as string || ''
+const BAIDU_MAP_AK = import.meta.env.VITE_BAIDU_MAP_AK as string || 'FnArhbQbgyDdMh6XhpBqDUhKgFQrBnDD'
 const hasBaiduMapKey = computed(() => !!BAIDU_MAP_AK)
 
 // 使用百度地图 2.0 API（稳定版本）
@@ -2163,70 +2675,304 @@ interface EquipmentRow {
   id: string
   brand: string
   model: string
+  matchedModel: string
+  matchedManufacturer: string
+  matchRate: number
+  matchedPrice: number
   deviceType: string
+  matchedDeviceType: string       // 匹配到的三级分类
+  matchedPrimaryCategory: string
+  matchedSecondaryCategory: string
+  matchedTertiaryCategory: string
   rackU: number
   quantity: number
   assetNumber: string
   remarks: string
 }
 
+/** 从任意值解析为数字（支持 "2"、"2U"、2 等），用于机架高度(U)和数量，保证求和正确 */
+function parseEquipmentNumber(v: unknown): number {
+  if (v === null || v === undefined) return 0
+  const n = Number(v)
+  if (!Number.isNaN(n) && Number.isFinite(n)) return Math.max(0, n)
+  const s = String(v).trim().replace(/[^\d.-]/g, '')
+  const parsed = parseFloat(s)
+  return Number.isNaN(parsed) ? 0 : Math.max(0, parsed)
+}
+
 function createEmptyRow(): EquipmentRow {
-  return {
+  return reactive({
     id: nextEquipmentId(),
     brand: '',
     model: '',
-    deviceType: '服务器',
+    matchedModel: '',
+    matchedManufacturer: '',
+    matchRate: 0,
+    matchedPrice: 0,
+    deviceType: '',
+    matchedDeviceType: '',
+    matchedPrimaryCategory: '',
+    matchedSecondaryCategory: '',
+    matchedTertiaryCategory: '',
     rackU: 0,
-    quantity: 0,
+    quantity: 1,
     assetNumber: '',
     remarks: ''
-  }
+  }) as EquipmentRow
 }
 
-const equipmentList = ref<EquipmentRow[]>([
-  { id: nextEquipmentId(), brand: 'Dell', model: 'PowerEdge R740', deviceType: '服务器', rackU: 2, quantity: 45, assetNumber: 'SN-DEL-001', remarks: '' },
-  { id: nextEquipmentId(), brand: 'Cisco', model: 'Nexus 93180YC', deviceType: '网络交换机', rackU: 1, quantity: 12, assetNumber: 'SN-CIS-042', remarks: '包含光模块' },
-  { id: nextEquipmentId(), brand: 'NetApp', model: 'AFF A400', deviceType: '存储设备', rackU: 4, quantity: 4, assetNumber: 'SN-NAP-108', remarks: '高价值设备' },
-  { id: nextEquipmentId(), brand: 'Huawei', model: 'OceanStor 5500', deviceType: '存储设备', rackU: 3, quantity: 8, assetNumber: '-', remarks: '' }
-])
+const equipmentList = ref<EquipmentRow[]>([])
 
 const equipmentFileInputRef = ref<HTMLInputElement | null>(null)
 const isEquipmentDragging = ref(false)
 
+// ---- 原始表格数据（导入时保留展示） ----
+const importedOriginalHeaders = ref<string[]>([])
+const importedOriginalData = ref<Record<string, any>[]>([])
+const importedFileName = ref('')
+
+// ---- 列映射（转换后表头 → 原始表头） ----
+const equipmentStandardFields = ['品牌', '型号', '设备类型', '机架高度(U)', '数量', '资产编号(可选)', '备注']
+const equipmentFieldMappings: Record<string, string[]> = {
+  '品牌': ['品牌', '厂商', '厂商品牌', '制造商', '生产商', 'brand', 'manufacturer', 'vendor'],
+  '型号': ['型号', '设备型号', '产品型号', '设备名称', 'model', 'product model'],
+  '设备类型': ['设备类型', '设备分类', '类型', '分类', 'type', 'category'],
+  '机架高度(U)': ['机架高度', 'U', 'U数', '高度(U)', 'rack u', 'rackU'],
+  '数量': ['数量', '台数', '套数', 'quantity', 'count', 'qty'],
+  '资产编号(可选)': ['资产编号', '编号', '序列号', '资产号', 'SN', 'asset', 'serial'],
+  '备注': ['备注', '说明', '备注信息', 'remark', 'note']
+}
+const eqColumnMappings = ref<Record<string, string>>({})
+const eqActiveDropdown = ref<string | null>(null)
+
+function getEqMappedOriginal(targetHeader: string): string {
+  return eqColumnMappings.value[targetHeader] || '未映射'
+}
+
+/** 匹配设备类型只显示三级分类（兼容 "一级/二级/三级" 格式，取最后一段） */
+function displayTertiaryDeviceType(val: string | undefined): string {
+  if (!val || !val.trim()) return '-'
+  const parts = val.split(/\s*\/\s*/)
+  return parts[parts.length - 1]?.trim() || val.trim()
+}
+
+function toggleEqHeaderDropdown(headerName: string, event: Event) {
+  event.stopPropagation()
+  if (eqActiveDropdown.value === headerName) {
+    eqActiveDropdown.value = null
+  } else {
+    eqActiveDropdown.value = headerName
+  }
+}
+
+function selectEqOriginalHeader(targetHeader: string, originalHeader: string) {
+  eqColumnMappings.value[targetHeader] = originalHeader
+  eqActiveDropdown.value = null
+  remapEquipmentData(targetHeader)
+}
+
+function clearEqMapping(targetHeader: string) {
+  delete eqColumnMappings.value[targetHeader]
+  eqActiveDropdown.value = null
+  remapEquipmentData(targetHeader)
+}
+
+function autoMapEquipmentHeaders() {
+  const mappings: Record<string, string> = {}
+  const lowerOrigHeaders = importedOriginalHeaders.value.map(h => h.toLowerCase().trim())
+
+  for (const [standard, aliases] of Object.entries(equipmentFieldMappings)) {
+    for (const alias of aliases) {
+      const idx = lowerOrigHeaders.findIndex(h =>
+        h === alias.toLowerCase() || h.includes(alias.toLowerCase()) || alias.toLowerCase().includes(h)
+      )
+      if (idx >= 0 && !Object.values(mappings).includes(importedOriginalHeaders.value[idx])) {
+        mappings[standard] = importedOriginalHeaders.value[idx]
+        break
+      }
+    }
+  }
+  eqColumnMappings.value = mappings
+}
+
+function remapEquipmentData(changedColumn?: string) {
+  if (importedOriginalData.value.length === 0) return
+
+  // 按行映射原始数据 → equipmentList
+  for (let i = 0; i < equipmentList.value.length; i++) {
+    const origRow = importedOriginalData.value[i]
+    if (!origRow) continue
+    const row = equipmentList.value[i]
+
+    const fieldToKey: Record<string, keyof EquipmentRow> = {
+      '品牌': 'brand', '型号': 'model', '设备类型': 'deviceType',
+      '机架高度(U)': 'rackU', '数量': 'quantity', '资产编号(可选)': 'assetNumber', '备注': 'remarks'
+    }
+
+    const fields = changedColumn ? [changedColumn] : equipmentStandardFields
+    for (const field of fields) {
+      const origHeader = eqColumnMappings.value[field]
+      const key = fieldToKey[field]
+      if (!key) continue
+      if (origHeader && origRow[origHeader] !== undefined) {
+        const val = String(origRow[origHeader]).trim()
+        if (key === 'rackU' || key === 'quantity') {
+          ;(row as any)[key] = parseEquipmentNumber(origRow[origHeader])
+        } else if (key === 'deviceType') {
+          // 优先使用映射列的值（可匹配预设选项或保留原文），空值不硬置
+          const matched = deviceTypeOptions.find(opt =>
+            val.includes(opt) || opt.includes(val)
+          )
+          row.deviceType = matched || val || ''
+        } else {
+          ;(row as any)[key] = val
+        }
+      } else if (!origHeader) {
+        // 映射被清除时清空对应字段（设备类型与其它文本列一致，不硬置为「服务器」）
+        if (key === 'rackU' || key === 'quantity') {
+          ;(row as any)[key] = 0
+        } else if (key === 'deviceType') {
+          row.deviceType = ''
+        } else {
+          ;(row as any)[key] = ''
+        }
+      }
+    }
+  }
+}
+
+// 设备总台数：对「数量」列求和（使用统一数字解析，避免字符串导致不求和）
 const totalEquipmentCount = computed(() => {
-  return equipmentList.value.reduce((sum, row) => sum + (Number(row.quantity) || 0), 0)
+  return equipmentList.value.reduce((sum, row) => sum + parseEquipmentNumber(row.quantity), 0)
 })
+// 总占用空间(U)：对每行的「机架高度(U)×数量」求和（同上，保证 rackU 按数字参与计算）
 const totalRackU = computed(() => {
-  return equipmentList.value.reduce((sum, row) => sum + (Number(row.rackU) || 0) * (Number(row.quantity) || 0), 0)
+  return equipmentList.value.reduce((sum, row) => sum + parseEquipmentNumber(row.rackU) * parseEquipmentNumber(row.quantity), 0)
 })
 
 function onDownloadTemplate() {
-  ElMessage.info('下载标准模板功能待对接')
+  // 生成标准模板
+  const ws = XLSX.utils.aoa_to_sheet([equipmentStandardFields])
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, '设备清单')
+  XLSX.writeFile(wb, '搬迁设备清单模板.xlsx')
+  ElMessage.success('模板下载成功')
 }
 
 function triggerEquipmentFileInput() {
   equipmentFileInputRef.value?.click()
 }
 
+function parseEquipmentExcel(file: File) {
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    try {
+      const data = new Uint8Array(e.target?.result as ArrayBuffer)
+      const workbook = XLSX.read(data, { type: 'array' })
+      if (!workbook.SheetNames?.length) {
+        ElMessage.error('Excel 文件中没有找到工作表')
+        return
+      }
+      const sheetName = workbook.SheetNames[0]
+      const worksheet = workbook.Sheets[sheetName]
+      if (!worksheet || !worksheet['!ref']) {
+        ElMessage.error('工作表为空')
+        return
+      }
+      const range = XLSX.utils.decode_range(worksheet['!ref'])
+
+      // 提取表头
+      const headers: string[] = []
+      for (let c = range.s.c; c <= range.e.c; c++) {
+        const cellAddr = XLSX.utils.encode_cell({ r: range.s.r, c })
+        const cell = worksheet[cellAddr]
+        headers.push(cell?.v !== undefined && cell?.v !== null ? String(cell.v).trim() : `列${c + 1}`)
+      }
+
+      // 提取数据
+      const rows: Record<string, any>[] = []
+      for (let r = range.s.r + 1; r <= range.e.r; r++) {
+        const row: Record<string, any> = {}
+        let hasData = false
+        for (let c = range.s.c; c <= range.e.c; c++) {
+          const cellAddr = XLSX.utils.encode_cell({ r, c })
+          const cell = worksheet[cellAddr]
+          const header = headers[c - range.s.c]
+          const val = cell?.v !== undefined && cell?.v !== null ? String(cell.v).trim() : ''
+          row[header] = val
+          if (val) hasData = true
+        }
+        if (hasData) rows.push(row)
+      }
+
+      if (rows.length === 0) {
+        ElMessage.warning('Excel 文件中无有效数据行')
+        return
+      }
+
+      // 保存原始数据
+      importedOriginalHeaders.value = headers
+      importedOriginalData.value = rows
+      importedFileName.value = file.name
+
+      // 自动映射表头
+      autoMapEquipmentHeaders()
+
+      // 生成设备行
+      equipmentList.value = rows.map(origRow => {
+        const row = createEmptyRow()
+        // 按映射填充
+        for (const [standard, key] of Object.entries({
+          '品牌': 'brand', '型号': 'model', '设备类型': 'deviceType',
+          '机架高度(U)': 'rackU', '数量': 'quantity', '资产编号(可选)': 'assetNumber', '备注': 'remarks'
+        } as Record<string, string>)) {
+          const origHeader = eqColumnMappings.value[standard]
+            if (origHeader && origRow[origHeader] !== undefined) {
+            const val = String(origRow[origHeader]).trim()
+            if (key === 'rackU' || key === 'quantity') {
+              ;(row as any)[key] = parseEquipmentNumber(origRow[origHeader])
+            } else if (key === 'deviceType') {
+              const matched = deviceTypeOptions.find(opt => val.includes(opt) || opt.includes(val))
+              ;(row as any)[key] = matched || val || ''
+            } else {
+              ;(row as any)[key] = val
+            }
+          }
+        }
+        return row
+      })
+
+      ElMessage.success(`成功导入 ${rows.length} 条设备记录`)
+
+      // 自动执行批量匹配
+      batchMatchEquipment()
+    } catch (err: any) {
+      console.error('Excel 解析失败:', err)
+      ElMessage.error('Excel 解析失败: ' + (err.message || '未知错误'))
+    }
+  }
+  reader.readAsArrayBuffer(file)
+}
+
 function onEquipmentFileSelect(e: Event) {
   const input = e.target as HTMLInputElement
-  const files = input.files
-  if (files?.length) {
-    ElMessage.success(`已选择 ${files.length} 个文件，解析功能待对接`)
-  }
+  const file = input.files?.[0]
+  if (file) parseEquipmentExcel(file)
   input.value = ''
 }
 
 function onEquipmentDrop(e: DragEvent) {
   isEquipmentDragging.value = false
-  const files = e.dataTransfer?.files
-  if (files?.length) {
-    ElMessage.success(`已选择 ${files.length} 个文件，解析功能待对接`)
-  }
+  const file = e.dataTransfer?.files?.[0]
+  if (file) parseEquipmentExcel(file)
 }
 
 function clearEquipmentList() {
   equipmentList.value = []
+  importedOriginalHeaders.value = []
+  importedOriginalData.value = []
+  importedFileName.value = ''
+  eqColumnMappings.value = {}
   ElMessage.success('已清空列表')
 }
 
@@ -2236,13 +2982,258 @@ function addEquipmentRow() {
 
 function removeEquipmentRow(index: number) {
   equipmentList.value.splice(index, 1)
+  if (importedOriginalData.value.length > index) {
+    importedOriginalData.value.splice(index, 1)
+  }
 }
+
+// ---- 设备匹配逻辑 ----
+const eqMatchDataSource = ref<'datacenter' | 'office' | 'hybrid'>('datacenter')
+const isMatchingEquipment = ref(false)
+
+async function batchMatchEquipment() {
+  const list = equipmentList.value.filter(r => r.model.trim())
+  if (list.length === 0) return
+  isMatchingEquipment.value = true
+
+  try {
+    const items = list.map(r => ({
+      manufacturer: r.brand || '',
+      model: r.model,
+      category: r.deviceType || '',
+      source: eqMatchDataSource.value
+    }))
+
+    const resp = await axios.post(`${API_URL}/bulk-match/`, { items })
+    const results = resp.data as any[]
+
+    for (let i = 0; i < results.length && i < list.length; i++) {
+      const result = results[i]
+      const row = list[i]
+      if (result.matched_model) {
+        row.matchedModel = result.matched_model
+        row.matchedManufacturer = result.manufacturer || ''
+        row.matchRate = Math.round(result.match_rate || 0)
+        row.matchedPrice = result.device_price || 0
+        row.matchedPrimaryCategory = result.primary_category || ''
+        row.matchedSecondaryCategory = result.secondary_category || ''
+        row.matchedTertiaryCategory = result.tertiary_category || ''
+        row.matchedDeviceType = result.tertiary_category || ''
+        // 从匹配结果填充机架高度(U)
+        if (result.rack_height_u != null) {
+          row.rackU = parseEquipmentNumber(result.rack_height_u)
+        }
+      } else {
+        // 明确标记未匹配
+        row.matchedModel = ''
+        row.matchRate = 0
+        row.matchedDeviceType = ''
+      }
+    }
+
+    const matchedCount = list.filter(r => r.matchedModel).length
+    ElMessage.success(`匹配完成：${matchedCount}/${list.length} 条设备匹配成功`)
+  } catch (err: any) {
+    console.error('批量匹配失败:', err)
+    ElMessage.error('批量匹配失败: ' + (err.response?.data?.detail || err.message || ''))
+  } finally {
+    isMatchingEquipment.value = false
+  }
+}
+
+// ---- 搜索弹窗（修改匹配型号） ----
+const eqSearchDialogVisible = ref(false)
+const eqSearchQuery = ref('')
+const eqSearchResults = ref<any[]>([])
+const eqSearchLoading = ref(false)
+const eqSearchActiveIndex = ref(-1)
+const eqSearchSource = ref<'datacenter' | 'office' | 'hybrid'>('datacenter')
+const eqSearchInputRef = ref<HTMLInputElement | null>(null)
+let eqSearchDebounce: ReturnType<typeof setTimeout> | null = null
+
+function openEqSearch(index: number) {
+  eqSearchActiveIndex.value = index
+  const row = equipmentList.value[index]
+  eqSearchQuery.value = row.model || ''
+  eqSearchResults.value = []
+  eqSearchSource.value = eqMatchDataSource.value  // 同步主选择器的数据源
+  eqSearchDialogVisible.value = true
+  nextTick(() => {
+    eqSearchInputRef.value?.focus()
+    if (eqSearchQuery.value) performEqSearch()
+  })
+}
+
+function closeEqSearch() {
+  eqSearchDialogVisible.value = false
+  eqSearchActiveIndex.value = -1
+  eqSearchQuery.value = ''
+  eqSearchResults.value = []
+}
+
+function onEqSearchInput() {
+  if (eqSearchDebounce) clearTimeout(eqSearchDebounce)
+  eqSearchDebounce = setTimeout(() => {
+    performEqSearch()
+  }, 300)
+}
+
+async function performEqSearch() {
+  if (!eqSearchQuery.value.trim()) {
+    eqSearchResults.value = []
+    return
+  }
+  eqSearchLoading.value = true
+  try {
+    const resp = await axios.get(`${API_URL}/devices/search/`, {
+      params: { model: eqSearchQuery.value.trim(), source: eqSearchSource.value, limit: 20, offset: 0 }
+    })
+    eqSearchResults.value = resp.data?.data || resp.data || []
+  } catch (err) {
+    console.error('搜索失败:', err)
+  } finally {
+    eqSearchLoading.value = false
+  }
+}
+
+function selectEqSearchResult(result: any) {
+  const idx = eqSearchActiveIndex.value
+  if (idx < 0 || idx >= equipmentList.value.length) return
+
+  const clickedRow = equipmentList.value[idx]
+  const originalModel = clickedRow.model  // 当前行的原始型号
+
+  // 找到所有具有相同原始型号的行，统一应用手动匹配结果
+  const sameModelIndexes: number[] = []
+  equipmentList.value.forEach((item, i) => {
+    if (item.model && item.model === originalModel) {
+      sameModelIndexes.push(i)
+    }
+  })
+
+  // 如果没有找到同型号行（不应该发生），至少更新当前行
+  if (sameModelIndexes.length === 0) {
+    sameModelIndexes.push(idx)
+  }
+
+  const matchedModelStr = (result.model_number || '').toUpperCase().replace(/[\s\-_]/g, '')
+
+  // 更新所有同型号行（匹配设备类型只显示三级分类）
+  for (const i of sameModelIndexes) {
+    const row = equipmentList.value[i]
+    row.matchedModel = result.model_number || ''
+    row.matchedManufacturer = result.manufacturer || ''
+    row.matchedPrice = result.device_price || 0
+    row.matchedPrimaryCategory = result.primary_category || ''
+    row.matchedSecondaryCategory = result.secondary_category || ''
+    row.matchedTertiaryCategory = result.tertiary_category || ''
+    row.matchedDeviceType = result.tertiary_category || ''
+
+    // 从搜索结果填充机架高度(U)
+    if (result.rack_height_u != null) {
+      row.rackU = parseEquipmentNumber(result.rack_height_u)
+    }
+
+    // 计算匹配度
+    const origNorm = (row.model || '').toUpperCase().replace(/[\s\-_]/g, '')
+    if (origNorm === matchedModelStr) {
+      row.matchRate = 100
+    } else if (matchedModelStr.includes(origNorm) || origNorm.includes(matchedModelStr)) {
+      row.matchRate = 90
+    } else {
+      row.matchRate = 80
+    }
+  }
+
+  // 将手动调整保存到后端（写入 manual_matching_override 表），
+  // 这样后续的批量匹配也会使用此覆盖结果
+  saveEqManualAdjustment(clickedRow.brand, originalModel, result)
+
+  const count = sameModelIndexes.length
+  if (count > 1) {
+    ElMessage.success(`已将匹配结果应用到所有 ${count} 条「${originalModel}」记录`)
+  }
+
+  closeEqSearch()
+}
+
+/** 保存手动匹配覆盖到后端 */
+async function saveEqManualAdjustment(originalManufacturer: string, originalModel: string, searchResult: any) {
+  const adjustment = {
+    original_manufacturer: originalManufacturer || '',
+    original_model: originalModel,
+    matched_manufacturer: searchResult.manufacturer || originalManufacturer || '',
+    matched_model_number: searchResult.model_number || '',
+    device_price: searchResult.device_price || null,
+    primary_category: searchResult.primary_category || '',
+    secondary_category: searchResult.secondary_category || '',
+    tertiary_category: searchResult.tertiary_category || '',
+    device_category: searchResult.tertiary_category || '',
+    data_source: eqMatchDataSource.value
+  }
+
+  try {
+    await axios.post(`${API_URL}/manual-matching-override/batch`, [adjustment])
+    console.log('手动匹配覆盖已保存:', adjustment)
+  } catch (err) {
+    console.warn('手动匹配覆盖保存失败（不影响当前操作）:', err)
+  }
+}
+
+function clearEqMatchResult(index: number) {
+  const row = equipmentList.value[index]
+  row.matchedModel = ''
+  row.matchedManufacturer = ''
+  row.matchRate = 0
+  row.matchedPrice = 0
+  row.matchedDeviceType = ''
+  row.matchedPrimaryCategory = ''
+  row.matchedSecondaryCategory = ''
+  row.matchedTertiaryCategory = ''
+}
+
+/** 手动修改某行的机架高度(U)后，同步所有匹配型号相同的行 */
+function syncRackUByModel(row: EquipmentRow) {
+  const model = row.matchedModel
+  if (!model) return
+  for (const r of equipmentList.value) {
+    if (r !== row && r.matchedModel === model) {
+      r.rackU = row.rackU
+    }
+  }
+}
+
+// 关闭下拉菜单（点击页面其他位置）
+function onDocClickEquipment(e: MouseEvent) {
+  if (eqActiveDropdown.value) {
+    const target = e.target as HTMLElement
+    if (!target.closest('.eq-header-dropdown-wrap')) {
+      eqActiveDropdown.value = null
+    }
+  }
+}
+onMounted(() => document.addEventListener('click', onDocClickEquipment))
+onUnmounted(() => document.removeEventListener('click', onDocClickEquipment))
 
 const activeTab = ref(3)
 const insuranceRatePermille = ref(6)
-const declaredValue = ref(24500000)
+const declaredValue = ref(0)
 /** 设备申报总价值输入框编辑态：非 null 时显示该字符串，失焦后解析为 declaredValue 并置为 null */
 const declaredValueInput = ref<string | null>(null)
+
+/** 从设备明细清单自动计算设备申报总价值：匹配价格 × 数量 的总和 */
+const equipmentTotalDeclaredValue = computed(() => {
+  return equipmentList.value.reduce((sum, row) => {
+    const price = Number(row.matchedPrice) || 0
+    const qty = parseEquipmentNumber(row.quantity)
+    return sum + price * qty
+  }, 0)
+})
+
+// 设备清单变更时自动同步申报总价值
+watch(equipmentTotalDeclaredValue, (newVal) => {
+  declaredValue.value = Math.round(newVal * 100) / 100
+})
 
 // 车辆与物流：从机房搬迁车型数据动态拉取
 const vehicleOptions = ref<Array<{ id: number; vehicle_name?: string; vehicle_category?: string; server_1u?: string; start_price?: string; km_price?: string }>>([])
@@ -2425,6 +3416,65 @@ const distinctVehiclesInUse = computed(() => {
     return { vehicleId, vehicle: vehicle ?? { id: vehicleId, vehicle_name: `车型 #${vehicleId}` } }
   })
 })
+
+/** 运力判断：计算所有批次全部车辆的总可装U数，并与设备清单的总占用U数比较 */
+const vehicleCapacityCheck = computed(() => {
+  const requiredU = totalRackU.value
+  let totalCapacityU = 0
+  let hasVehicle = false
+  // 遍历所有批次的所有条目
+  for (const batch of logisticsBatches.value) {
+    for (const item of batch.items) {
+      if (item.vehicleId == null) continue
+      const vehicle = vehicleOptions.value.find(v => v.id === item.vehicleId)
+      if (!vehicle) continue
+      hasVehicle = true
+      const maxPerTrip = parseRangeToMax(vehicle.server_1u)
+      if (maxPerTrip <= 0) continue
+      totalCapacityU += maxPerTrip * (Number(item.quantity) || 0)
+    }
+  }
+  const sufficient = !hasVehicle || requiredU <= 0 || totalCapacityU >= requiredU
+  const shortage = requiredU - totalCapacityU
+  return { requiredU, totalCapacityU, sufficient, shortage, hasVehicle }
+})
+
+/** 按车型汇总的建议最少车辆数 */
+const vehicleMinQuantities = computed(() => {
+  const requiredU = totalRackU.value
+  if (requiredU <= 0) return []
+  // 收集当前使用的不同车型
+  const vehicleIds = new Set<number>()
+  for (const batch of logisticsBatches.value) {
+    for (const item of batch.items) {
+      if (item.vehicleId != null) vehicleIds.add(item.vehicleId)
+    }
+  }
+  const result: Array<{ vehicleId: number; name: string; maxPerTrip: number; currentQty: number; minQty: number }> = []
+  for (const vid of vehicleIds) {
+    const vehicle = vehicleOptions.value.find(v => v.id === vid)
+    if (!vehicle) continue
+    const maxPerTrip = parseRangeToMax(vehicle.server_1u)
+    if (maxPerTrip <= 0) continue
+    // 当前该车型的总数量
+    let currentQty = 0
+    for (const batch of logisticsBatches.value) {
+      for (const item of batch.items) {
+        if (item.vehicleId === vid) currentQty += Number(item.quantity) || 0
+      }
+    }
+    const minQty = Math.ceil(requiredU / maxPerTrip)
+    result.push({
+      vehicleId: vid,
+      name: vehicle.vehicle_name || vehicle.vehicle_category || `车型 #${vid}`,
+      maxPerTrip,
+      currentQty,
+      minQty,
+    })
+  }
+  return result
+})
+
 function getStartPriceForVehicle(vehicleId: number | null): number {
   if (vehicleId == null) return 0
   const override = vehicleOverrides.value[vehicleId]?.startPrice
@@ -2662,7 +3712,7 @@ function openRoutePlanningMap(row: LogisticsItem) {
   routePlanningRow.value = row
   routePlanningOrigin.value = routeLocations.value[o] || null
   routePlanningDest.value = routeLocations.value[d] || null
-  routePlanningPolicy.value = 0 // 默认推荐路线，与官方 web 一致且可返回多条方案
+  routePlanningPolicy.value = 1 // 默认最短路程
   routePlanningResults.value = []
   routePlanningSelectedIndex.value = null
   routePlanningApiRoutes.value = []
@@ -2883,6 +3933,10 @@ async function searchRoutePlan() {
     }))
     routePlanningSelectedIndex.value = 0
     drawRoutePlanningPolyline(0, true)
+    // 自动将第一条路线的公里数写入行
+    if (plans.length > 0 && routePlanningRow.value) {
+      routePlanningRow.value.km = plans[0].distanceKm
+    }
     return
   }
 
@@ -3000,7 +4054,13 @@ async function searchRoutePlan() {
       }
 
       routePlanningResults.value = plans
-      if (plans.length > 0) routePlanningSelectedIndex.value = 0
+      if (plans.length > 0) {
+        routePlanningSelectedIndex.value = 0
+        // 自动将第一条路线的公里数写入行
+        if (routePlanningRow.value) {
+          routePlanningRow.value.km = plans[0].distanceKm
+        }
+      }
     }
   })
 
@@ -3020,6 +4080,11 @@ function selectRoutePlan(index: number) {
   routePlanningSelectedIndex.value = index
   if (routePlanningApiRoutes.value.length > 0) {
     drawRoutePlanningPolyline(index, true)
+  }
+  // 切换路线方案时实时更新公里数
+  const selected = routePlanningResults.value[index]
+  if (selected && routePlanningRow.value) {
+    routePlanningRow.value.km = selected.distanceKm
   }
 }
 
@@ -3061,10 +4126,11 @@ const packagingTiers = ref(
   DEFAULT_PACKAGING_TIERS.map((t) => ({ ...t }))
 )
 
-/** 根据机架高度 U 值映射到包装梯档索引：<2U→0, 3-5U→1, 6-10U→2, 11-20U→3, >20U→4 */
-function getTierIndexForRackU(u: number): number {
+/** 根据机架高度 U 值映射到包装梯档索引：<2U→0, 3-5U→1, 6-10U→2, 11-20U→3, >20U→4, 未知→-1 */
+function getTierIndexForRackU(u: unknown): number {
+  if (u === null || u === undefined || u === '') return -1
   const n = Number(u)
-  if (isNaN(n) || n < 0) return 0
+  if (isNaN(n) || n <= 0) return -1
   if (n <= 2) return 0
   if (n <= 5) return 1
   if (n <= 10) return 2
@@ -3072,27 +4138,41 @@ function getTierIndexForRackU(u: number): number {
   return 4
 }
 
-/** 按包装梯档汇总设备明细清单的数量（与「按U数梯度包装计费」条目的机架高度、数量逻辑一致） */
+/** 按包装梯档汇总设备明细清单的数量，返回 { byTier: number[5], unknown: number } */
 const equipmentQuantityByTier = computed(() => {
   const tiers = DEFAULT_PACKAGING_TIERS.length
   const byTier = new Array<number>(tiers).fill(0)
+  let unknown = 0
   for (const row of equipmentList.value) {
     const q = Number(row.quantity) || 0
     if (q <= 0) continue
-    const ti = getTierIndexForRackU(Number(row.rackU) || 0)
-    byTier[ti] += q
+    const ti = getTierIndexForRackU(row.rackU)
+    if (ti === -1) {
+      unknown += q
+    } else {
+      byTier[ti] += q
+    }
   }
-  return byTier
+  return { byTier, unknown }
 })
 
 /** 根据设备明细清单的机架高度(U)与数量，自动生成「按U数梯度包装计费」条目（每梯档一行，数量为对应设备数量之和） */
 function syncPackagingFromEquipment() {
-  const byTier = equipmentQuantityByTier.value
-  packagingItems.value = byTier.map((quantity, tierIndex) => ({
+  const { byTier, unknown } = equipmentQuantityByTier.value
+  const items: PackagingItem[] = byTier.map((quantity, tierIndex) => ({
     id: nextPackagingId(),
     tierIndex,
     quantity
   }))
+  // 机架高度为空的设备归为"未知"条目（tierIndex = -1），由用户手动调整
+  if (unknown > 0) {
+    items.push({
+      id: nextPackagingId(),
+      tierIndex: -1,
+      quantity: unknown
+    })
+  }
+  packagingItems.value = items
 }
 
 /** 人工搬运费：与按U数梯度包装计费结构一致，单价逻辑后续单独配置 */
@@ -3187,9 +4267,9 @@ function clampPackagingItemQuantity(idx: number) {
   if (row) row.quantity = clampNonNegative(Number(row.quantity) || 0)
 }
 
-/** 仅展示数量 > 0 的包装条目（数量为 0 的梯档不显示） */
+/** 仅展示数量 > 0 或未知梯档的包装条目 */
 const packagingItemsVisible = computed(() =>
-  packagingItems.value.filter((row) => (Number(row.quantity) || 0) > 0)
+  packagingItems.value.filter((row) => (Number(row.quantity) || 0) > 0 || row.tierIndex === -1)
 )
 /** 包装计费数量汇总（用于表格底部校验展示） */
 const packagingQuantityTotal = computed(() =>
@@ -3257,14 +4337,20 @@ watch(packagingItems, syncManualHandlingFromPackaging, { deep: true, immediate: 
 // 设备明细清单变更时，自动按梯档汇总并更新「按U数梯度包装计费」条目与数量
 watch(equipmentList, () => syncPackagingFromEquipment(), { deep: true, immediate: true })
 
-/** 包装数量与设备清单一致性校验：合计数量不一致或某梯档合计数量不一致时返回提示文案 */
+/** 包装数量与设备清单一致性校验 */
 const packagingValidationWarning = computed(() => {
   const totalFromPackaging = packagingItems.value.reduce((sum, row) => sum + (Number(row.quantity) || 0), 0)
   const totalFromEquipment = totalEquipmentCount.value
+  // 存在未知梯档条目时优先提示
+  const unknownItems = packagingItems.value.filter(row => row.tierIndex === -1 && (Number(row.quantity) || 0) > 0)
+  if (unknownItems.length > 0) {
+    const unknownQty = unknownItems.reduce((s, r) => s + (Number(r.quantity) || 0), 0)
+    return `有 ${unknownQty} 台设备机架高度未知，请在下方选择对应的机架高度(U)档位，或在设备明细清单中补充机架高度信息后重新同步。`
+  }
   if (totalFromPackaging !== totalFromEquipment) {
     return `包装数量合计（${totalFromPackaging} 台）与设备明细清单总台数（${totalFromEquipment} 台）不一致，请点击「从设备清单同步」或核对数量。`
   }
-  const byTier = equipmentQuantityByTier.value
+  const { byTier } = equipmentQuantityByTier.value
   const sumByTier = new Array(5).fill(0)
   for (const row of packagingItems.value) {
     const ti = row.tierIndex
@@ -3993,7 +5079,7 @@ function confirmRouteMapFromSearch() {
   doRouteSearch(keyword)
 }
 
-// 人工服务成本明细
+// 人工服务费
 const laborServiceTypeOptions = ['现场勘察', '项目管理', '其它服务']
 let laborIdCounter = 0
 function nextLaborId() {
@@ -4302,27 +5388,14 @@ const totalGrossProfit = computed(() => {
 /** 利润率显示 */
 const totalMargin = computed(() => (globalParams.value.profitRate ?? 0).toFixed(1))
 
-/** 成本构成（占项目总额比例，用于右侧栏展示） */
-const costBreakdown = computed(() => {
+/** 成本构成（按大类分组，含子项明细，用于右侧栏展示） */
+interface CostSubItem { name: string; amount: number; percent: number }
+interface CostGroup { name: string; amount: number; percent: number; color: string; children: CostSubItem[] }
+const costBreakdown = computed((): CostGroup[] => {
   const total = finalProjectAmount.value
   const vat = 1 + (globalParams.value.vatRate ?? 6) / 100
-  if (total <= 0) {
-    return [
-      { name: '包装耗材费', percent: 0, amount: 0, color: '#3b82f6' },
-      { name: '物流运输费', percent: 0, amount: 0, color: '#8b5cf6' },
-      { name: '人工搬运费', percent: 0, amount: 0, color: '#a78bfa' },
-      { name: '同园区搬迁费', percent: 0, amount: 0, color: '#6366f1' },
-      { name: '专业人工费', percent: 0, amount: 0, color: '#06b6d4' },
-      { name: '增值服务费', percent: 0, amount: 0, color: '#f59e0b' },
-      { name: '专用设备租用', percent: 0, amount: 0, color: '#ec4899' },
-      { name: '外部人工调用', percent: 0, amount: 0, color: '#d946ef' },
-      { name: '专用设备采购', percent: 0, amount: 0, color: '#a855f7' },
-      { name: '设备保险费', percent: 0, amount: 0, color: '#eab308' },
-      { name: '账期成本', percent: 0, amount: 0, color: '#22c55e' },
-      { name: '预估总毛利', percent: 0, amount: 0, color: '#10b981' }
-    ]
-  }
-  const fundingCost = Math.round(total * fundingCostRateForCycle.value)
+  const pct = (v: number) => total > 0 ? Math.round((v / total) * 100) : 0
+
   const p1 = Math.round(packagingCost.value * vat)
   const p2 = Math.round(logisticsCost.value * vat)
   const pMh = Math.round(manualHandlingCost.value * vat)
@@ -4333,31 +5406,55 @@ const costBreakdown = computed(() => {
   const pLabor = Math.round(externalLaborCost.value * vat)
   const pPurchase = Math.round(equipmentPurchaseCost.value * vat)
   const p5 = Math.round(insuranceCost.value * vat)
-  const percent1 = total > 0 ? Math.round((p1 / total) * 100) : 0
-  const percent2 = total > 0 ? Math.round((p2 / total) * 100) : 0
-  const percentMh = total > 0 ? Math.round((pMh / total) * 100) : 0
-  const percentSamePark = total > 0 ? Math.round((pSamePark / total) * 100) : 0
-  const percent3 = total > 0 ? Math.round((p3 / total) * 100) : 0
-  const percent4 = total > 0 ? Math.round((p4 / total) * 100) : 0
-  const percentRental = total > 0 ? Math.round((pRental / total) * 100) : 0
-  const percentLabor = total > 0 ? Math.round((pLabor / total) * 100) : 0
-  const percentPurchase = total > 0 ? Math.round((pPurchase / total) * 100) : 0
-  const percent5 = total > 0 ? Math.round((p5 / total) * 100) : 0
-  const percentFunding = total > 0 ? Math.round((fundingCost / total) * 100) : 0
-  const percentProfit = total > 0 ? (100 - percent1 - percent2 - percentMh - percentSamePark - percent3 - percent4 - percentRental - percentLabor - percentPurchase - percent5 - percentFunding) : 0
+  const fundingCost = Math.round(total * fundingCostRateForCycle.value)
+
+  // 人工服务费 = 专业人工费（现场勘察、项目管理等）
+  const laborTotal = p3
+  const laborChildren: CostSubItem[] = laborCostItems.value.map(item => {
+    const amt = Math.round(item.quantity * item.unitPrice * vat)
+    return { name: item.serviceType, amount: amt, percent: pct(amt) }
+  })
+
+  // 包装耗材费
+  const packChildren: CostSubItem[] = []
+  for (const item of packagingItems.value) {
+    const tier = packagingTiers.value[item.tierIndex]
+    if (!tier) continue
+    const amt = Math.round(item.quantity * tier.price * vat)
+    if (amt > 0) packChildren.push({ name: tier.range, amount: amt, percent: pct(amt) })
+  }
+
+  // 物流运输费 = 车辆配送费 + 人工搬运费 + 同园区搬迁费
+  const logisticsTotal = p2 + pMh + pSamePark
+  const logisticsChildren: CostSubItem[] = [
+    { name: '车辆配送费', amount: p2, percent: pct(p2) },
+    { name: '人工搬运费', amount: pMh, percent: pct(pMh) },
+    { name: '同园区搬迁费', amount: pSamePark, percent: pct(pSamePark) },
+  ]
+
+  // 增值服务费
+  const vasChildren: CostSubItem[] = valueAddedItems.value.map(item => {
+    const amt = Math.round(item.quantity * item.unitPrice * vat)
+    return { name: item.itemName || '未命名', amount: amt, percent: pct(amt) }
+  })
+
+  // 其他费用 = 专用设备租用 + 外部人工调用 + 专用设备采购
+  const otherTotal = pRental + pLabor + pPurchase
+  const otherChildren: CostSubItem[] = [
+    { name: '专用设备租用', amount: pRental, percent: pct(pRental) },
+    { name: '外部人工调用', amount: pLabor, percent: pct(pLabor) },
+    { name: '专用设备采购', amount: pPurchase, percent: pct(pPurchase) },
+  ]
+
   return [
-    { name: '包装耗材费', percent: percent1, amount: p1, color: '#3b82f6' },
-    { name: '物流运输费', percent: percent2, amount: p2, color: '#8b5cf6' },
-    { name: '人工搬运费', percent: percentMh, amount: pMh, color: '#a78bfa' },
-    { name: '同园区搬迁费', percent: percentSamePark, amount: pSamePark, color: '#6366f1' },
-    { name: '专业人工费', percent: percent3, amount: p3, color: '#06b6d4' },
-    { name: '增值服务费', percent: percent4, amount: p4, color: '#f59e0b' },
-    { name: '专用设备租用', percent: percentRental, amount: pRental, color: '#ec4899' },
-    { name: '外部人工调用', percent: percentLabor, amount: pLabor, color: '#d946ef' },
-    { name: '专用设备采购', percent: percentPurchase, amount: pPurchase, color: '#a855f7' },
-    { name: '设备保险费', percent: percent5, amount: p5, color: '#eab308' },
-    { name: '账期成本', percent: percentFunding, amount: fundingCost, color: '#22c55e' },
-    { name: '预估总毛利', percent: percentProfit, amount: totalGrossProfit.value, color: '#10b981' }
+    { name: '人工服务费', amount: laborTotal, percent: pct(laborTotal), color: '#06b6d4', children: laborChildren },
+    { name: '包装耗材费', amount: p1, percent: pct(p1), color: '#3b82f6', children: packChildren },
+    { name: '物流运输费', amount: logisticsTotal, percent: pct(logisticsTotal), color: '#8b5cf6', children: logisticsChildren },
+    { name: '增值服务费', amount: p4, percent: pct(p4), color: '#f59e0b', children: vasChildren },
+    { name: '其他费用', amount: otherTotal, percent: pct(otherTotal), color: '#ec4899', children: otherChildren },
+    { name: '设备保险费', amount: p5, percent: pct(p5), color: '#eab308', children: [] },
+    { name: '账期成本', amount: fundingCost, percent: pct(fundingCost), color: '#22c55e', children: [] },
+    { name: '预估总毛利', amount: totalGrossProfit.value, percent: pct(totalGrossProfit.value), color: '#10b981', children: [] },
   ]
 })
 
@@ -4546,15 +5643,11 @@ const QUOTATION_TERMS = [
 ]
 
 const COST_NAME_DESC: Record<string, string> = {
+  '人工服务费': '现场勘察、项目管理等人工服务。',
   '包装耗材费': '包装材料、耗材及按 U 数梯度计费。',
-  '物流运输费': '车辆租赁、燃油、过路费及跨地市运输。',
-  '人工搬运费': '按 U 数梯度人工搬运费用。',
-  '同园区搬迁费': '同园区内搬迁人工与设备费用。',
-  '专业人工费': '现场勘察、项目管理等人工服务。',
+  '物流运输费': '车辆配送、人工搬运及同园区搬迁。',
   '增值服务费': '停机测试、设备上下架、线缆拆布等。',
-  '专用设备租用': '海关锁、车内 GPS/CCTV 等设备租用。',
-  '外部人工调用': '外部人员调用相关费用。',
-  '专用设备采购': '专用设备采购成本。',
+  '其他费用': '专用设备租用、外部人工调用、专用设备采购。',
   '设备保险费': '搬迁过程中设备损坏保险。',
   '账期成本': '基于账期与资金成本率核算。',
   '预估总毛利': '按利润率核算的预估毛利。'
@@ -4700,12 +5793,21 @@ async function handleExportQuotationPdf() {
 }
 
 function onGenerateQuote() {
-  showQuotationView.value = true
+  if (props.embedded) {
+    activeTab.value = 4
+  } else {
+    showQuotationView.value = true
+  }
 }
 
 function onExportExcel() {
   ElMessage.info('导出 Excel 明细功能待对接')
 }
+
+defineExpose({
+  activeTab,
+  onGenerateQuote,
+})
 </script>
 
 <style scoped>
@@ -4714,6 +5816,91 @@ function onExportExcel() {
   min-height: 100%;
   background: #0f172a;
   color: #e2e8f0;
+}
+
+.relocation-calculator-page.embedded-mode {
+  background: transparent;
+  min-height: 0;
+  height: 100%;
+  overflow-y: auto;
+  border-radius: 12px;
+}
+
+/* ---------- 内联报价视图（嵌入模式 tab4） ---------- */
+.inline-quotation-view {
+  margin-top: 1rem;
+}
+
+.inline-quotation-main {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 1.5rem;
+  min-height: 600px;
+}
+
+.inline-quotation-preview {
+  display: flex;
+  flex-direction: column;
+  background: #111827;
+  border: 1px solid #1e293b;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.inline-quotation-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid #1e293b;
+  background: #0f172a;
+  flex-shrink: 0;
+}
+
+.inline-quotation-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin: 0;
+}
+
+.inline-quotation-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.inline-quotation-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2rem;
+  display: flex;
+  justify-content: center;
+  background: #1a1f2e;
+}
+
+.inline-quotation-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  background: #111827;
+  border: 1px solid #1e293b;
+  border-radius: 12px;
+  padding: 1.25rem;
+  overflow-y: auto;
+  max-height: 800px;
+}
+
+@media (max-width: 1200px) {
+  .inline-quotation-main {
+    grid-template-columns: 1fr;
+  }
+  .inline-quotation-sidebar {
+    max-height: none;
+  }
 }
 
 .page-header {
@@ -5585,7 +6772,7 @@ function onExportExcel() {
   gap: 1.5rem;
 }
 
-/* 人工服务成本明细 */
+/* 人工服务费 */
 .labor-cost-panel,
 .value-added-panel {
   padding: 1.5rem;
@@ -5970,6 +7157,13 @@ function onExportExcel() {
   font-size: 1.125rem;
   flex-shrink: 0;
 }
+.unknown-tier-row {
+  background: rgba(251, 191, 36, 0.08) !important;
+}
+.unknown-tier-select {
+  border-color: #f59e0b !important;
+  color: #fbbf24 !important;
+}
 
 .packaging-tiers-title {
   display: flex;
@@ -6239,171 +7433,313 @@ function onExportExcel() {
   font-size: 0.875rem;
 }
 
-/* 批次模式主容器 - 匹配React参考 */
-.batch-main-container {
-  display: flex;
-  min-height: 680px;
-  background: #111827;
-  border-radius: 1rem;
-  border: 1px solid #1e293b;
-  overflow: hidden;
-}
-
-/* 左侧批次导航侧边栏 */
-.batch-sidebar {
-  width: 16rem;
-  flex-shrink: 0;
-  background: #0d121f;
-  border-right: 1px solid #1e293b;
-  display: flex;
-  flex-direction: column;
-}
-
-.batch-sidebar-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1rem;
-  border-bottom: 1px solid rgba(30, 41, 59, 0.5);
-}
-.sidebar-title {
-  font-size: 0.625rem;
-  font-weight: 700;
-  color: #64748b;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-}
-.sidebar-add-btn {
-  padding: 0.25rem;
-  background: transparent;
-  border: none;
-  color: #3b82f6;
-  cursor: pointer;
-  border-radius: 0.25rem;
-  transition: background 0.2s;
-}
-.sidebar-add-btn:hover {
-  background: rgba(30, 41, 59, 0.5);
-}
-.sidebar-add-btn .material-symbols-outlined {
-  font-size: 1rem;
-}
-
-.batch-list {
-  flex: 1;
-  overflow-y: auto;
-}
-
-.batch-item {
-  padding: 0.75rem 1rem;
-  cursor: pointer;
-  border-left: 2px solid transparent;
-  transition: all 0.2s;
-}
-.batch-item:hover {
-  background: rgba(30, 41, 59, 0.3);
-}
-.batch-item.active {
-  background: rgba(59, 130, 246, 0.1);
-  border-left-color: #3b82f6;
-}
-.batch-item.active .batch-item-name {
-  color: #fff;
-}
-
-.batch-item-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  white-space: nowrap;
-  overflow: hidden;
-}
-.batch-item-name {
-  font-size: 0.875rem;
-  font-weight: 700;
-  color: #64748b;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-}
-.batch-item-price {
-  font-size: 0.625rem;
-  font-family: ui-monospace, monospace;
-  color: #475569;
-  margin-left: 0.5rem;
-}
-
-.batch-item-date {
-  font-size: 0.625rem;
-  color: #475569;
-  margin-top: 0.125rem;
-}
-
-.batch-sidebar-footer {
-  padding: 1rem;
-  background: rgba(0, 0, 0, 0.2);
-  border-top: 1px solid #1e293b;
-}
-.footer-label {
-  font-size: 0.625rem;
-  color: #64748b;
-}
-.footer-total {
-  font-size: 1.25rem;
-  font-weight: 700;
-  font-family: ui-monospace, monospace;
-  color: #60a5fa;
-}
-
-/* 右侧批次详情内容区 */
-.batch-content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 1.5rem;
+/* ===== 拆分批次：卡片式布局 ===== */
+.batch-cards-layout {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
 }
 
-/* 批次基础属性带边框容器 */
-.batch-info-box {
-  background: #161e31;
-  padding: 1rem;
+/* 单个批次卡片 */
+.batch-card {
+  background: rgba(22, 34, 46, 0.6);
   border-radius: 0.75rem;
-  border: 1px solid rgba(51, 65, 85, 0.5);
+  border: 1px solid #2e4b6b;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+.batch-card.active {
+  border-color: rgba(0, 122, 255, 0.5);
 }
 
-.batch-info-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+/* 批次卡片顶部：属性区域 */
+.batch-card-top {
+  display: flex;
+  align-items: flex-start;
   gap: 1rem;
+  padding: 1.25rem 1.5rem;
 }
 
-.batch-info-item {
+.batch-card-fields {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem 1.5rem;
+}
+.batch-field {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.375rem;
+}
+.batch-field.batch-field-wide {
+  grid-column: 1 / -1;
+}
+.batch-field-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.batch-field-input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  background: rgba(15, 25, 35, 0.5);
+  border: 1px solid #2e4b6b;
+  border-radius: 0.5rem;
+  color: #e2e8f0;
+  font-size: 0.8125rem;
+  box-sizing: border-box;
+  transition: border-color 0.2s;
+}
+.batch-field-input:focus {
+  outline: none;
+  border-color: #007aff;
+  box-shadow: 0 0 0 1px rgba(0, 122, 255, 0.3);
 }
 
-.info-label {
-  font-size: 0.625rem;
-  font-weight: 700;
+.batch-card-delete {
+  padding: 0.5rem;
+  background: transparent;
+  border: none;
+  color: #475569;
+  cursor: pointer;
+  border-radius: 0.375rem;
+  transition: color 0.2s;
+  flex-shrink: 0;
+  margin-top: 1.25rem;
+}
+.batch-card-delete:hover:not(:disabled) {
+  color: #ef4444;
+}
+.batch-card-delete:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.batch-card-delete .material-symbols-outlined {
+  font-size: 1.125rem;
+}
+
+/* 批次卡片：车型条目区域 */
+.batch-card-items {
+  padding: 0 1.5rem;
+}
+.batch-card-items-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 0.625rem;
+  border-top: 1px solid rgba(46, 75, 107, 0.3);
+  padding-top: 0.75rem;
+}
+.batch-card-items-title {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #94a3b8;
+}
+.batch-card-items-title .material-symbols-outlined {
+  font-size: 1rem;
   color: #64748b;
 }
 
-.info-input {
-  width: 100%;
-  padding: 0.375rem 0.75rem;
-  background: #0f172a;
-  border: 1px solid #334155;
+/* 批次卡片内单条车型 */
+.batch-card-item-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.batch-card-item-row {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.625rem 0.75rem;
+  background: rgba(15, 25, 35, 0.3);
+  border: 1px solid rgba(46, 75, 107, 0.3);
   border-radius: 0.5rem;
-  color: #fff;
+}
+.bc-item-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+  flex-shrink: 1;
+}
+.bc-item-field:first-child {
+  /* 车型列：自适应内容宽度，不过度拉伸 */
+  flex: 0 1 auto;
+}
+.bc-item-field:nth-child(2) {
+  /* 运输路径列：左侧留出间距避免与车型交叉 */
+  flex: 0 1 auto;
+  margin-left: 1rem;
+}
+.bc-item-label {
+  font-size: 0.625rem;
+  color: #64748b;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.bc-item-nums {
+  display: flex;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+}
+.bc-num-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1;
+  min-width: 0;
+}
+.bc-num-field.bc-num-narrow {
+  flex: 0 0 3.5rem;
+  max-width: 3.5rem;
+}
+.bc-item-total-field {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: flex-end;
+}
+.bc-item-total-val {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #e2e8f0;
+  font-family: ui-monospace, monospace;
+  white-space: nowrap;
+  line-height: 2rem;
+}
+.bc-item-delete {
+  padding: 0.25rem;
+  background: transparent;
+  border: none;
+  color: #475569;
+  cursor: pointer;
+  transition: color 0.2s;
+  flex-shrink: 0;
+}
+.bc-item-delete:hover {
+  color: #ef4444;
+}
+.bc-item-delete .material-symbols-outlined {
+  font-size: 1rem;
+}
+
+/* 批次模式内的车型select：自适应宽度 */
+.batch-card-item-row .vehicle-cell {
+  gap: 0.375rem;
+}
+.batch-card-item-row .vehicle-select {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 5rem;
+  max-width: 10rem;
+}
+.batch-card-item-row .vehicle-icon {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
+/* 批次模式内的路径select */
+.batch-card-item-row .route-path-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  white-space: nowrap;
+}
+.batch-card-item-row .route-select {
+  min-width: 3rem;
+  max-width: 5rem;
+}
+
+/* 批次模式内的数值输入 */
+.batch-card-item-row .num-input {
+  width: 100%;
+  min-width: 3rem;
+}
+
+/* 批次车辆表格 */
+.batch-vehicle-table {
+  /* 复用 labor-cost-table 的基础样式，仅覆盖列宽 */
+}
+.batch-vehicle-table thead th.col-type { width: 18%; }
+.batch-vehicle-table thead th.col-desc { width: 28%; }
+.batch-vehicle-table thead th.col-qty { width: 10%; text-align: center; }
+.batch-vehicle-table thead th.col-price { width: 12%; text-align: center; }
+.batch-vehicle-table thead th.col-total { width: 14%; text-align: right; }
+.batch-vehicle-table thead th.col-action { width: 3rem; }
+
+.batch-vehicle-table .route-path-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.batch-vehicle-table .route-inline-select {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+.batch-vehicle-table .route-inline-select.empty {
+  color: #64748b;
+}
+.batch-vehicle-table .route-arrow {
+  color: #475569;
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+.batch-vehicle-table .route-map-btn-small {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  padding: 0;
+  margin-left: 0.125rem;
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 0.25rem;
+  color: #3b82f6;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.batch-vehicle-table .route-map-btn-small:hover {
+  background: rgba(59, 130, 246, 0.25);
+}
+.batch-vehicle-table .route-map-btn-small .material-symbols-outlined {
   font-size: 0.75rem;
 }
-.info-input:focus {
-  outline: none;
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 1px #3b82f6;
+
+.batch-card-empty-cell {
+  text-align: center !important;
+  color: #475569 !important;
+  font-size: 0.8125rem;
+  padding: 1.5rem !important;
+}
+
+/* 批次卡片底部：费用小计 */
+.batch-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: 0.875rem 1.5rem;
+  margin-top: 0.75rem;
+  background: rgba(15, 25, 35, 0.3);
+  border-top: 1px solid rgba(46, 75, 107, 0.3);
+}
+.batch-card-footer-label {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+.batch-card-footer-total {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #e2e8f0;
+  font-family: ui-monospace, monospace;
 }
 
 /* 车辆条目区域 */
@@ -6560,9 +7896,49 @@ function onExportExcel() {
 }
 
 /* 非批次模式的旧版grid布局 */
+.batch-vehicles-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+.batch-vehicles-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin: 0;
+}
+.batch-vehicles-title .material-symbols-outlined {
+  font-size: 1.125rem;
+  color: #64748b;
+}
+.add-vehicle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.375rem 0.75rem;
+  background: transparent;
+  border: 1px solid #475569;
+  border-radius: 0.5rem;
+  color: #94a3b8;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.add-vehicle-btn:hover {
+  border-color: #3b82f6;
+  color: #3b82f6;
+}
+.add-vehicle-btn .material-symbols-outlined {
+  font-size: 1rem;
+}
+
 .batch-table-header {
   display: grid;
-  grid-template-columns: 2fr 2fr 1fr 1fr 1fr 1.2fr 0.5fr;
+  grid-template-columns: minmax(160px, 2fr) minmax(120px, 1.5fr) 3.5rem minmax(50px, 1fr) 3.5rem minmax(70px, 1fr) 2.5rem;
   gap: 0.75rem;
   padding: 0.5rem 1rem;
   font-size: 0.625rem;
@@ -6583,7 +7959,7 @@ function onExportExcel() {
 
 .batch-vehicle-card {
   display: grid;
-  grid-template-columns: 2fr 2fr 1fr 1fr 1fr 1.2fr 0.5fr;
+  grid-template-columns: minmax(160px, 2fr) minmax(120px, 1.5fr) 3.5rem minmax(50px, 1fr) 3.5rem minmax(70px, 1fr) 2.5rem;
   gap: 0.75rem;
   align-items: center;
   padding: 0.875rem 1rem;
@@ -6617,6 +7993,7 @@ function onExportExcel() {
 }
 .vehicle-select {
   flex: 1;
+  min-width: 0;
   padding: 0.375rem 0.5rem;
   background: #0f172a;
   border: 1px solid #334155;
@@ -6625,16 +8002,23 @@ function onExportExcel() {
   font-size: 0.8125rem;
   font-weight: 500;
   cursor: pointer;
+  text-overflow: ellipsis;
+  overflow: hidden;
 }
 .vehicle-select:focus {
   outline: none;
   border-color: #3b82f6;
 }
 
+.col-route {
+  min-width: 0;
+  overflow: hidden;
+}
 .col-route .route-path-inline {
   display: flex;
   align-items: center;
   gap: 0.25rem;
+  min-width: 0;
 }
 .route-select {
   padding: 0.25rem 0.375rem;
@@ -6644,8 +8028,11 @@ function onExportExcel() {
   font-size: 0.8125rem;
   font-weight: 500;
   cursor: pointer;
-  min-width: 3.5rem;
+  min-width: 2.5rem;
+  max-width: 5rem;
   text-align: center;
+  text-overflow: ellipsis;
+  overflow: hidden;
 }
 .route-select:hover {
   color: #7dd3fc;
@@ -6697,6 +8084,10 @@ function onExportExcel() {
 .num-input:focus {
   outline: none;
   border-color: #3b82f6;
+}
+/* 确保 grid 子项不溢出 */
+.batch-vehicle-card > div {
+  min-width: 0;
 }
 
 .col-total .total-value {
@@ -6847,6 +8238,56 @@ function onExportExcel() {
 .vehicle-price-input:focus {
   outline: none;
   border-color: #3b82f6;
+}
+
+/* 运力不足提醒 */
+.capacity-warning {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.875rem 1rem;
+  margin-top: 0.75rem;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 0.75rem;
+}
+.capacity-warning-icon {
+  font-size: 1.25rem;
+  color: #f59e0b;
+  flex-shrink: 0;
+  margin-top: 0.125rem;
+}
+.capacity-warning-body {
+  flex: 1;
+  min-width: 0;
+}
+.capacity-warning-title {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: #fbbf24;
+  margin: 0 0 0.25rem;
+}
+.capacity-warning-desc {
+  font-size: 0.75rem;
+  color: #d1d5db;
+  margin: 0 0 0.375rem;
+  line-height: 1.5;
+}
+.capacity-warning-desc strong {
+  color: #fbbf24;
+}
+.capacity-warning-list {
+  margin: 0;
+  padding: 0 0 0 1rem;
+  font-size: 0.75rem;
+  color: #9ca3af;
+  line-height: 1.6;
+}
+.capacity-warning-list strong {
+  color: #e2e8f0;
+}
+.capacity-short {
+  color: #f87171;
+  font-weight: 600;
 }
 
 /* 底部结算栏 */
@@ -7791,6 +9232,39 @@ function onExportExcel() {
   background: #38bdf8;
 }
 
+.equipment-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.eq-source-select {
+  padding: 0.4rem 0.625rem;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid #334155;
+  border-radius: 0.375rem;
+  color: #e2e8f0;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.2s;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2394a3b8' d='M3 5l3 3 3-3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.5rem center;
+  padding-right: 1.5rem;
+}
+
+.eq-source-select:focus {
+  border-color: #38bdf8;
+}
+
+.eq-source-select option {
+  background: #1e293b;
+  color: #e2e8f0;
+}
+
 .clear-list-btn {
   display: inline-flex;
   align-items: center;
@@ -7801,13 +9275,382 @@ function onExportExcel() {
   overflow-x: auto;
 }
 
+.equipment-import-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
 .equipment-table th.col-brand { min-width: 6rem; }
 .equipment-table th.col-model { min-width: 8rem; }
+.equipment-table th.col-match-model { min-width: 10rem; }
 .equipment-table th.col-type { min-width: 6rem; }
+.equipment-table th.col-match-type { min-width: 10rem; }
 .equipment-table th.col-u,
 .equipment-table th.col-qty { min-width: 5rem; }
 .equipment-table th.col-asset { min-width: 8rem; }
 .equipment-table th.col-action { width: 4rem; text-align: center; }
+
+/* ---- 原始导入表格 ---- */
+.eq-original-table-section {
+  overflow: hidden;
+  padding: 0;
+}
+.eq-original-table-header {
+  display: flex;
+  align-items: center;
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid #334155;
+  background: rgba(30, 41, 59, 0.6);
+}
+.eq-original-file-tag,
+.eq-original-count-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.5rem;
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: 9999px;
+  font-size: 0.6875rem;
+  color: #38bdf8;
+  margin-left: 0.5rem;
+}
+.eq-original-count-tag {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #94a3b8;
+}
+.eq-original-table-wrap {
+  overflow-x: auto;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.eq-original-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #1e293b;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+.eq-original-table td {
+  white-space: nowrap;
+  font-size: 0.8125rem;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- 列映射表头 ---- */
+.eq-header-dropdown-wrap {
+  position: relative;
+  cursor: pointer;
+  user-select: none;
+}
+.eq-header-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.eq-dropdown-icon {
+  font-size: 1rem;
+  color: #64748b;
+  transition: transform 0.2s;
+}
+.eq-mapped-source {
+  display: block;
+  font-size: 0.625rem;
+  color: #64748b;
+  font-weight: 400;
+  margin-top: 0.125rem;
+}
+.eq-mapped-source.mapped {
+  color: #38bdf8;
+}
+.eq-mapping-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 100;
+  min-width: 180px;
+  max-height: 240px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.eq-dd-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #334155;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+.eq-dd-header button {
+  background: none;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+}
+.eq-dd-header button .material-symbols-outlined { font-size: 1rem; }
+.eq-dd-options {
+  overflow-y: auto;
+  max-height: 200px;
+}
+.eq-dd-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  color: #cbd5e1;
+  transition: background 0.15s;
+}
+.eq-dd-option:hover {
+  background: rgba(56, 189, 248, 0.1);
+}
+.eq-dd-option.selected {
+  color: #38bdf8;
+}
+.eq-dd-option .material-symbols-outlined {
+  font-size: 1.125rem;
+}
+
+/* ---- 匹配型号列 ---- */
+.eq-match-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+.eq-matched-model {
+  cursor: pointer;
+  font-size: 0.8125rem;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  transition: background 0.15s;
+  white-space: nowrap;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.eq-matched-model:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.eq-matched-model.high-match { color: #4ade80; }
+.eq-matched-model.mid-match { color: #facc15; }
+.eq-matched-model.low-match { color: #fb923c; }
+.eq-matched-model.no-match { color: #64748b; }
+
+.eq-match-badge {
+  font-size: 0.625rem;
+  padding: 0.0625rem 0.375rem;
+  border-radius: 9999px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.eq-match-badge.high { background: rgba(74, 222, 128, 0.15); color: #4ade80; }
+.eq-match-badge.mid { background: rgba(250, 204, 21, 0.15); color: #facc15; }
+.eq-match-badge.low { background: rgba(251, 146, 60, 0.15); color: #fb923c; }
+
+.eq-clear-match-btn {
+  background: none;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  transition: color 0.15s;
+}
+.eq-clear-match-btn:hover { color: #f87171; }
+.eq-clear-match-btn .material-symbols-outlined { font-size: 0.875rem; }
+
+.eq-match-type-text {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+.eq-match-type-text.empty {
+  color: #475569;
+}
+
+/* 行状态高亮 */
+.eq-row-warning {
+  border-left: 3px solid #facc15;
+}
+.eq-row-error {
+  border-left: 3px solid #f87171;
+}
+
+/* 匹配中动画 */
+.eq-matching-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.75rem;
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: 9999px;
+  font-size: 0.6875rem;
+  color: #38bdf8;
+  margin-left: 0.5rem;
+}
+.eq-matching-spinner {
+  width: 0.75rem;
+  height: 0.75rem;
+  border: 2px solid rgba(56, 189, 248, 0.2);
+  border-top-color: #38bdf8;
+  border-radius: 50%;
+  animation: eq-spin 0.7s linear infinite;
+}
+@keyframes eq-spin { to { transform: rotate(360deg); } }
+
+/* ---- 搜索弹窗 ---- */
+.eq-search-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.eq-search-dialog {
+  width: 90%;
+  max-width: 600px;
+  max-height: 80vh;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+}
+.eq-search-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid #1e293b;
+}
+.eq-search-dialog-header h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #f1f5f9;
+}
+.eq-search-close-btn {
+  background: none;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0.25rem;
+  display: flex;
+  transition: color 0.15s;
+}
+.eq-search-close-btn:hover { color: #f1f5f9; }
+.eq-search-bar {
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid #1e293b;
+}
+.eq-search-input {
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  color: #e2e8f0;
+  font-size: 0.875rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.eq-search-input:focus {
+  border-color: #38bdf8;
+}
+.eq-search-source-selector {
+  display: flex;
+  gap: 1rem;
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+.eq-search-source-selector label {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  cursor: pointer;
+}
+.eq-search-source-selector input[type="radio"] {
+  accent-color: #38bdf8;
+}
+.eq-search-results {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem;
+  min-height: 100px;
+  max-height: 400px;
+}
+.eq-search-loading,
+.eq-search-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 2rem;
+  color: #64748b;
+  font-size: 0.875rem;
+}
+.eq-search-result-item {
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: background 0.15s;
+  border: 1px solid transparent;
+}
+.eq-search-result-item:hover {
+  background: rgba(56, 189, 248, 0.08);
+  border-color: rgba(56, 189, 248, 0.2);
+}
+.eq-result-main {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.eq-result-manufacturer {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  min-width: 4rem;
+}
+.eq-result-model {
+  font-size: 0.875rem;
+  color: #f1f5f9;
+  font-weight: 500;
+}
+.eq-result-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.25rem;
+}
+.eq-result-category {
+  font-size: 0.6875rem;
+  color: #64748b;
+}
+.eq-result-price {
+  font-size: 0.75rem;
+  color: #38bdf8;
+  font-weight: 500;
+}
 
 .equipment-row:hover {
   background: rgba(255, 255, 255, 0.05);
@@ -7935,7 +9778,7 @@ function onExportExcel() {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  /* 与左侧「人工服务成本明细」上端对齐：预留与 tabs-row 等高的上边距 */
+  /* 与左侧「人工服务费」上端对齐：预留与 tabs-row 等高的上边距 */
   padding-top: 4.5rem;
 }
 
@@ -8188,6 +10031,40 @@ function onExportExcel() {
   height: 100%;
   border-radius: 0.25rem;
   transition: width 0.3s ease;
+}
+
+.breakdown-group {
+  margin-bottom: 0.25rem;
+}
+.breakdown-item-group .breakdown-name {
+  font-weight: 600;
+}
+.breakdown-children {
+  padding-left: 0.75rem;
+  margin-top: 0.25rem;
+  margin-bottom: 0.375rem;
+  border-left: 2px solid #334155;
+}
+.breakdown-sub-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.125rem 0;
+  font-size: 0.6875rem;
+  color: #64748b;
+}
+.breakdown-sub-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.breakdown-sub-amount {
+  font-family: ui-monospace, monospace;
+  font-size: 0.6875rem;
+  color: #94a3b8;
+  margin-left: 0.5rem;
+  white-space: nowrap;
 }
 
 .summary-actions {

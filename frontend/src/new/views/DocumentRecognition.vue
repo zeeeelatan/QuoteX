@@ -28,31 +28,41 @@
         <div class="header-right">
           <!-- Steps Progress -->
           <div class="steps-progress">
-            <div class="step active">
+            <div class="step" :class="{ active: isRelocationMode ? relocationCalcRef?.activeTab === 1 : true }">
               <div class="step-number">1</div>
-              <span class="step-label" @click="navigateToDocumentRecognition" style="cursor: pointer;">导入数据</span>
+              <span class="step-label" @click="onStepClick(1)" style="cursor: pointer;">{{ stepLabels[0] }}</span>
             </div>
             <div class="step-divider"></div>
-            <div class="step">
+            <div class="step" :class="{ active: isRelocationMode && relocationCalcRef?.activeTab === 2 }">
               <div class="step-number">2</div>
-              <span class="step-label" @click="navigateToSmartMatching" style="cursor: pointer;">智能匹配</span>
+              <span class="step-label" @click="onStepClick(2)" style="cursor: pointer;">{{ stepLabels[1] }}</span>
             </div>
             <div class="step-divider"></div>
-            <div class="step">
+            <div class="step" :class="{ active: isRelocationMode && relocationCalcRef?.activeTab === 3 }">
               <div class="step-number">3</div>
-              <span class="step-label" @click="navigateToPriceAdjustment" style="cursor: pointer;">价格调整</span>
+              <span class="step-label" @click="onStepClick(3)" style="cursor: pointer;">{{ stepLabels[2] }}</span>
             </div>
             <div class="step-divider"></div>
-            <div class="step">
+            <div class="step" :class="{ active: isRelocationMode && relocationCalcRef?.activeTab === 4 }">
               <div class="step-number">4</div>
-              <span class="step-label" @click="navigateToQuotationGeneration" style="cursor: pointer;">生成报价</span>
+              <span class="step-label" @click="onStepClick(4)" style="cursor: pointer;">{{ stepLabels[3] }}</span>
             </div>
           </div>
         </div>
       </div>
 
-      <div class="content-grid">
-        <div class="upload-section" :class="{ collapsed: isUploadSectionCollapsed }">
+      <div class="content-grid" :class="{ 'onsite-mode': isEmbeddedMode }">
+        <!-- 驻场服务报价模式：全宽嵌入驻场服务测算组件 -->
+        <div v-if="isOnsiteMode" class="onsite-embed-section">
+          <OnsiteServiceCalculator :embedded="true" />
+        </div>
+
+        <!-- 搬迁服务报价模式：全宽嵌入搬迁服务测算组件 -->
+        <div v-if="isRelocationMode" class="onsite-embed-section">
+          <RelocationServiceCalculator ref="relocationCalcRef" :embedded="true" />
+        </div>
+
+        <div v-show="!isEmbeddedMode" class="upload-section" :class="{ collapsed: isUploadSectionCollapsed }">
           <div class="upload-card">
             <div class="card-header">
               <h3 class="card-title">源文件</h3>
@@ -157,7 +167,7 @@
           </div>
         </div>
 
-        <div class="preview-section">
+        <div v-show="!isEmbeddedMode" class="preview-section">
           <!-- 空状态：非维保服务报价 或 维保服务报价但未初始化表格 -->
           <div class="preview-card" v-if="originalTableData.length === 0 && !showManualEntryMode">
             <div class="empty-state">
@@ -789,6 +799,8 @@ import { ElMessage } from 'element-plus'
 import axios from 'axios'
 import BranchPageHeader from '../components/BranchPageHeader.vue'
 import ProductDatabaseModal from '../components/ProductDatabaseModal.vue'
+import OnsiteServiceCalculator from '../components/pricing/OnsiteServiceCalculator.vue'
+import RelocationServiceCalculator from '../components/pricing/RelocationServiceCalculator.vue'
 import {
   PAGE_STATE_KEYS,
   FLOW_DATA_KEYS,
@@ -1067,22 +1079,167 @@ async function loadRecentUpload(record: UploadRecord) {
   }
 }
 
-const targetHeaders = ref([
-  "序号", "厂商", "设备/软件型号", "设备/软件分类", "配置信息",
-  "设备数量", "城市", "机房地址", "服务级别", "服务周期",
-  "服务周期单位", "服务范围", "单价", "备注", "设备原值单价",
-  "特殊需求", "易损件类型", "耗材包数量"
-])
+// ---- 各报价类型的"转换后表格"标准表头配置 ----
+interface QuotationTypeColumnConfig {
+  targetHeaders: string[]
+  visibleColumns: string[]
+  manualEntryFieldMap: Record<string, { label: string; required: boolean }>
+  fieldMappings: Record<string, string[]>
+  defaults: Record<string, string>
+}
 
-const visibleColumns = ref([
-  "序号", "厂商", "设备/软件型号", "设备/软件分类", "配置信息",
-  "设备数量", "城市", "机房地址", "服务级别", "服务周期",
-  "服务周期单位", "服务范围", "单价", "备注"
-])
+const QUOTATION_TYPE_COLUMNS: Record<string, QuotationTypeColumnConfig> = {
+  '维保服务报价': {
+    targetHeaders: [
+      "序号", "厂商", "设备/软件型号", "设备/软件分类", "配置信息",
+      "设备数量", "城市", "机房地址", "服务级别", "服务周期",
+      "服务周期单位", "服务范围", "单价", "备注", "设备原值单价",
+      "特殊需求", "易损件类型", "耗材包数量"
+    ],
+    visibleColumns: [
+      "序号", "厂商", "设备/软件型号", "设备/软件分类", "配置信息",
+      "设备数量", "城市", "机房地址", "服务级别", "服务周期",
+      "服务周期单位", "服务范围", "单价", "备注"
+    ],
+    manualEntryFieldMap: {
+      '序号': { label: '自动生成', required: false },
+      '厂商': { label: '设备品牌*', required: true },
+      '设备/软件型号': { label: '设备型号*', required: true },
+      '设备/软件分类': { label: '设备类型*', required: true },
+      '配置信息': { label: '设备配置*', required: true },
+      '设备数量': { label: '数量*', required: true },
+      '城市': { label: '城市', required: false },
+      '机房地址': { label: '机房地址', required: false },
+      '服务级别': { label: '服务级别', required: false },
+      '服务周期': { label: '服务周期', required: false },
+      '服务周期单位': { label: '单位', required: false },
+      '服务范围': { label: '服务范围', required: false },
+      '单价': { label: '单价', required: false },
+      '备注': { label: '备注', required: false },
+    },
+    fieldMappings: {
+      '厂商': ['厂商', '厂商品牌', '品牌', '制造商', '生产商', 'manufacturer', 'vendor', 'brand'],
+      '设备/软件型号': ['设备型号', '软件型号', '设备/软件型号', '型号', '产品型号', '产品名称', '设备名称', '设备名', '设备号', '设备编号', 'model', 'product model'],
+      '设备/软件分类': ['设备分类', '软件分类', '设备/软件分类', '分类', '设备类型', '类别', 'category', 'type'],
+      '配置信息': ['配置信息', '配置', '设备配置', '规格', '参数', '技术参数', '详细配置', 'configuration', 'spec', 'specification'],
+      '设备数量': ['设备数量', '数量', '台数', '套数', '装机量', 'quantity', 'count', 'number'],
+      '城市': ['城市', '地区', '所在城市', '使用地区', '地点', 'city', 'location', 'area'],
+      '机房地址': ['机房地址', '地址', '安装地点', '使用地点', '详细地址', '位置', 'address', 'location address'],
+      '服务级别': ['服务级别', '服务等级', '支持级别', '维保级别', '服务类型', 'service level', 'support level'],
+      '服务周期': ['服务周期', '周期', '合同期', '维保时间', '年限', 'service period', 'contract period'],
+      '服务周期单位': ['周期单位', '单位', '时间单位', 'period unit'],
+      '服务范围': ['服务范围', '服务内容', '维保范围', '服务说明', 'service scope', 'coverage'],
+      '单价': ['单价', '价格', '报价', '维保单价', '年单价', 'price', 'unit price'],
+      '备注': ['备注', '说明', '附注', '其他', '额外说明', 'note', 'remark', 'comment'],
+      '设备原值单价': ['设备原值', '原始价格', '整机价格', '设备原值单价', 'original price', 'full price'],
+      '特殊需求': ['特殊需求', '特殊要求', '额外需求', '客户需求', 'special requirement', 'special need'],
+      '易损件类型': ['易损件', '易损件类型', '易损件种类', 'consumable type'],
+      '耗材包数量': ['耗材数量', '耗材包数量', '耗材包', 'consumable count'],
+    },
+    defaults: { '设备数量': '1', '服务周期': '1', '服务周期单位': '年', '服务范围': '维保服务', '服务级别': '7*24*NCR' },
+  },
+  'IT服务支持报价（单价框架 / 据实结算）': {
+    targetHeaders: [
+      "序号", "服务项", "服务内容描述", "工程师类型", "工程师能力级别",
+      "服务地点", "服务模式", "数量", "单位"
+    ],
+    visibleColumns: [
+      "序号", "服务项", "服务内容描述", "工程师类型", "工程师能力级别",
+      "服务地点", "服务模式", "数量", "单位"
+    ],
+    manualEntryFieldMap: {
+      '序号': { label: '自动生成', required: false },
+      '服务项': { label: '服务项*', required: true },
+      '服务内容描述': { label: '服务描述*', required: true },
+      '工程师类型': { label: '工程师类型', required: false },
+      '工程师能力级别': { label: '能力级别', required: false },
+      '服务地点': { label: '服务地点', required: false },
+      '服务模式': { label: '服务模式', required: false },
+      '数量': { label: '数量*', required: true },
+      '单位': { label: '单位', required: false },
+    },
+    fieldMappings: {
+      '服务项': ['服务项', '服务项目', '服务名称', '项目名称', '项目', 'service item', 'service name'],
+      '服务内容描述': ['服务内容描述', '服务内容', '服务描述', '内容描述', '描述', 'service description', 'description'],
+      '工程师类型': ['工程师类型', '人员类型', '工程师', '技术人员类型', 'engineer type'],
+      '工程师能力级别': ['工程师能力级别', '能力级别', '技能级别', '级别', '工程师级别', 'skill level', 'engineer level'],
+      '服务地点': ['服务地点', '地点', '工作地点', '服务地址', '现场地址', 'service location', 'location'],
+      '服务模式': ['服务模式', '服务方式', '模式', '响应方式', 'service mode'],
+      '数量': ['数量', '人数', '台数', '次数', 'quantity', 'count', 'number'],
+      '单位': ['单位', '计量单位', 'unit'],
+    },
+    defaults: { '数量': '1', '单位': '人天' },
+  },
+  '设备/备件采购报价': {
+    targetHeaders: [
+      "序号", "厂商", "设备/软件型号", "设备/软件类型", "产品配置信息",
+      "产品成色", "数量", "单位", "保修方式", "质保周期", "到货时间", "到货地点"
+    ],
+    visibleColumns: [
+      "序号", "厂商", "设备/软件型号", "设备/软件类型", "产品配置信息",
+      "产品成色", "数量", "单位", "保修方式", "质保周期", "到货时间", "到货地点"
+    ],
+    manualEntryFieldMap: {
+      '序号': { label: '自动生成', required: false },
+      '厂商': { label: '厂商*', required: true },
+      '设备/软件型号': { label: '型号*', required: true },
+      '设备/软件类型': { label: '类型*', required: true },
+      '产品配置信息': { label: '配置信息', required: false },
+      '产品成色': { label: '成色', required: false },
+      '数量': { label: '数量*', required: true },
+      '单位': { label: '单位', required: false },
+      '保修方式': { label: '保修方式', required: false },
+      '质保周期': { label: '质保周期', required: false },
+      '到货时间': { label: '到货时间', required: false },
+      '到货地点': { label: '到货地点*', required: true },
+    },
+    fieldMappings: {
+      '厂商': ['厂商', '厂商品牌', '品牌', '制造商', '生产商', 'manufacturer', 'vendor', 'brand'],
+      '设备/软件型号': ['设备型号', '软件型号', '设备/软件型号', '型号', '产品型号', '产品名称', '设备名称', 'model', 'product model', 'part number', 'pn'],
+      '设备/软件类型': ['设备类型', '软件类型', '设备/软件类型', '类型', '分类', '产品类型', '类别', 'type', 'category'],
+      '产品配置信息': ['产品配置信息', '配置信息', '配置', '产品配置', '规格', '参数', '详细配置', 'configuration', 'spec'],
+      '产品成色': ['产品成色', '成色', '新旧', '新旧程度', '品相', 'condition'],
+      '数量': ['数量', '台数', '套数', '件数', '采购数量', 'quantity', 'qty', 'count'],
+      '单位': ['单位', '计量单位', 'unit'],
+      '保修方式': ['保修方式', '保修', '质保方式', '保修类型', 'warranty type', 'warranty'],
+      '质保周期': ['质保周期', '质保期', '保修期', '保修周期', '质保时间', 'warranty period'],
+      '到货时间': ['到货时间', '交货时间', '交期', '到货日期', '交货日期', '交付时间', 'delivery time', 'lead time'],
+      '到货地点': ['到货地点', '交货地点', '收货地址', '交货地址', '送货地址', '目的地', 'delivery location', 'destination'],
+    },
+    defaults: { '数量': '1', '单位': '台' },
+  },
+}
 
-// 是否显示手动输入模式（维保服务报价 且 无导入数据时）
+// 默认配置（维保服务报价）
+const DEFAULT_COLUMN_CONFIG = QUOTATION_TYPE_COLUMNS['维保服务报价']
+
+// 获取当前报价类型的列配置
+function getColumnConfig(): QuotationTypeColumnConfig {
+  return QUOTATION_TYPE_COLUMNS[selectedQuotationType.value] || DEFAULT_COLUMN_CONFIG
+}
+
+const targetHeaders = ref([...DEFAULT_COLUMN_CONFIG.targetHeaders])
+const visibleColumns = ref([...DEFAULT_COLUMN_CONFIG.visibleColumns])
+
+// 是否为驻场服务报价模式（直接嵌入驻场服务测算组件）
+const isOnsiteMode = computed(() => {
+  return selectedQuotationType.value === '驻场服务报价'
+})
+
+// 是否为搬迁服务报价模式（直接嵌入搬迁服务测算组件）
+const isRelocationMode = computed(() => {
+  return selectedQuotationType.value === '搬迁服务报价'
+})
+
+// 搬迁服务组件引用
+const relocationCalcRef = ref<InstanceType<typeof RelocationServiceCalculator> | null>(null)
+
+// 是否为嵌入式模式（驻场或搬迁）
+const isEmbeddedMode = computed(() => isOnsiteMode.value || isRelocationMode.value)
+
+// 是否显示手动输入模式（有标准表头配置的报价类型 且 无导入数据时）
 const showManualEntryMode = computed(() => {
-  return selectedQuotationType.value === '维保服务报价' && originalTableData.value.length === 0
+  return !!QUOTATION_TYPE_COLUMNS[selectedQuotationType.value] && originalTableData.value.length === 0
 })
 
 // 是否显示转换后表格（有数据或手动输入模式）
@@ -1117,45 +1274,38 @@ function addManualRow() {
   convertedTableData.value = [...convertedTableData.value, createEmptyRow()]
 }
 
-// 手动输入模式的必填字段映射
-const manualEntryFieldMap: Record<string, { label: string; required: boolean }> = {
-  '序号': { label: '自动生成', required: false },
-  '厂商': { label: '设备品牌*', required: true },
-  '设备/软件型号': { label: '设备型号*', required: true },
-  '设备/软件分类': { label: '设备类型*', required: true },
-  '配置信息': { label: '设备配置*', required: true },
-  '设备数量': { label: '数量*', required: true },
-  '城市': { label: '城市', required: false },
-  '机房地址': { label: '机房地址', required: false },
-  '服务级别': { label: '服务级别', required: false },
-  '服务周期': { label: '服务周期', required: false },
-  '服务周期单位': { label: '单位', required: false },
-  '服务范围': { label: '服务范围', required: false },
-  '单价': { label: '单价', required: false },
-  '备注': { label: '备注', required: false },
-}
+// 手动输入模式的必填字段映射（根据报价类型动态获取）
+const manualEntryFieldMap = computed<Record<string, { label: string; required: boolean }>>(() => {
+  return getColumnConfig().manualEntryFieldMap
+})
 
 // 判断是否为必填字段
 function isRequiredField(header: string): boolean {
-  return manualEntryFieldMap[header]?.required || false
+  return manualEntryFieldMap.value[header]?.required || false
 }
 
 // 获取手动输入模式下的字段标签
 function getManualEntryFieldLabel(header: string): string {
-  return manualEntryFieldMap[header]?.label || header
+  return manualEntryFieldMap.value[header]?.label || header
 }
 
 // 获取占位符文本
 function getPlaceholderText(header: string): string {
   if (header === '序号') return ''
-  const field = manualEntryFieldMap[header]
+  const field = manualEntryFieldMap.value[header]
   if (field?.required) return '请输入...'
   return '可选'
 }
 
-// 监听报价类型变化，自动初始化手动输入表格
+// 监听报价类型变化，更新列配置并初始化手动输入表格
 watch(selectedQuotationType, (newVal) => {
-  if (newVal === '维保服务报价' && originalTableData.value.length === 0 && convertedTableData.value.length === 0) {
+  // 更新列配置
+  const config = getColumnConfig()
+  targetHeaders.value = [...config.targetHeaders]
+  visibleColumns.value = [...config.visibleColumns]
+
+  // 有标准表头配置的类型且无导入数据时，自动初始化手动输入表格
+  if (QUOTATION_TYPE_COLUMNS[newVal] && originalTableData.value.length === 0) {
     initManualEntryTable(5)
   }
 })
@@ -1163,6 +1313,34 @@ watch(selectedQuotationType, (newVal) => {
 // Toggle upload section
 const toggleUploadSection = () => {
   isUploadSectionCollapsed.value = !isUploadSectionCollapsed.value
+}
+
+// 步骤标签：根据报价类型动态切换
+const stepLabels = computed(() => {
+  if (isRelocationMode.value) {
+    return ['项目概况', '设备清单管理', '费用测算配置', '生成报价']
+  }
+  return ['导入数据', '智能匹配', '价格调整', '生成报价']
+})
+
+// 步骤点击处理
+function onStepClick(step: number) {
+  if (isRelocationMode.value) {
+    // 搬迁模式：步骤1-3切换搬迁组件的标签页，步骤4打开报价单
+    if (step <= 3) {
+      if (relocationCalcRef.value) {
+        relocationCalcRef.value.activeTab = step
+      }
+    } else {
+      relocationCalcRef.value?.onGenerateQuote()
+    }
+    return
+  }
+  // 默认模式：跳转到对应页面
+  if (step === 1) navigateToDocumentRecognition()
+  else if (step === 2) navigateToSmartMatching()
+  else if (step === 3) navigateToPriceAdjustment()
+  else if (step === 4) navigateToQuotationGeneration()
 }
 
 // Navigation functions
@@ -1534,25 +1712,8 @@ function switchSheet(sheetName: string) {
 
 // Convert data function
 function convertData(jsonData: any[], headers: string[]) {
-  const fieldMappings: Record<string, string[]> = {
-    '厂商': ['厂商', '厂商品牌', '品牌', '制造商', '生产商', 'manufacturer', 'vendor', 'brand'],
-    '设备/软件型号': ['设备型号', '软件型号', '设备/软件型号', '型号', '产品型号', '产品名称', '设备名称', '设备名', '设备号', '设备编号', 'model', 'product model'],
-    '设备/软件分类': ['设备分类', '软件分类', '设备/软件分类', '分类', '设备类型', '类别', 'category', 'type'],
-    '配置信息': ['配置信息', '配置', '设备配置', '规格', '参数', '技术参数', '详细配置', 'configuration', 'spec', 'specification'],
-    '设备数量': ['设备数量', '数量', '台数', '套数', '装机量', 'quantity', 'count', 'number'],
-    '城市': ['城市', '地区', '所在城市', '使用地区', '地点', 'city', 'location', 'area'],
-    '机房地址': ['机房地址', '地址', '安装地点', '使用地点', '详细地址', '位置', 'address', 'location address'],
-    '服务级别': ['服务级别', '服务等级', '支持级别', '维保级别', '服务类型', 'service level', 'support level'],
-    '服务周期': ['服务周期', '周期', '合同期', '维保时间', '年限', 'service period', 'contract period'],
-    '服务周期单位': ['周期单位', '单位', '时间单位', 'period unit'],
-    '服务范围': ['服务范围', '服务内容', '维保范围', '服务说明', 'service scope', 'coverage'],
-    '单价': ['单价', '价格', '报价', '维保单价', '年单价', 'price', 'unit price'],
-    '备注': ['备注', '说明', '附注', '其他', '额外说明', 'note', 'remark', 'comment'],
-    '设备原值单价': ['设备原值', '原始价格', '整机价格', '设备原值单价', 'original price', 'full price'],
-    '特殊需求': ['特殊需求', '特殊要求', '额外需求', '客户需求', 'special requirement', 'special need'],
-    '易损件类型': ['易损件', '易损件类型', '易损件种类', 'consumable type'],
-    '耗材包数量': ['耗材数量', '耗材包数量', '耗材包', 'consumable count']
-  }
+  const config = getColumnConfig()
+  const fieldMappings = config.fieldMappings
 
   const foundMappings: Record<string, string> = {}
 
@@ -1592,14 +1753,13 @@ function convertData(jsonData: any[], headers: string[]) {
       }
     }
 
-    // Set default values - 序号 must always be the index + 1, overriding any source data
-    // Use padStart to ensure proper numbering for all rows
+    // Set 序号
     convertedRow['序号'] = String(index + 1)
-    convertedRow['设备数量'] = convertedRow['设备数量'] || '1'
-    convertedRow['服务周期'] = convertedRow['服务周期'] || '1'
-    convertedRow['服务周期单位'] = convertedRow['服务周期单位'] || '年'
-    convertedRow['服务范围'] = convertedRow['服务范围'] || '维保服务'
-    convertedRow['服务级别'] = convertedRow['服务级别'] || '7*24*NCR'
+
+    // Apply type-specific defaults
+    for (const [field, defaultVal] of Object.entries(config.defaults)) {
+      convertedRow[field] = convertedRow[field] || defaultVal
+    }
 
     return convertedRow
   })
@@ -1608,7 +1768,7 @@ function convertData(jsonData: any[], headers: string[]) {
   convertedTableData.value.forEach((row, index) => {
     row['序号'] = String(index + 1)
   })
-  
+
   // 保存初始状态，用于重置功能
   saveInitialState()
 }
@@ -1637,11 +1797,10 @@ function remapDataUsingMappings(changedColumn?: string) {
 
       // 设置默认值
       convertedRow['序号'] = String(index + 1)
-      convertedRow['设备数量'] = convertedRow['设备数量'] || '1'
-      convertedRow['服务周期'] = convertedRow['服务周期'] || '1'
-      convertedRow['服务周期单位'] = convertedRow['服务周期单位'] || '年'
-      convertedRow['服务范围'] = convertedRow['服务范围'] || '维保服务'
-      convertedRow['服务级别'] = convertedRow['服务级别'] || '7*24*NCR'
+      const config = getColumnConfig()
+      for (const [field, defaultVal] of Object.entries(config.defaults)) {
+        convertedRow[field] = convertedRow[field] || defaultVal
+      }
 
       return convertedRow
     })
@@ -2451,7 +2610,7 @@ const exportConvertedData = () => {
 // Get total quantity
 const getTotalQuantity = () => {
   return convertedTableData.value.reduce((sum, row) => {
-    const qty = parseInt(row['设备数量']) || 0
+    const qty = parseInt(row['设备数量'] || row['数量']) || 0
     return sum + qty
   }, 0)
 }
@@ -2459,7 +2618,7 @@ const getTotalQuantity = () => {
 // Get total amount
 const getTotalAmount = () => {
   return convertedTableData.value.reduce((sum, row) => {
-    const qty = parseInt(row['设备数量']) || 1
+    const qty = parseInt(row['设备数量'] || row['数量']) || 1
     const price = parseFloat(row['单价']) || 0
     return sum + (qty * price)
   }, 0)
@@ -2955,6 +3114,21 @@ const getTotalAmount = () => {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+/* 驻场服务嵌入模式：全宽显示 */
+.content-grid.onsite-mode {
+  display: flex;
+  flex-direction: column;
+}
+
+.onsite-embed-section {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(11, 17, 32, 0.6);
 }
 
 .upload-section {

@@ -135,7 +135,7 @@
         </div>
       </header>
 
-      <div class="content-area" :class="{ 'embedded-view': currentView === 'product-database' || currentView === 'quote-history' || currentView === 'onsite-calculator' || currentView === 'relocation-calculator', 'draft-view': currentView === 'draft-box' }">
+      <div class="content-area" :class="{ 'embedded-view': currentView === 'product-database' || currentView === 'quote-history' || currentView === 'onsite-calculator' || currentView === 'relocation-calculator', 'draft-view': currentView === 'draft-box', 'chat-active': currentView === 'home' && chatMode }">
         <!-- Product Database View -->
         <ProductDatabase v-if="currentView === 'product-database'" @go-home="currentView = 'home'" />
 
@@ -155,77 +155,122 @@
 
         <!-- Home Content -->
         <div v-if="currentView === 'home'" class="home-content">
-        <!-- 交互模式：对话列表 + 底部输入 -->
+        <!-- 交互模式：AI 对话界面 -->
         <template v-if="chatMode">
           <section class="chat-mode-section">
-            <div class="chat-mode-header">
-              <button type="button" class="new-chat-btn" @click="goToHome" title="返回首页并关闭当前对话">
-                <span class="material-symbols-outlined">add_circle</span>
-                新对话
+            <!-- 顶部返回按钮 -->
+            <div class="chat-top-bar">
+              <button type="button" class="chat-back-btn" @click="exitChatMode">
+                <span class="material-symbols-outlined">arrow_back</span>
+                <span>返回主页</span>
               </button>
             </div>
-            <div class="chat-messages" ref="chatMessagesRef">
-              <template v-for="(msg, idx) in chatMessages" :key="idx">
-                <div v-if="msg.role === 'user'" class="chat-row user-row">
-                  <div class="chat-bubble user-bubble">
-                    <p class="bubble-text">{{ msg.content }}</p>
-                    <div v-if="msg.fileNames?.length" class="bubble-files">
-                      <span v-for="(fn, i) in msg.fileNames" :key="i" class="bubble-file-tag">{{ fn }}</span>
-                    </div>
+            <!-- 可滚动的消息区域 -->
+            <div class="chat-scroll-area" ref="chatMessagesRef">
+              <div class="chat-center-col">
+                <!-- 欢迎区域（无消息时显示） -->
+                <div v-if="chatMessages.length === 0" class="chat-welcome">
+                  <div class="chat-welcome-icon">
+                    <span class="material-symbols-outlined">smart_toy</span>
                   </div>
+                  <h3 class="chat-welcome-title">您好，我是您的智能报价助手</h3>
+                  <p class="chat-welcome-desc">您可以上传设备清单、输入报价需求，或者直接询问我关于成本核算的细节。我将为您提供精准的报价建议。</p>
                 </div>
-                <div v-else class="chat-row assistant-row">
-                  <div class="chat-bubble assistant-bubble">
-                    <div class="assistant-sources">
-                      已结合维保费率、服务级别、设备库等后台数据生成
-                    </div>
-                    <div class="assistant-content" v-html="formatAnalysis(msg.content)"></div>
-                    <div class="assistant-actions">
-                      <button type="button" class="action-btn primary" @click="goToDocumentRecognition">去发起询价</button>
-                    </div>
-                  </div>
-                </div>
-              </template>
-            </div>
-            <div class="chat-input-wrap">
-              <div class="search-box-container chat-input-container">
-                <div class="search-box-wrapper">
-                  <div class="search-box chat-search-box" :class="{ 'has-files': attachedFiles.length > 0 }">
-                    <div class="search-box-icon">
+
+                <!-- 消息列表 -->
+                <template v-for="(msg, idx) in chatMessages" :key="idx">
+                  <!-- AI 消息 -->
+                  <div v-if="msg.role === 'assistant'" class="cmsg cmsg-ai">
+                    <div class="cmsg-avatar">
                       <span class="material-symbols-outlined">auto_awesome</span>
+                      <div class="cmsg-avatar-dot"></div>
                     </div>
-                    <div class="search-box-body">
-                      <input
-                        v-model="requirementText"
-                        class="search-box-input"
-                        placeholder="继续追问或描述新需求..."
-                        @keydown.enter.prevent="handleGenerate"
-                      />
-                      <div class="attach-files-row" v-if="attachedFiles.length > 0">
-                        <span class="attach-label">已附加:</span>
-                        <span v-for="(f, i) in attachedFiles" :key="i" class="file-tag">
-                          {{ f.name }}
-                          <button type="button" class="file-tag-remove" @click="removeAttachedFile(i)">×</button>
-                        </span>
+                    <div class="cmsg-body">
+                      <div class="cmsg-bubble cmsg-bubble-ai" :class="{ 'cmsg-bubble-wide': msg.structured }">
+                        <p class="cmsg-source-hint">{{ msg.structured ? '基于系统设备库实时匹配计算' : '已结合维保费率、服务级别、设备库等后台数据生成' }}</p>
+                        <div class="cmsg-ai-content" v-html="formatAnalysis(msg.content, msg.isHtml)"></div>
+                      </div>
+                      <div class="cmsg-actions">
+                        <button v-if="msg.structured" type="button" class="cmsg-action-btn cmsg-action-primary" @click="exportQuotation(msg.structured)">
+                          <span class="material-symbols-outlined">download</span>
+                          导出报价单
+                        </button>
+                        <button type="button" class="cmsg-action-btn" @click="goToDocumentRecognition">
+                          <span class="material-symbols-outlined">receipt_long</span>
+                          去发起询价
+                        </button>
+                        <button type="button" class="cmsg-action-btn">
+                          <span class="material-symbols-outlined">refresh</span>
+                          重新分析
+                        </button>
                       </div>
                     </div>
-                    <div class="search-box-actions-bar">
-                      <input ref="chatFileInputRef" type="file" class="file-input-hidden" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt" multiple @change="onFileSelect" />
-                      <button type="button" class="toolbar-icon" title="附件导入" @click="triggerChatFileInput">
-                        <span class="material-symbols-outlined">attach_file</span>
-                      </button>
-                      <button
-                        type="button"
-                        class="generate-button inline-generate generate-button-inline"
-                        :disabled="isGenerating || (!requirementText.trim() && attachedFiles.length === 0)"
-                        @click="handleGenerate"
-                      >
-                        <span v-if="isGenerating" class="btn-loading"></span>
-                        <span v-else class="material-symbols-outlined">send</span>
-                      </button>
+                  </div>
+
+                  <!-- 用户消息 -->
+                  <div v-else class="cmsg cmsg-user">
+                    <div class="cmsg-body">
+                      <div class="cmsg-bubble cmsg-bubble-user">{{ msg.content }}</div>
+                      <div v-if="msg.fileNames?.length" class="cmsg-user-files">
+                        <div v-for="(fn, i) in msg.fileNames" :key="i" class="cmsg-file-card">
+                          <div class="cmsg-file-icon">
+                            <span class="material-symbols-outlined">description</span>
+                          </div>
+                          <div class="cmsg-file-meta">
+                            <p class="cmsg-file-name">{{ fn }}</p>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
+                </template>
+              </div>
+            </div>
+
+            <!-- 底部浮动输入区 -->
+            <div class="chat-float-bar">
+              <div class="chat-float-inner">
+                <!-- 快捷建议 -->
+                <div class="chat-suggest-row">
+                  <button type="button" class="chat-suggest-pill" @click="setExample('生成报价摘要')">生成报价摘要</button>
+                  <button type="button" class="chat-suggest-pill" @click="setExample('比较历史价格')">比较历史价格</button>
+                  <button type="button" class="chat-suggest-pill" @click="setExample('导出为报价单')">导出为报价单</button>
+                  <button type="button" class="chat-suggest-pill" @click="setExample('调整参数配置')">调整参数配置</button>
                 </div>
+                <!-- 输入卡片 -->
+                <div class="chat-input-card" :class="{ focused: chatInputFocused }">
+                  <div class="chat-input-row">
+                    <button type="button" class="chat-attach-btn" @click="triggerChatFileInput" title="附件导入">
+                      <span class="material-symbols-outlined">attach_file</span>
+                    </button>
+                    <input ref="chatFileInputRef" type="file" class="file-input-hidden" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt" multiple @change="onFileSelect" />
+                    <input
+                      v-model="requirementText"
+                      class="chat-text-input"
+                      placeholder="输入指令或询问报价细节..."
+                      @keydown.enter.prevent="handleGenerate"
+                      @focus="chatInputFocused = true"
+                      @blur="chatInputFocused = false"
+                    />
+                    <button
+                      type="button"
+                      class="chat-send-btn"
+                      :disabled="isGenerating || (!requirementText.trim() && attachedFiles.length === 0)"
+                      @click="handleGenerate"
+                    >
+                      <span v-if="isGenerating" class="btn-loading"></span>
+                      <span v-else class="material-symbols-outlined">send</span>
+                    </button>
+                  </div>
+                  <div class="chat-attached-row" v-if="attachedFiles.length > 0">
+                    <span class="chat-attached-label">已附加:</span>
+                    <span v-for="(f, i) in attachedFiles" :key="i" class="chat-attached-tag">
+                      {{ f.name }}
+                      <button type="button" class="chat-attached-remove" @click="removeAttachedFile(i)">×</button>
+                    </span>
+                  </div>
+                </div>
+                <p class="chat-disclaimer">AI 可能会产生误差，请务必核对关键数据。</p>
               </div>
             </div>
           </section>
@@ -412,6 +457,8 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import axios from 'axios'
+import * as XLSX from 'xlsx'
+import { saveAs } from 'file-saver'
 import { ElMessage } from 'element-plus'
 import { isLoggedInRef, openLoginModal, openRegisterModal, clearAuth } from '../stores/authStore'
 import { openSystemSettings, openPersonalSettings, currentSettingsDialog } from '../stores/settingsDialogStore'
@@ -430,6 +477,7 @@ const attachedFiles = ref<File[]>([])
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const chatFileInputRef = ref<HTMLInputElement | null>(null)
 const isGenerating = ref(false)
+const chatInputFocused = ref(false)
 const showResultModal = ref(false)
 const aiResultAnalysis = ref('')
 
@@ -439,6 +487,8 @@ interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   fileNames?: string[]
+  structured?: any  // 结构化报价数据
+  isHtml?: boolean  // 是否为 HTML 富文本
 }
 const chatMessages = ref<ChatMessage[]>([])
 const chatMessagesRef = ref<HTMLElement | null>(null)
@@ -503,8 +553,13 @@ function setExample(text: string) {
   requirementText.value = text
 }
 
-function formatAnalysis(text: string): string {
+function formatAnalysis(text: string, isHtml?: boolean): string {
   if (!text) return ''
+  // 如果已经是 HTML 格式（包含标签），直接返回
+  if (isHtml || text.includes('<table') || text.includes('<div')) {
+    return text
+  }
+  // 纯文本格式化
   return text
     .replace(/\n/g, '<br>')
     .replace(/^(\d+[\.、])/gm, '<strong>$1</strong>')
@@ -513,6 +568,68 @@ function formatAnalysis(text: string): string {
 function goToDocumentRecognition() {
   showResultModal.value = false
   router.push('/document-recognition')
+}
+
+function exportQuotation(structured: any) {
+  if (!structured?.devices?.length) {
+    ElMessage.warning('无可导出的报价数据')
+    return
+  }
+  const rows = structured.devices.map((d: any, idx: number) => ({
+    '序号': idx + 1,
+    '厂商': d.manufacturer || '',
+    '匹配型号': d.matched_model || '',
+    '匹配率': `${(d.match_rate || 0).toFixed(0)}%`,
+    '设备价格(元)': d.device_price || 0,
+    '维保费率': `${((d.rate || 0) * 100).toFixed(2)}%`,
+    '维保单价(元)': d.price || 0,
+    '数量': d.quantity || 1,
+    '小计(元)': d.subtotal || 0,
+    '一级分类': d.primary_category || '',
+    '二级分类': d.secondary_category || '',
+    '三级分类': d.tertiary_category || '',
+  }))
+
+  // 添加汇总行
+  rows.push({
+    '序号': '',
+    '厂商': '',
+    '匹配型号': '',
+    '匹配率': '',
+    '设备价格(元)': '',
+    '维保费率': '',
+    '维保单价(元)': '',
+    '数量': '合计',
+    '小计(元)': structured.total_base || 0,
+    '一级分类': '',
+    '二级分类': '',
+    '三级分类': '',
+  })
+
+  if (structured.matched_service_level) {
+    rows.push({
+      '序号': '',
+      '厂商': '',
+      '匹配型号': '',
+      '匹配率': '',
+      '设备价格(元)': '',
+      '维保费率': '',
+      '维保单价(元)': '',
+      '数量': `服务级别 ${structured.matched_service_level.level_code} (×${structured.matched_service_level.coefficient})`,
+      '小计(元)': structured.total_adjusted || 0,
+      '一级分类': '',
+      '二级分类': '',
+      '三级分类': '',
+    })
+  }
+
+  const ws = XLSX.utils.json_to_sheet(rows)
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, '维保报价')
+  const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
+  const now = new Date().toISOString().slice(0, 10)
+  saveAs(new Blob([wbout]), `维保报价_${now}.xlsx`)
+  ElMessage.success('报价单已导出')
 }
 
 async function handleGenerate() {
@@ -528,6 +645,22 @@ async function handleGenerate() {
     const form = new FormData()
     form.append('requirement', userContent)
     form.append('model', selectedModel.value)
+    // 传递历史对话，支持多轮上下文（发送精简版，不含 HTML）
+    if (chatMessages.value.length > 0) {
+      const history = chatMessages.value.map(m => {
+        if (m.role === 'assistant' && m.structured) {
+          // 结构化结果只发送摘要，避免发送大量 HTML
+          const s = m.structured
+          const devSummary = (s.devices || []).map((d: any) =>
+            `${d.manufacturer} ${d.matched_model} ×${d.quantity} 维保单价¥${d.price}`
+          ).join('; ')
+          return { role: m.role, content: `[报价结果] ${devSummary} | 总价¥${s.total_base}` }
+        }
+        // 普通文本消息，截断过长内容
+        return { role: m.role, content: (m.content || '').slice(0, 500) }
+      })
+      form.append('history', JSON.stringify(history))
+    }
     for (const f of attachedFiles.value) {
       form.append('files', f)
     }
@@ -535,10 +668,12 @@ async function handleGenerate() {
       timeout: 120000
     })
     const analysis = res.data?.analysis || res.data?.suggestion || '未返回分析内容'
+    const structured = res.data?.structured || null
+    const isHtml = typeof analysis === 'string' && (analysis.includes('<table') || analysis.includes('<div'))
     aiResultAnalysis.value = analysis
     chatMessages.value.push(
       { role: 'user', content: userContent, fileNames: fileNames.length ? fileNames : undefined },
-      { role: 'assistant', content: analysis }
+      { role: 'assistant', content: analysis, structured, isHtml }
     )
     chatMode.value = true
     requirementText.value = ''
@@ -1200,6 +1335,18 @@ onUnmounted(() => {
   gap: 2rem;
 }
 
+/* Chat active: no padding, fill height */
+.content-area.chat-active {
+  padding: 0;
+  overflow: hidden;
+}
+
+.content-area.chat-active .home-content {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
 /* Hero Section */
 .hero-section {
   position: relative;
@@ -1533,159 +1680,498 @@ onUnmounted(() => {
   font-size: 1.25rem;
 }
 
-/* 交互模式（对话页） */
+/* ========== 交互模式（AI 对话页） ========== */
 .chat-mode-section {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 420px;
 }
 
-.chat-mode-header {
+/* 顶部返回按钮栏 */
+.chat-top-bar {
   display: flex;
   align-items: center;
-  padding: 0.5rem 0 1rem;
+  padding: 12px 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
 }
 
-.new-chat-btn {
+.chat-back-btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.375rem;
-  padding: 0.5rem 1rem;
-  border-radius: 0.5rem;
-  border: 1px solid #334155;
-  background: rgba(21, 30, 50, 0.6);
-  color: #94a3b8;
-  font-size: 0.875rem;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #cbd5e1;
+  padding: 6px 16px;
+  border-radius: 8px;
   cursor: pointer;
+  font-size: 0.875rem;
   transition: all 0.2s;
 }
 
-.new-chat-btn:hover {
-  border-color: #135bec;
-  color: #60a5fa;
-  background: rgba(19, 91, 236, 0.1);
+.chat-back-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
-.new-chat-btn .material-symbols-outlined {
-  font-size: 1.125rem;
+.chat-back-btn .material-symbols-outlined {
+  font-size: 18px;
 }
 
-.chat-messages {
+/* 滚动消息区域 */
+.chat-scroll-area {
   flex: 1;
   overflow-y: auto;
-  padding: 1rem 0;
+  padding: 2rem 1rem 10rem;
+  scroll-behavior: smooth;
+}
+
+.chat-center-col {
+  max-width: 56rem;
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 2.5rem;
 }
 
-.chat-row {
+/* 欢迎区域 */
+.chat-welcome {
+  text-align: center;
+  padding: 3rem 0 2rem;
   display: flex;
-  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
 }
 
-.chat-row.user-row {
-  justify-content: flex-end;
+.chat-welcome-icon {
+  width: 4rem;
+  height: 4rem;
+  background: rgba(19, 91, 236, 0.2);
+  border-radius: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 1px rgba(19, 91, 236, 0.5), 0 8px 24px rgba(19, 91, 236, 0.2);
 }
 
-.chat-row.assistant-row {
+.chat-welcome-icon .material-symbols-outlined {
+  font-size: 2rem;
+  color: #135bec;
+}
+
+.chat-welcome-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: white;
+  margin: 0;
+}
+
+.chat-welcome-desc {
+  font-size: 0.875rem;
+  color: #94a3b8;
+  max-width: 28rem;
+  line-height: 1.7;
+  margin: 0;
+}
+
+/* --- 消息行 --- */
+.cmsg {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.cmsg-ai {
   justify-content: flex-start;
 }
 
-.chat-bubble {
-  max-width: 85%;
-  padding: 0.875rem 1.125rem;
-  border-radius: 1rem;
-  line-height: 1.6;
+.cmsg-user {
+  justify-content: flex-end;
 }
 
-.user-bubble {
-  background: rgba(51, 65, 85, 0.6);
-  border: 1px solid #334155;
-  color: #e2e8f0;
-}
-
-.bubble-text {
-  margin: 0;
-  font-size: 0.9375rem;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.bubble-files {
-  margin-top: 0.5rem;
+/* AI 头像 */
+.cmsg-avatar {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.5rem;
+  background: #135bec;
+  flex-shrink: 0;
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
+  align-items: center;
+  justify-content: center;
+  position: relative;
 }
 
-.bubble-file-tag {
-  font-size: 0.75rem;
-  color: #94a3b8;
-  padding: 0.125rem 0.375rem;
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 0.25rem;
+.cmsg-avatar .material-symbols-outlined {
+  font-size: 1.125rem;
+  color: white;
 }
 
-.assistant-bubble {
-  background: rgba(21, 30, 50, 0.8);
-  border: 1px solid #232f48;
+.cmsg-avatar-dot {
+  position: absolute;
+  bottom: -3px;
+  right: -3px;
+  width: 0.75rem;
+  height: 0.75rem;
+  background: #22c55e;
+  border-radius: 9999px;
+  border: 2px solid #0B1120;
+}
+
+/* 消息体 */
+.cmsg-body {
+  max-width: 85%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.cmsg-user .cmsg-body {
+  align-items: flex-end;
+}
+
+/* 气泡 */
+.cmsg-bubble {
+  padding: 1.25rem;
+  line-height: 1.7;
+  font-size: 0.9375rem;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.cmsg-bubble-ai {
+  background: rgba(22, 27, 38, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 1rem 1rem 1rem 0;
   color: #e2e8f0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
-.assistant-sources {
+.cmsg-bubble-user {
+  background: #135bec;
+  color: white;
+  border-radius: 1rem 1rem 0 1rem;
+  box-shadow: 0 4px 12px rgba(19, 91, 236, 0.15);
+}
+
+/* AI 消息内部 */
+.cmsg-source-hint {
   font-size: 0.75rem;
   color: #64748b;
-  margin-bottom: 0.5rem;
+  margin: 0 0 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
-.assistant-content {
+.cmsg-ai-content {
   font-size: 0.9375rem;
+  color: #e2e8f0;
+  line-height: 1.7;
 }
 
-.assistant-content :deep(strong) {
+.cmsg-ai-content :deep(strong) {
   color: #93c5fd;
 }
 
-.assistant-actions {
-  margin-top: 0.75rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid #334155;
+.cmsg-ai-content :deep(b) {
+  color: #60a5fa;
+  font-weight: 600;
 }
 
-.assistant-actions .action-btn {
+/* 宽气泡（结构化报价结果） - 让表格有足够空间 */
+.cmsg-bubble-wide {
+  max-width: none !important;
+  width: 100%;
+}
+
+.cmsg-ai .cmsg-body:has(.cmsg-bubble-wide) {
+  max-width: 95%;
+}
+
+/* 快捷操作按钮 */
+.cmsg-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.cmsg-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
   padding: 0.375rem 0.75rem;
-  border-radius: 0.375rem;
-  font-size: 0.875rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.05);
+  color: #94a3b8;
+  font-size: 0.75rem;
   cursor: pointer;
-  border: 1px solid transparent;
   transition: all 0.2s;
 }
 
-.assistant-actions .action-btn.primary {
+.cmsg-action-btn:hover {
+  color: white;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.cmsg-action-btn .material-symbols-outlined {
+  font-size: 0.875rem;
+}
+
+.cmsg-action-btn.cmsg-action-primary {
+  background: rgba(19, 91, 236, 0.2);
+  border-color: rgba(19, 91, 236, 0.3);
+  color: #60a5fa;
+}
+
+.cmsg-action-btn.cmsg-action-primary:hover {
+  background: rgba(19, 91, 236, 0.3);
+  color: white;
+}
+
+/* 用户文件卡片 */
+.cmsg-user-files {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.cmsg-file-card {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  background: rgba(22, 27, 38, 1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.75rem;
+  min-width: 14rem;
+}
+
+.cmsg-file-icon {
+  width: 2.5rem;
+  height: 2.5rem;
+  background: rgba(239, 68, 68, 0.2);
+  border-radius: 0.375rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.cmsg-file-icon .material-symbols-outlined {
+  font-size: 1.25rem;
+  color: #ef4444;
+}
+
+.cmsg-file-name {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: white;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 10rem;
+}
+
+/* ========== 底部浮动输入区 ========== */
+.chat-float-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  padding: 1.5rem;
+  background: linear-gradient(to top, #0B1120 40%, rgba(11, 17, 32, 0.95) 70%, transparent 100%);
+  z-index: 10;
+}
+
+.chat-float-inner {
+  max-width: 56rem;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* 快捷建议 */
+.chat-suggest-row {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+}
+
+.chat-suggest-pill {
+  flex-shrink: 0;
+  padding: 0.5rem 1rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: #cbd5e1;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.chat-suggest-pill:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: white;
+}
+
+/* 输入卡片 */
+.chat-input-card {
+  background: rgba(22, 27, 38, 1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 1rem;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  padding: 0.5rem;
+  transition: all 0.2s;
+}
+
+.chat-input-card.focused {
+  border-color: rgba(19, 91, 236, 0.4);
+  box-shadow: 0 0 0 2px rgba(19, 91, 236, 0.15), 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+.chat-input-row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.chat-attach-btn {
+  width: 2.5rem;
+  height: 2.5rem;
+  flex-shrink: 0;
+  border-radius: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.chat-attach-btn:hover {
+  color: white;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.chat-text-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  color: white;
+  font-size: 0.9375rem;
+  padding: 0.5rem 0.25rem;
+  outline: none;
+}
+
+.chat-text-input::placeholder {
+  color: #64748b;
+}
+
+.chat-input-btns {
+  display: flex;
+  gap: 0.25rem;
+  padding-right: 0.25rem;
+}
+
+.chat-send-btn {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 0.75rem;
   background: #135bec;
   color: white;
-  border-color: #135bec;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 4px 12px rgba(19, 91, 236, 0.2);
 }
 
-.assistant-actions .action-btn.primary:hover {
+.chat-send-btn:hover:not(:disabled) {
   background: #2563eb;
-  border-color: #2563eb;
 }
 
-.chat-input-wrap {
-  flex-shrink: 0;
-  padding-top: 1rem;
-  padding-bottom: 0.5rem;
+.chat-send-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
-.chat-input-container {
-  max-width: 42rem;
+.chat-send-btn .material-symbols-outlined {
+  font-size: 1.125rem;
 }
 
-.chat-search-box.search-box {
-  min-height: 3.5rem;
+.chat-send-btn .btn-loading {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* 已附加文件 */
+.chat-attached-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.75rem 0.5rem;
+  font-size: 0.75rem;
+}
+
+.chat-attached-label {
+  color: #94a3b8;
+}
+
+.chat-attached-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.5rem;
+  background: rgba(19, 91, 236, 0.15);
+  border: 1px solid rgba(19, 91, 236, 0.3);
+  border-radius: 0.375rem;
+  color: #93c5fd;
+  font-size: 0.75rem;
+}
+
+.chat-attached-remove {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.chat-attached-remove:hover {
+  color: #f87171;
+}
+
+/* 免责声明 */
+.chat-disclaimer {
+  text-align: center;
+  font-size: 0.625rem;
+  color: #475569;
+  margin: 0;
 }
 
 .file-input-hidden {
