@@ -632,25 +632,23 @@ const previewOriginalData = computed(() => {
       const newRow = { ...row }
       let basePrice = 0
 
-      // 如果行数一致，优先按行索引获取价格（最可靠）
-      if (rowCountMatch && rowIndex < tableData.value.length) {
-        const item = tableData.value[rowIndex]
-        basePrice = item.finalPrice || item.suggestedPrice || 0
-      }
-
-      // 按型号名称匹配：扫描该行所有列值，尝试匹配已知型号
-      if (basePrice === 0) {
-        const allValues = Object.values(row)
-        for (const val of allValues) {
-          if (val !== null && val !== undefined && val !== '') {
-            const normalized = String(val).trim().toUpperCase()
-            const matched = priceByModel.get(normalized)
-            if (matched && matched > 0) {
-              basePrice = matched
-              break
-            }
+      // 优先按型号名称匹配：扫描该行所有列值，尝试匹配已知型号（避免索引错位）
+      const allValues = Object.values(row)
+      for (const val of allValues) {
+        if (val !== null && val !== undefined && val !== '') {
+          const normalized = String(val).trim().toUpperCase()
+          const matched = priceByModel.get(normalized)
+          if (matched && matched > 0) {
+            basePrice = matched
+            break
           }
         }
+      }
+
+      // 兜底：行数一致时按行索引获取价格
+      if (basePrice === 0 && rowCountMatch && rowIndex < tableData.value.length) {
+        const item = tableData.value[rowIndex]
+        basePrice = item.finalPrice || item.suggestedPrice || 0
       }
 
       const adjustedPrice = Math.round(basePrice * priceMultiplier * 100) / 100
@@ -703,17 +701,10 @@ const previewConvertedData = computed(() => {
       headers.forEach(h => {
         if (h === originalPriceHeader) {
           let basePrice = 0
-          // 行数一致时按行索引取价
-          if (rowCountMatch && rowIndex < tableData.value.length) {
-            const item = tableData.value[rowIndex]
-            basePrice = item.finalPrice || item.suggestedPrice || 0
-          }
-          // 按型号名称匹配兜底
-          if (basePrice === 0) {
-            const modelValue = (row['设备/软件型号'] || '').toString().trim().toUpperCase()
-            if (modelValue) {
-              basePrice = priceByModel.get(modelValue) || 0
-            }
+          // 优先按型号名称匹配（避免索引错位）
+          const modelValue = (row['设备/软件型号'] || '').toString().trim().toUpperCase()
+          if (modelValue) {
+            basePrice = priceByModel.get(modelValue) || 0
           }
           // 扫描所有列值匹配
           if (basePrice === 0) {
@@ -727,6 +718,11 @@ const previewConvertedData = computed(() => {
                 }
               }
             }
+          }
+          // 兜底：行数一致时按行索引取价
+          if (basePrice === 0 && rowCountMatch && rowIndex < tableData.value.length) {
+            const item = tableData.value[rowIndex]
+            basePrice = item.finalPrice || item.suggestedPrice || 0
           }
           // 如果仍为 0，保留原单价值
           if (basePrice === 0) {
@@ -1785,14 +1781,57 @@ async function exportQuotationExcel() {
 
           // 从表头行之后开始写入价格数据
           const dataStartRowNum = headerRowNum + 1
-          const dataRowCount = Math.min(tableData.value.length, worksheet.rowCount - headerRowNum)
+
+          // 构建"型号 → 价格"查找表（用于按型号匹配，避免行删除导致索引错位）
+          const modelPriceMap = new Map<string, number>()
+          tableData.value.forEach((item) => {
+            const basePrice = item.finalPrice || item.suggestedPrice || 0
+            if (basePrice > 0) {
+              const adjustedPrice = Math.round(basePrice * exportPriceMultiplier * 100) / 100
+              // 使用多个可能的型号作为 key
+              const keys = [item.model, item.matchedModel, item.originalModel].filter(Boolean)
+              keys.forEach(k => {
+                const normalized = String(k).trim().toUpperCase()
+                if (normalized && !modelPriceMap.has(normalized)) {
+                  modelPriceMap.set(normalized, adjustedPrice)
+                }
+              })
+            }
+          })
+
+          // 检测行数是否一致（一致时可用索引映射，否则必须用型号匹配）
+          const excelDataRowCount = worksheet.rowCount - headerRowNum
+          const rowCountMatch = excelDataRowCount === tableData.value.length
+          console.log('[Export] Excel 数据行:', excelDataRowCount, ', tableData 行:', tableData.value.length, ', 行数一致:', rowCountMatch)
+
+          const dataRowCount = Math.max(excelDataRowCount, tableData.value.length)
           for (let i = 0; i < dataRowCount; i++) {
             const rowNum = dataStartRowNum + i
+            if (rowNum > worksheet.rowCount) break
             const row = worksheet.getRow(rowNum)
             const priceCell = row.getCell(priceColIndex)
 
-            const price = priceDataMap.get(i)
-            if (price !== undefined) {
+            let price: number | undefined
+
+            // 策略1：行数一致时，用索引直接映射
+            if (rowCountMatch) {
+              price = priceDataMap.get(i)
+            }
+
+            // 策略2：行数不一致或索引未命中时，扫描该行所有单元格的值，用型号匹配
+            if (price === undefined) {
+              row.eachCell({ includeEmpty: false }, (cell: any) => {
+                if (price !== undefined) return  // 已找到则跳过
+                if (cell.value !== null && cell.value !== undefined) {
+                  const cellVal = String(cell.value).trim().toUpperCase()
+                  if (cellVal && modelPriceMap.has(cellVal)) {
+                    price = modelPriceMap.get(cellVal)
+                  }
+                }
+              })
+            }
+
+            if (price !== undefined && price > 0) {
               priceCell.value = price
               priceCell.numFmt = '¥#,##0.00'
             } else {

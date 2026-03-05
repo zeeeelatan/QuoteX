@@ -67,7 +67,8 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
-        VITE_BAIDU_MAP_AK: ${VITE_BAIDU_MAP_AK:-}
+        VITE_AMAP_KEY: ${VITE_AMAP_KEY:-}
+        VITE_AMAP_SECURITY_KEY: ${VITE_AMAP_SECURITY_KEY:-}
     image: ai_quote_frontend:dev
     container_name: AI_Quote_Frontend
     restart: unless-stopped

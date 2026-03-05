@@ -152,7 +152,8 @@ OLLAMA_QUOTE_MODEL=qwen:latest
 
 # ---------- 前端 ----------
 VITE_API_BASE_URL=/api
-VITE_BAIDU_MAP_AK=
+VITE_AMAP_KEY=
+VITE_AMAP_SECURITY_KEY=
 
 # ---------- 端口（宿主机 nginx 反向代理到此端口） ----------
 FRONTEND_PORT=${FRONTEND_PORT}

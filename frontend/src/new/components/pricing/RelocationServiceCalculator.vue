@@ -524,7 +524,7 @@
                     />
                   </div>
                   <div class="route-map-preview">
-                    <template v-if="hasBaiduMapKey && !routeMapLoadFailed">
+                    <template v-if="hasAmapKey && !routeMapLoadFailed">
                       <div id="route-map-container" class="route-map-inner"></div>
                       <div v-if="routeMapLoading" class="route-map-loading">
                         <span class="material-symbols-outlined route-map-pin">location_on</span>
@@ -551,8 +551,8 @@
                     <template v-else>
                       <div class="route-map-placeholder">
                         <span class="material-symbols-outlined route-map-pin">location_on</span>
-                        <p v-if="routeMapLoadFailed">地图服务暂不可用（Key 可能被禁用），请从下方结果选择或联系管理员检查百度地图 Key</p>
-                        <p v-else>请配置百度地图 Key (VITE_BAIDU_MAP_AK) 以使用地图选点</p>
+                        <p v-if="routeMapLoadFailed">地图服务暂不可用（Key 可能被禁用），请从下方结果选择或联系管理员检查高德地图 Key</p>
+                        <p v-else>请配置高德地图 Key (VITE_AMAP_KEY) 以使用地图选点</p>
                         <p class="route-map-placeholder-hint">或从下方结果选择/输入地址确认位置</p>
                       </div>
                     </template>
@@ -2598,27 +2598,32 @@ const props = withDefaults(defineProps<{
 })
 
 const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5002'
-const BAIDU_MAP_AK = import.meta.env.VITE_BAIDU_MAP_AK as string || 'FnArhbQbgyDdMh6XhpBqDUhKgFQrBnDD'
-const hasBaiduMapKey = computed(() => !!BAIDU_MAP_AK)
+const AMAP_KEY = import.meta.env.VITE_AMAP_KEY as string || ''
+const AMAP_SECURITY_KEY = import.meta.env.VITE_AMAP_SECURITY_KEY as string || ''
+const hasAmapKey = computed(() => !!AMAP_KEY)
 
-// 使用百度地图 2.0 API（稳定版本）
-function loadBaiduMap(ak: string): Promise<typeof window.BMap> {
+// 使用高德地图 JS API 2.0
+function loadAMap(): Promise<typeof window.AMap> {
   return new Promise((resolve, reject) => {
-    if (typeof (window as any).BMap !== 'undefined') {
-      resolve((window as any).BMap)
+    if (typeof (window as any).AMap !== 'undefined') {
+      resolve((window as any).AMap)
       return
     }
-    const callbackName = 'onBMapReady_' + Date.now()
+    // 安全密钥必须在加载 SDK 前设置
+    if (AMAP_SECURITY_KEY) {
+      ;(window as any)._AMapSecurityConfig = { securityJsCode: AMAP_SECURITY_KEY }
+    }
+    const callbackName = 'onAMapReady_' + Date.now()
     ;(window as any)[callbackName] = () => {
       delete (window as any)[callbackName]
-      resolve((window as any).BMap)
+      resolve((window as any).AMap)
     }
     const script = document.createElement('script')
     script.type = 'text/javascript'
-    script.src = `https://api.map.baidu.com/api?v=2.0&ak=${encodeURIComponent(ak)}&callback=${callbackName}`
+    script.src = `https://webapi.amap.com/maps?v=2.0&key=${encodeURIComponent(AMAP_KEY)}&callback=${callbackName}&plugin=AMap.Geocoder,AMap.PlaceSearch,AMap.Driving,AMap.ToolBar,AMap.Scale`
     script.onerror = () => {
       delete (window as any)[callbackName]
-      reject(new Error('百度地图脚本加载失败'))
+      reject(new Error('高德地图脚本加载失败'))
     }
     document.head.appendChild(script)
   })
@@ -3545,7 +3550,7 @@ function onLogisticsRoutePathChange(row: LogisticsItem) {
   fetchDrivingDistance(row)
 }
 
-/** 调用百度地图驾车路线规划，将最短驾车距离写入 row.km（公里） */
+/** 调用高德地图驾车路线规划，将最短驾车距离写入 row.km（公里） */
 async function fetchDrivingDistance(row: LogisticsItem) {
   const o = row.routeOriginIndex
   const d = row.routeDestIndex
@@ -3568,41 +3573,16 @@ async function fetchDrivingDistance(row: LogisticsItem) {
   }
   row.routeDistanceLoading = true
   try {
-    const BMap = (window as any).BMap
-    if (typeof BMap === 'undefined') {
-      await loadBaiduMap(BAIDU_MAP_AK)
+    let AMap = (window as any).AMap
+    if (typeof AMap === 'undefined') {
+      AMap = await loadAMap()
     }
-    const BMapAfter = (window as any).BMap
-    if (typeof BMapAfter === 'undefined') {
-      ElMessage.warning('百度地图未加载，无法测算驾车距离')
+    if (typeof AMap === 'undefined') {
+      ElMessage.warning('高德地图未加载，无法测算驾车距离')
       return
     }
-    let mapEl = document.getElementById('route-query-map')
-    if (!mapEl) {
-      const div = document.createElement('div')
-      div.id = 'route-query-map'
-      div.style.cssText = 'position:absolute;left:-9999px;top:0;width:100px;height:100px;overflow:hidden;'
-      document.body.appendChild(div)
-      mapEl = div
-    }
-    const map = (window as any).__routeQueryMap
-    if (!map) {
-      const mapContainer = document.getElementById('route-query-map')
-      if (mapContainer) {
-        ;(window as any).__routeQueryMap = new BMapAfter.Map('route-query-map')
-        ;(window as any).__routeQueryMap.centerAndZoom(new BMapAfter.Point(121.5, 31.23), 10)
-      }
-    }
-    const routeMap = (window as any).__routeQueryMap
-    if (!routeMap) {
-      ElMessage.warning('无法初始化地图，请稍后重试')
-      return
-    }
-    const startPoint = new BMapAfter.Point(startArr[0], startArr[1])
-    const endPoint = new BMapAfter.Point(destArr[0], destArr[1])
-    await new Promise<void>((resolve, reject) => {
+    await new Promise<void>((resolve) => {
       let resolved = false
-      // 超时保护：10秒后自动结束
       const timeout = setTimeout(() => {
         if (!resolved) {
           resolved = true
@@ -3611,56 +3591,29 @@ async function fetchDrivingDistance(row: LogisticsItem) {
         }
       }, 10000)
 
-      const driving = new BMapAfter.DrivingRoute(routeMap, {
-        onSearchComplete: (results: any) => {
+      const driving = new AMap.Driving({
+        policy: AMap.DrivingPolicy.LEAST_DISTANCE
+      })
+      driving.search(
+        new AMap.LngLat(startArr[0], startArr[1]),
+        new AMap.LngLat(destArr[0], destArr[1]),
+        (status: string, result: any) => {
           if (resolved) return
           resolved = true
           clearTimeout(timeout)
           try {
-            if (results && typeof results.getPlan === 'function') {
-              const plan = results.getPlan(0)
-              if (plan && typeof plan.getDistance === 'function') {
-                // getDistance(true) 返回数值（单位：米）
-                // getDistance(false) 返回字符串如 "2,145.3公里"
-                const distRaw = plan.getDistance(false) // 获取带单位的字符串
-                let kmVal = 0
-
-                if (typeof distRaw === 'string') {
-                  // 解析字符串格式，如 "2,145.3公里" 或 "500米"
-                  const cleaned = distRaw.replace(/,/g, '') // 去除千分位逗号
-                  if (cleaned.includes('公里')) {
-                    kmVal = parseFloat(cleaned.replace('公里', '')) || 0
-                  } else if (cleaned.includes('米')) {
-                    kmVal = (parseFloat(cleaned.replace('米', '')) || 0) / 1000
-                  } else {
-                    // 尝试直接解析为米
-                    const num = parseFloat(cleaned)
-                    kmVal = Number.isFinite(num) ? num / 1000 : 0
-                  }
-                } else if (typeof distRaw === 'number') {
-                  // 如果返回数值，假设单位为米
-                  kmVal = distRaw / 1000
-                }
-
-                row.km = Math.round(kmVal * 100) / 100
-                console.log(`驾车距离测算完成: ${row.km} 公里`)
-              }
+            if (status === 'complete' && result.routes && result.routes.length > 0) {
+              const route = result.routes[0]
+              const kmVal = (route.distance || 0) / 1000
+              row.km = Math.round(kmVal * 100) / 100
+              console.log(`驾车距离测算完成: ${row.km} 公里`)
             }
           } catch (e) {
             console.error('解析驾车距离失败', e)
           }
           resolve()
-        },
-        onMarkersSet: () => {},
-        onInfoHtmlSet: () => {},
-        onPolylinesSet: () => {}
-      })
-      // 设置路线策略：最短距离（常量值为 1）
-      const LEAST_DISTANCE_POLICY = BMapAfter.BMAP_DRIVING_POLICY_LEAST_DISTANCE ?? 1
-      if (typeof driving.setPolicy === 'function') {
-        driving.setPolicy(LEAST_DISTANCE_POLICY)
-      }
-      driving.search(startPoint, endPoint)
+        }
+      )
     })
   } catch (e) {
     console.error('驾车路线测算失败', e)
@@ -3692,7 +3645,7 @@ const routePlanningPolicy = ref(0) // 0: 推荐, 1: 最短, 2: 不走高速
 const routePlanningResults = ref<Array<{ duration: string; distance: string; distanceKm: number; via: string }>>([])
 const routePlanningSelectedIndex = ref<number | null>(null)
 /** 从 Direction API v2 拉取的多条路线原始数据，用于地图绘制与切换展示 */
-const routePlanningApiRoutes = ref<Array<{ distance: number; duration: number; steps: Array<{ path?: string; road_name?: string }> }>>([])
+const routePlanningApiRoutes = ref<Array<{ distance: number; duration: number; steps: Array<{ polyline?: string; road?: string }> }>>([])
 let routePlanningMapInstance: any = null
 let routePlanningDriving: any = null
 /** 当前地图上绘制的路线 overlay，用于清除后重绘 */
@@ -3738,25 +3691,26 @@ async function initRoutePlanningMap() {
   routePlanningLoading.value = true
 
   try {
-    const BMap = (window as any).BMap
-    if (typeof BMap === 'undefined') {
-      await loadBaiduMap(BAIDU_MAP_AK)
+    let AMap = (window as any).AMap
+    if (typeof AMap === 'undefined') {
+      AMap = await loadAMap()
     }
-    const BMapAfter = (window as any).BMap
-    if (typeof BMapAfter === 'undefined') {
-      ElMessage.warning('百度地图未加载')
+    if (typeof AMap === 'undefined') {
+      ElMessage.warning('高德地图未加载')
       return
     }
 
-    // 创建地图实例
-    routePlanningMapInstance = new BMapAfter.Map('route-planning-map-container')
-    routePlanningMapInstance.centerAndZoom(new BMapAfter.Point(116.404, 39.915), 6)
-    routePlanningMapInstance.enableScrollWheelZoom(true)
+    // 创建地图实例（GCJ-02 坐标：北京）
+    routePlanningMapInstance = new AMap.Map('route-planning-map-container', {
+      zoom: 6,
+      center: [116.397, 39.909],
+      scrollWheel: true
+    })
 
-    // 添加导航控件
+    // 添加控件
     try {
-      routePlanningMapInstance.addControl(new BMapAfter.NavigationControl())
-      routePlanningMapInstance.addControl(new BMapAfter.ScaleControl())
+      routePlanningMapInstance.addControl(new AMap.ToolBar())
+      routePlanningMapInstance.addControl(new AMap.Scale())
     } catch (_) {}
 
     // 搜索路线
@@ -3771,7 +3725,7 @@ function destroyRoutePlanningMap() {
   try {
     clearRoutePlanningPolylines()
     if (routePlanningDriving) {
-      routePlanningDriving.clearResults()
+      routePlanningDriving.clear()
       routePlanningDriving = null
     }
     if (routePlanningMapInstance) {
@@ -3789,48 +3743,53 @@ function clearRoutePlanningPolylines() {
   if (!routePlanningMapInstance) return
   routePlanningPolylines.forEach((overlay) => {
     try {
-      routePlanningMapInstance.removeOverlay(overlay)
+      overlay.setMap(null)
     } catch (_) {}
   })
   routePlanningPolylines = []
 }
 
 /**
- * 百度 Direction API v2 驾车路线规划，支持 alternatives=1 返回 1–3 条方案，与官方 web 一致
- * origin/destination 格式：纬度,经度（API 要求）
+ * 高德 Direction REST API 驾车路线规划
+ * origin/destination 格式：lng,lat（高德要求经度在前）
  */
-async function fetchBaiduDirectionV2(
-  originLat: number,
+async function fetchAmapDirection(
   originLng: number,
-  destLat: number,
+  originLat: number,
   destLng: number,
-  tactics: number,
+  destLat: number,
+  strategy: number,
   alternatives: 0 | 1
-): Promise<{ routes: Array<{ distance: number; duration: number; steps: Array<{ path?: string; road_name?: string }> }> } | null> {
-  const ak = BAIDU_MAP_AK
-  if (!ak) return null
-  const origin = `${originLat},${originLng}`
-  const destination = `${destLat},${destLng}`
-  const url = `https://api.map.baidu.com/direction/v2/driving?origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&ak=${encodeURIComponent(ak)}&tactics=${tactics}&alternatives=${alternatives}&steps_info=1`
+): Promise<{ routes: Array<{ distance: number; duration: number; steps: Array<{ polyline?: string; road?: string }> }> } | null> {
+  if (!AMAP_KEY) return null
+  const origin = `${originLng},${originLat}`
+  const destination = `${destLng},${destLat}`
+  const url = `https://restapi.amap.com/v3/direction/driving?origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&key=${encodeURIComponent(AMAP_KEY)}&strategy=${strategy}&extensions=all`
   try {
     const res = await fetch(url)
     const data = await res.json()
-    if (data.status !== 0 || !data.result?.routes?.length) return null
-    return { routes: data.result.routes }
+    if (data.status !== '1' || !data.route?.paths?.length) return null
+    return {
+      routes: data.route.paths.map((p: any) => ({
+        distance: Number(p.distance) || 0,
+        duration: Number(p.duration) || 0,
+        steps: (p.steps || []).map((s: any) => ({ polyline: s.polyline, road: s.road }))
+      }))
+    }
   } catch (_) {
     return null
   }
 }
 
-/** 将 API 返回的 path 字符串解析为百度地图 Point 数组（path 格式一般为 "lng,lat;lng,lat;..."） */
-function parsePathToPoints(BMap: any, path: string): any[] {
+/** 将高德 API 返回的 polyline 字符串解析为 LngLat 数组（格式 "lng,lat;lng,lat;..."） */
+function parsePathToLngLats(AMap: any, path: string): any[] {
   if (!path || typeof path !== 'string') return []
   const points: any[] = []
   const pairs = path.split(';').map((s) => s.trim()).filter(Boolean)
   for (const pair of pairs) {
     const [lng, lat] = pair.split(',').map((s) => Number(s.trim()))
     if (!isNaN(lng) && !isNaN(lat)) {
-      points.push(new BMap.Point(lng, lat))
+      points.push(new AMap.LngLat(lng, lat))
     }
   }
   return points
@@ -3838,26 +3797,27 @@ function parsePathToPoints(BMap: any, path: string): any[] {
 
 /** 在地图上绘制指定路线的折线（用于 API 多方案） */
 function drawRoutePlanningPolyline(routeIndex: number, isHighlight: boolean) {
-  const BMap = (window as any).BMap
-  if (!BMap || !routePlanningMapInstance || !routePlanningApiRoutes.value[routeIndex]) return
+  const AMap = (window as any).AMap
+  if (!AMap || !routePlanningMapInstance || !routePlanningApiRoutes.value[routeIndex]) return
   clearRoutePlanningPolylines()
   const route = routePlanningApiRoutes.value[routeIndex]
   const allPoints: any[] = []
   for (const step of route.steps || []) {
-    if (step.path) {
-      const pts = parsePathToPoints(BMap, step.path)
+    if (step.polyline) {
+      const pts = parsePathToLngLats(AMap, step.polyline)
       allPoints.push(...pts)
     }
   }
   if (allPoints.length < 2) return
-  const polyline = new BMap.Polyline(allPoints, {
+  const polyline = new AMap.Polyline({
+    path: allPoints,
     strokeColor: isHighlight ? '#135bec' : '#64748b',
     strokeWeight: isHighlight ? 5 : 3,
     strokeOpacity: 0.9
   })
-  routePlanningMapInstance.addOverlay(polyline)
+  polyline.setMap(routePlanningMapInstance)
   routePlanningPolylines.push(polyline)
-  routePlanningMapInstance.setViewport(allPoints)
+  routePlanningMapInstance.setFitView()
 }
 
 function changeRoutePolicy(policy: number) {
@@ -3870,8 +3830,8 @@ async function searchRoutePlan() {
   if (!routePlanningOrigin.value?.coords || !routePlanningDest.value?.coords) return
   if (!routePlanningMapInstance) return
 
-  const BMap = (window as any).BMap
-  if (!BMap) return
+  const AMap = (window as any).AMap
+  if (!AMap) return
 
   routePlanningLoading.value = true
   routePlanningResults.value = []
@@ -3892,15 +3852,14 @@ async function searchRoutePlan() {
 
   const [startLng, startLat] = startArr
   const [destLng, destLat] = destArr
-  const startPoint = new BMap.Point(startLng, startLat)
-  const endPoint = new BMap.Point(destLng, destLat)
 
-  // tactics: 0 推荐, 2 最短路程, 3 不走高速（与 Direction API v2 一致）
-  const tacticsMap: Record<number, number> = { 0: 0, 1: 2, 2: 3 }
-  const tactics = tacticsMap[routePlanningPolicy.value] ?? 0
+  // 高德 REST API strategy: 0 速度优先, 2 距离优先, 4 不走高速
+  const strategyMap: Record<number, number> = { 0: 0, 1: 2, 2: 4 }
+  const strategy = strategyMap[routePlanningPolicy.value] ?? 0
   const alternatives: 0 | 1 = routePlanningPolicy.value === 0 ? 1 : 0
 
-  const apiResult = await fetchBaiduDirectionV2(startLat, startLng, destLat, destLng, tactics, alternatives)
+  // 先尝试 REST API
+  const apiResult = await fetchAmapDirection(startLng, startLat, destLng, destLat, strategy, alternatives)
   if (apiResult && apiResult.routes.length > 0) {
     routePlanningLoading.value = false
     const plans: Array<{ duration: string; distance: string; distanceKm: number; via: string }> = []
@@ -3914,7 +3873,7 @@ async function searchRoutePlan() {
       const distanceDisplay = `${distanceKm.toFixed(1)}公里`
       const roadNames = new Set<string>()
       for (const step of r.steps || []) {
-        const name = (step as any).road_name || (step as any).road_name_short
+        const name = (step as any).road
         if (name && name !== '无名路') roadNames.add(name)
       }
       const via = roadNames.size > 0 ? Array.from(roadNames).slice(0, 4).join('、') : '详见地图路线'
@@ -3933,116 +3892,53 @@ async function searchRoutePlan() {
     }))
     routePlanningSelectedIndex.value = 0
     drawRoutePlanningPolyline(0, true)
-    // 自动将第一条路线的公里数写入行
     if (plans.length > 0 && routePlanningRow.value) {
       routePlanningRow.value.km = plans[0].distanceKm
     }
     return
   }
 
-  // 无 API 结果时回退到 JS API（仅一条方案）
+  // REST API 失败时回退到 JS SDK AMap.Driving
   if (routePlanningDriving) {
-    routePlanningDriving.clearResults()
+    routePlanningDriving.clear()
   }
-  routePlanningDriving = new BMap.DrivingRoute(routePlanningMapInstance, {
-    renderOptions: { map: routePlanningMapInstance, autoViewport: true },
-    onSearchComplete: (results: any) => {
+
+  // 高德 JS API DrivingPolicy: LEAST_TIME=0, LEAST_FEE=1, LEAST_DISTANCE=2, REAL_TRAFFIC=4
+  const jsPolicyMap: Record<number, number> = { 0: 0, 1: 2, 2: 4 }
+  const jsPolicy = jsPolicyMap[routePlanningPolicy.value] ?? 0
+
+  routePlanningDriving = new AMap.Driving({
+    map: routePlanningMapInstance,
+    policy: jsPolicy
+  })
+
+  routePlanningDriving.search(
+    new AMap.LngLat(startLng, startLat),
+    new AMap.LngLat(destLng, destLat),
+    (status: string, result: any) => {
       routePlanningLoading.value = false
-      if (!results) return
+      if (status !== 'complete' || !result.routes) return
 
       const plans: Array<{ duration: string; distance: string; distanceKm: number; via: string }> = []
-      const numPlans = typeof results.getNumPlans === 'function' ? results.getNumPlans() : 1
 
-      for (let i = 0; i < Math.min(numPlans, 3); i++) {
+      for (let i = 0; i < Math.min(result.routes.length, 3); i++) {
         try {
-          const plan = results.getPlan(i)
-          if (!plan) continue
+          const route = result.routes[i]
+          if (!route) continue
 
-          const durationRaw = plan.getDuration ? plan.getDuration(false) : ''
-          const distanceRaw = plan.getDistance ? plan.getDistance(false) : ''
+          const distanceKm = (route.distance || 0) / 1000
+          const totalSeconds = Math.round(route.time || 0)
+          const days = Math.floor(totalSeconds / 86400)
+          const hours = Math.floor((totalSeconds % 86400) / 3600)
+          const minutes = Math.floor((totalSeconds % 3600) / 60)
+          const durationDisplay = days > 0 ? `${days}天${hours}小时` : hours > 0 ? `${hours}小时${minutes}分钟` : `${minutes}分钟`
+          const distanceDisplay = `${distanceKm.toFixed(1)}公里`
 
-          let durationDisplay = ''
-          if (typeof durationRaw === 'number') {
-            const totalSeconds = Math.round(durationRaw)
-            const days = Math.floor(totalSeconds / 86400)
-            const hours = Math.floor((totalSeconds % 86400) / 3600)
-            const minutes = Math.floor((totalSeconds % 3600) / 60)
-            durationDisplay = days > 0 ? `${days}天${hours}小时` : hours > 0 ? `${hours}小时${minutes}分钟` : `${minutes}分钟`
-          } else if (typeof durationRaw === 'string' && durationRaw) {
-            durationDisplay = durationRaw
-          } else {
-            durationDisplay = '—'
+          const roadNames = new Set<string>()
+          for (const step of route.steps || []) {
+            if (step.road && step.road !== '无名路') roadNames.add(step.road)
           }
-
-          let distanceKm = 0
-          let distanceDisplay = ''
-          if (typeof distanceRaw === 'number') {
-            distanceKm = distanceRaw / 1000
-            distanceDisplay = `${distanceKm.toFixed(1)}公里`
-          } else if (typeof distanceRaw === 'string' && distanceRaw) {
-            const cleaned = distanceRaw.replace(/,/g, '')
-            if (cleaned.includes('公里')) {
-              distanceKm = parseFloat(cleaned.replace('公里', '')) || 0
-              distanceDisplay = distanceRaw
-            } else if (cleaned.includes('米')) {
-              distanceKm = (parseFloat(cleaned.replace('米', '')) || 0) / 1000
-              distanceDisplay = `${distanceKm.toFixed(1)}公里`
-            } else {
-              const numVal = parseFloat(cleaned)
-              if (!isNaN(numVal) && numVal > 1000) {
-                distanceKm = numVal / 1000
-                distanceDisplay = `${distanceKm.toFixed(1)}公里`
-              } else if (!isNaN(numVal)) {
-                distanceKm = numVal
-                distanceDisplay = `${distanceKm.toFixed(1)}公里`
-              }
-            }
-          }
-          if (!distanceDisplay) distanceDisplay = '—'
-
-          let via = ''
-          const highwayNames = new Set<string>()
-          const numRoutes = plan.getNumRoutes ? plan.getNumRoutes() : 0
-          for (let j = 0; j < numRoutes; j++) {
-            try {
-              const route = plan.getRoute(j)
-              if (route && route.getNumSteps) {
-                const numSteps = route.getNumSteps()
-                for (let k = 0; k < numSteps; k++) {
-                  try {
-                    const step = route.getStep(k)
-                    if (step && step.getDescription) {
-                      const stepDesc = step.getDescription(false) || ''
-                      const highwayMatches = stepDesc.match(/([A-Z]?\d*[^\s、，,。\d]*?高速)/g)
-                      if (highwayMatches) {
-                        highwayMatches.forEach((name: string) => {
-                          const cleanName = name.replace(/^(进入|沿|上|驶入|经|从)/, '')
-                          if (cleanName.length > 2) highwayNames.add(cleanName)
-                        })
-                      }
-                      const roadMatches = stepDesc.match(/[GS]\d{2,4}/g)
-                      if (roadMatches && highwayNames.size < 5) {
-                        roadMatches.forEach((name: string) => highwayNames.add(name))
-                      }
-                    }
-                  } catch (_) {}
-                }
-              }
-            } catch (_) {}
-          }
-          if (highwayNames.size > 0) {
-            via = Array.from(highwayNames).slice(0, 4).join('、')
-          }
-          if (!via) {
-            try {
-              const desc = plan.getDescription ? plan.getDescription(false) : ''
-              if (desc) {
-                via = desc.replace(/^从.*?出发，?/, '').replace(/到达.*?$/, '').trim()
-                if (via.length > 40) via = via.substring(0, 40) + '...'
-              }
-            } catch (_) {}
-          }
-          if (!via) via = '详见地图路线'
+          const via = roadNames.size > 0 ? Array.from(roadNames).slice(0, 4).join('、') : '详见地图路线'
 
           plans.push({
             duration: durationDisplay,
@@ -4056,24 +3952,12 @@ async function searchRoutePlan() {
       routePlanningResults.value = plans
       if (plans.length > 0) {
         routePlanningSelectedIndex.value = 0
-        // 自动将第一条路线的公里数写入行
         if (routePlanningRow.value) {
           routePlanningRow.value.km = plans[0].distanceKm
         }
       }
     }
-  })
-
-  const policyMap: Record<number, number> = {
-    0: BMap.BMAP_DRIVING_POLICY_DEFAULT ?? 0,
-    1: BMap.BMAP_DRIVING_POLICY_LEAST_DISTANCE ?? 1,
-    2: BMap.BMAP_DRIVING_POLICY_AVOID_HIGHWAYS ?? 2
-  }
-  const policy = policyMap[routePlanningPolicy.value] ?? 0
-  if (typeof routePlanningDriving.setPolicy === 'function') {
-    routePlanningDriving.setPolicy(policy)
-  }
-  routePlanningDriving.search(startPoint, endPoint)
+  )
 }
 
 function selectRoutePlan(index: number) {
@@ -4419,10 +4303,10 @@ const routeLocations = ref<RouteLocation[]>([
 const isRouteMapOpen = ref(false)
 const activeRouteLocationId = ref<string | null>(null)
 const routeSearchQuery = ref('')
-// 下方结果列表：优先展示百度搜索/地理编码的实时结果，无结果时显示提示
+// 下方结果列表：优先展示高德搜索/地理编码的实时结果，无结果时显示提示
 const routeMapSearchResults = ref<{ city: string; addr: string; coords: string }[]>([])
 const routeMapSearching = ref(false)
-// 百度地图实例（配置了 Key 时使用）
+// 高德地图实例（配置了 Key 时使用）
 let routeMapInstance: any = null
 let routeMapMarker: any = null
 let routeMapGeocoder: any = null
@@ -4438,11 +4322,11 @@ function tierClass(tier: string): string {
 
 function initRouteMap() {
   const container = document.getElementById('route-map-container')
-  if (!container || !BAIDU_MAP_AK) return
+  if (!container || !AMAP_KEY) return
   routeMapLoading.value = true
   routeMapLoadFailed.value = false
-  loadBaiduMap(BAIDU_MAP_AK)
-    .then((BMap) => {
+  loadAMap()
+    .then((AMap) => {
       try {
         const mapContainer = document.getElementById('route-map-container')
         if (!mapContainer) return
@@ -4451,47 +4335,41 @@ function initRouteMap() {
         if (!mapContainer.style.width) mapContainer.style.width = '100%'
         if (!mapContainer.style.height) mapContainer.style.height = '350px'
 
-        routeMapInstance = new BMap.Map('route-map-container', {
-          enableMapClick: true
+        routeMapInstance = new AMap.Map('route-map-container', {
+          zoom: 12,
+          center: [121.4692, 31.2325], // 上海 GCJ-02
+          scrollWheel: true
         })
-
-        // 初始中心点（上海）
-        const initPoint = new BMap.Point(121.4737, 31.2304)
-        routeMapInstance.centerAndZoom(initPoint, 12)
-        routeMapInstance.enableScrollWheelZoom(true)
 
         // 添加地图控件
         try {
-          routeMapInstance.addControl(new BMap.NavigationControl())
-          routeMapInstance.addControl(new BMap.ScaleControl())
+          routeMapInstance.addControl(new AMap.ToolBar())
+          routeMapInstance.addControl(new AMap.Scale())
         } catch (_) {}
 
-        routeMapGeocoder = new BMap.Geocoder()
-        routeMapMarker = new BMap.Marker(initPoint)
-        routeMapInstance.addOverlay(routeMapMarker)
-        routeMapMarker.hide()
+        routeMapGeocoder = new AMap.Geocoder()
+        const initLngLat = new AMap.LngLat(121.4692, 31.2325)
+        routeMapMarker = new AMap.Marker({ position: initLngLat, visible: false })
+        routeMapMarker.setMap(routeMapInstance)
 
-        // 等待地图瓦片加载完成后再触发搜索
+        // 等待地图加载完成后再触发搜索
         let mapReady = false
         const triggerInitialSearch = () => {
           if (mapReady) return
           mapReady = true
           routeMapLoading.value = false
-          // 若有当前搜索词，自动执行一次搜索并更新下方结果
           if (routeSearchQuery.value.trim()) {
             setTimeout(() => doRouteSearch(routeSearchQuery.value.trim()), 300)
           }
         }
 
-        // 强制刷新地图尺寸和瓦片
+        // 强制刷新地图尺寸
         const forceRefreshMap = () => {
           if (!routeMapInstance) return
           try {
-            // 检查并刷新地图尺寸
-            if (typeof routeMapInstance.checkResize === 'function') {
-              routeMapInstance.checkResize()
+            if (typeof routeMapInstance.resize === 'function') {
+              routeMapInstance.resize()
             }
-            // 重新设置中心点以触发瓦片加载
             const center = routeMapInstance.getCenter()
             if (center) {
               routeMapInstance.panTo(center)
@@ -4499,8 +4377,8 @@ function initRouteMap() {
           } catch (_) {}
         }
 
-        // 监听地图瓦片加载完成事件
-        routeMapInstance.addEventListener('tilesloaded', () => {
+        // 监听地图加载完成事件（高德用 'complete'）
+        routeMapInstance.on('complete', () => {
           routeMapTilesLoaded.value = true
           triggerInitialSearch()
         })
@@ -4512,26 +4390,25 @@ function initRouteMap() {
         setTimeout(() => {
           forceRefreshMap()
           triggerInitialSearch()
-          // 如果 2 秒后瓦片仍未加载，显示提示
           setTimeout(() => {
             if (!routeMapTilesLoaded.value) {
-              console.warn('百度地图瓦片未能加载，可能是 API Key 限制')
+              console.warn('高德地图瓦片未能加载，可能是 API Key 限制')
             }
           }, 2000)
         }, 1000)
 
-        routeMapInstance.addEventListener('click', (e: any) => {
-          const pt = e.point
-          if (!pt) return
-          const lng = typeof pt.lng === 'function' ? pt.lng() : pt.lng
-          const lat = typeof pt.lat === 'function' ? pt.lat() : pt.lat
-          routeMapMarker.setPosition(pt)
+        routeMapInstance.on('click', (e: any) => {
+          const lnglat = e.lnglat
+          if (!lnglat) return
+          const lng = lnglat.getLng()
+          const lat = lnglat.getLat()
+          routeMapMarker.setPosition(lnglat)
           routeMapMarker.show()
-          routeMapGeocoder.getLocation(pt, (rs: any) => {
-            if (rs) {
-              const comp = rs.addressComponents || {}
+          routeMapGeocoder.getAddress(lnglat, (status: string, result: any) => {
+            if (status === 'complete' && result.regeocode) {
+              const comp = result.regeocode.addressComponent || {}
               const city = comp.city || comp.province || ''
-              const addr = rs.address || [comp.province, comp.city, comp.district, comp.street, comp.streetNumber].filter(Boolean).join('')
+              const addr = result.regeocode.formattedAddress || [comp.province, comp.city, comp.district, comp.street, comp.streetNumber].filter(Boolean).join('')
               routeMapPending.value = { address: addr, city, coords: `${Number(lng).toFixed(4)}, ${Number(lat).toFixed(4)}` }
             } else {
               routeMapPending.value = { address: `${lng.toFixed(4)}, ${lat.toFixed(4)}`, city: '', coords: `${Number(lng).toFixed(4)}, ${Number(lat).toFixed(4)}` }
@@ -4539,24 +4416,24 @@ function initRouteMap() {
           })
         })
       } catch (e) {
-        console.error('百度地图初始化失败', e)
+        console.error('高德地图初始化失败', e)
         routeMapLoadFailed.value = true
         routeMapLoading.value = false
       }
     })
     .catch((e) => {
-      console.error('百度地图加载失败', e)
+      console.error('高德地图加载失败', e)
       routeMapLoading.value = false
       routeMapLoadFailed.value = true
-      ElMessage.warning('地图加载失败，请检查 Key 或从下方结果选择。若提示「APP服务被禁用」，请到百度地图开放平台启用该应用。')
+      ElMessage.warning('地图加载失败，请检查 Key 或从下方结果选择。')
     })
 }
 
 function destroyRouteMap() {
   routeMapPending.value = null
   try {
-    if (routeMapMarker && routeMapInstance) {
-      routeMapInstance.removeOverlay(routeMapMarker)
+    if (routeMapMarker) {
+      routeMapMarker.setMap(null)
       routeMapMarker = null
     }
     if (routeMapInstance) {
@@ -4570,29 +4447,27 @@ function destroyRouteMap() {
   routeMapGeocoder = null
 }
 
-/** 根据关键词搜索地点并更新下方结果列表（优先 LocalSearch 获取多个 POI 结果） */
+/** 根据关键词搜索地点并更新下方结果列表（优先 PlaceSearch 获取多个 POI 结果） */
 function doRouteSearch(keyword: string) {
   if (!keyword.trim()) {
     routeMapSearchResults.value = []
     return
   }
-  const BMap = (window as any).BMap
-  if (!BMap || !routeMapInstance || routeMapLoadFailed.value) {
-    // 如果地图未加载，直接使用手动兜底
+  const AMap = (window as any).AMap
+  if (!AMap || !routeMapInstance || routeMapLoadFailed.value) {
     provideManualFallback(keyword)
     return
   }
   routeMapSearching.value = true
   routeMapSearchResults.value = []
 
-  // 优先使用 LocalSearch 获取多个 POI 结果
   tryLocalSearch(keyword)
 }
 
-/** 使用 LocalSearch 搜索 POI（返回多个结果） */
+/** 使用 PlaceSearch 搜索 POI（返回多个结果，不需要 map 实例） */
 function tryLocalSearch(keyword: string) {
-  const BMap = (window as any).BMap
-  if (!BMap || !routeMapInstance) {
+  const AMap = (window as any).AMap
+  if (!AMap) {
     routeMapSearching.value = false
     tryGeocoderFallback(keyword)
     return
@@ -4600,73 +4475,56 @@ function tryLocalSearch(keyword: string) {
 
   let callbackFired = false
   try {
-    const local = new BMap.LocalSearch(routeMapInstance, {
-      pageCapacity: 10
+    const placeSearch = new AMap.PlaceSearch({
+      pageSize: 10
     })
-    const onComplete = (rs: any) => {
+    const timeoutId = setTimeout(() => {
+      if (!callbackFired) {
+        callbackFired = true
+        tryGeocoderFallback(keyword)
+      }
+    }, 5000)
+
+    placeSearch.search(keyword, (status: string, result: any) => {
       if (callbackFired) return
       callbackFired = true
+      clearTimeout(timeoutId)
 
-      if (!rs) {
-        // LocalSearch 无结果，尝试 Geocoder
+      if (status !== 'complete' || !result.poiList?.pois?.length) {
         tryGeocoderFallback(keyword)
         return
       }
       const list: { city: string; addr: string; coords: string }[] = []
-      const n = typeof rs.getCurrentNumPois === 'function' ? rs.getCurrentNumPois() : 0
-      for (let i = 0; i < n; i++) {
-        const poi = rs.getPoi && rs.getPoi(i)
-        if (!poi || !poi.point) continue
-        const pt = poi.point
-        const lng = typeof pt.lng === 'function' ? pt.lng() : pt.lng
-        const lat = typeof pt.lat === 'function' ? pt.lat() : pt.lat
-        // 优先显示 POI 名称，地址作为补充
-        const title = poi.title || ''
+      for (const poi of result.poiList.pois) {
+        if (!poi.location) continue
+        const lng = poi.location.getLng()
+        const lat = poi.location.getLat()
+        const title = poi.name || ''
         const address = poi.address || ''
         const addr = title ? (address ? `${title}（${address}）` : title) : address
-        const city = poi.city || ''
+        const city = poi.cityname || ''
         list.push({ city, addr, coords: `${Number(lng).toFixed(4)}, ${Number(lat).toFixed(4)}` })
       }
       if (list.length === 0) {
-        // LocalSearch 无有效结果，尝试 Geocoder
         tryGeocoderFallback(keyword)
       } else {
         routeMapSearching.value = false
         routeMapSearchResults.value = list
-        // 自动将地图移动到第一个结果
         if (list.length > 0 && routeMapInstance) {
           const firstCoords = list[0].coords.split(', ')
           if (firstCoords.length === 2) {
-            const pt = new BMap.Point(parseFloat(firstCoords[0]), parseFloat(firstCoords[1]))
-            routeMapInstance.centerAndZoom(pt, 14)
+            routeMapInstance.setZoomAndCenter(14, [parseFloat(firstCoords[0]), parseFloat(firstCoords[1])])
           }
         }
       }
-    }
-    const timeoutId = setTimeout(() => {
-      if (!callbackFired) {
-        callbackFired = true
-        // 超时，尝试 Geocoder
-        tryGeocoderFallback(keyword)
-      }
-    }, 5000)
-    const wrappedComplete = (rs: any) => {
-      clearTimeout(timeoutId)
-      onComplete(rs)
-    }
-    if (typeof local.setSearchCompleteCallback === 'function') {
-      local.setSearchCompleteCallback(wrappedComplete)
-    } else {
-      (local as any).onSearchComplete = wrappedComplete
-    }
-    local.search(keyword)
+    })
   } catch (_) {
     callbackFired = true
     tryGeocoderFallback(keyword)
   }
 }
 
-/** 使用 Geocoder 进行地址解析（作为 LocalSearch 的兜底） */
+/** 使用 Geocoder 进行地址解析（作为 PlaceSearch 的兜底） */
 function tryGeocoderFallback(keyword: string) {
   if (!routeMapGeocoder) {
     routeMapSearching.value = false
@@ -4683,42 +4541,35 @@ function tryGeocoderFallback(keyword: string) {
     }
   }, 4000)
 
-  routeMapGeocoder.getPoint(keyword, (point: any) => {
+  routeMapGeocoder.getLocation(keyword, (status: string, result: any) => {
     if (geocoderFired) return
     geocoderFired = true
     clearTimeout(geocoderTimeout)
 
-    if (point) {
-      const BMap = (window as any).BMap
-      const lng = typeof point.lng === 'function' ? point.lng() : point.lng
-      const lat = typeof point.lat === 'function' ? point.lat() : point.lat
+    if (status === 'complete' && result.geocodes && result.geocodes.length > 0) {
+      const geocode = result.geocodes[0]
+      const location = geocode.location
+      const lng = location.getLng()
+      const lat = location.getLat()
       const coordsStr = `${Number(lng).toFixed(4)}, ${Number(lat).toFixed(4)}`
+      const comp = geocode.addressComponent || {}
+      const city = comp.city || comp.province || ''
+      const addr = geocode.formattedAddress || keyword.trim()
 
-      // 获取详细地址信息
-      routeMapGeocoder.getLocation(point, (rs: any) => {
-        routeMapSearching.value = false
-        if (rs) {
-          const comp = rs.addressComponents || {}
-          const city = comp.city || comp.province || ''
-          const addr = rs.address || keyword.trim()
-          routeMapSearchResults.value = [{ city, addr, coords: coordsStr }]
-          // 移动地图到该位置
-          if (routeMapInstance && BMap) {
-            routeMapInstance.centerAndZoom(point, 15)
-          }
-          if (routeMapMarker) {
-            routeMapMarker.setPosition(point)
-            routeMapMarker.show()
-          }
-        } else {
-          routeMapSearchResults.value = [{ city: '', addr: keyword.trim(), coords: coordsStr }]
-        }
-      })
+      routeMapSearching.value = false
+      routeMapSearchResults.value = [{ city, addr, coords: coordsStr }]
+      if (routeMapInstance) {
+        routeMapInstance.setZoomAndCenter(15, [lng, lat])
+      }
+      if (routeMapMarker) {
+        routeMapMarker.setPosition(location)
+        routeMapMarker.show()
+      }
     } else {
       routeMapSearching.value = false
       provideManualFallback(keyword)
     }
-  }, '全国')
+  })
 }
 
 /** 根据关键词智能识别城市并提供手动确认选项 */
@@ -4756,15 +4607,16 @@ function provideManualFallback(keyword: string) {
   }
 
   // 生成模拟坐标（基于城市中心点的近似值）
+  // GCJ-02 坐标（高德地图坐标系）
   const cityCenterCoords: Record<string, string> = {
-    '上海': '121.4737, 31.2304',
-    '北京': '116.4074, 39.9042',
+    '上海': '121.4692, 31.2325',
+    '北京': '116.3975, 39.9085',
     '广州': '113.2644, 23.1291',
     '深圳': '114.0579, 22.5431',
-    '杭州': '120.1551, 30.2741',
+    '杭州': '120.1536, 30.2655',
     '南京': '118.7969, 32.0603',
-    '成都': '104.0665, 30.5723',
-    '武汉': '114.3055, 30.5928',
+    '成都': '104.0657, 30.6595',
+    '武汉': '114.3046, 30.5928',
     '重庆': '106.5516, 29.5630',
     '天津': '117.1901, 39.1256',
     '苏州': '120.6195, 31.2990',
@@ -4779,7 +4631,7 @@ function provideManualFallback(keyword: string) {
     '合肥': '117.2272, 31.8206',
   }
 
-  const coords = cityCenterCoords[detectedCity] || '116.4074, 39.9042'
+  const coords = cityCenterCoords[detectedCity] || '116.3975, 39.9085'
 
   // 显示手动确认选项
   routeMapSearchResults.value = [{
@@ -4794,7 +4646,7 @@ function provideManualFallback(keyword: string) {
 }
 
 watch(isRouteMapOpen, (open) => {
-  if (open && hasBaiduMapKey.value && !routeMapLoadFailed.value) {
+  if (open && hasAmapKey.value && !routeMapLoadFailed.value) {
     routeMapTilesLoaded.value = false
     nextTick(() => initRouteMap())
   } else if (!open) {
@@ -4881,8 +4733,8 @@ async function doInlineRouteSearch(locId: string, keyword: string) {
   const loc = routeLocations.value.find((l) => l.id === locId)
   if (!loc) return
 
-  const BMap = (window as any).BMap
-  if (!BMap) {
+  const AMap = (window as any).AMap
+  if (!AMap) {
     loc.searching = false
     return
   }
@@ -4890,41 +4742,41 @@ async function doInlineRouteSearch(locId: string, keyword: string) {
   let callbackFired = false
 
   try {
-    // 创建临时地图实例用于搜索（与地图弹窗保持一致的搜索方式）
-    const tempMap = new BMap.Map(document.createElement('div'))
-    tempMap.centerAndZoom(new BMap.Point(116.404, 39.915), 11) // 默认北京
-
-    const localSearch = new BMap.LocalSearch(tempMap, {
-      pageCapacity: 8
+    // PlaceSearch 不需要 map 实例
+    const placeSearch = new AMap.PlaceSearch({
+      pageSize: 8
     })
 
-    const onComplete = (results: any) => {
+    const timeoutId = setTimeout(() => {
+      if (!callbackFired) {
+        callbackFired = true
+        loc.searching = false
+        tryInlineGeocoderFallback(locId, keyword)
+      }
+    }, 5000)
+
+    placeSearch.search(keyword, (status: string, result: any) => {
       if (callbackFired) return
       callbackFired = true
+      clearTimeout(timeoutId)
       loc.searching = false
 
-      if (!results) {
+      if (status !== 'complete' || !result.poiList?.pois?.length) {
         tryInlineGeocoderFallback(locId, keyword)
         return
       }
 
       const items: Array<{ city: string; addr: string; coords: string }> = []
-      // 使用 getCurrentNumPois 与地图弹窗保持一致
-      const numPois = typeof results.getCurrentNumPois === 'function'
-        ? results.getCurrentNumPois()
-        : (typeof results.getNumPois === 'function' ? results.getNumPois() : 0)
-
-      for (let i = 0; i < Math.min(numPois, 6); i++) {
+      for (let i = 0; i < Math.min(result.poiList.pois.length, 6); i++) {
         try {
-          const poi = results.getPoi ? results.getPoi(i) : null
-          if (!poi || !poi.point) continue
-          const pt = poi.point
-          const lng = typeof pt.lng === 'function' ? pt.lng() : pt.lng
-          const lat = typeof pt.lat === 'function' ? pt.lat() : pt.lat
-          const title = poi.title || ''
+          const poi = result.poiList.pois[i]
+          if (!poi?.location) continue
+          const lng = poi.location.getLng()
+          const lat = poi.location.getLat()
+          const title = poi.name || ''
           const address = poi.address || ''
           const addr = title ? (address ? `${title}（${address}）` : title) : address
-          const city = poi.city || ''
+          const city = poi.cityname || ''
           if (addr) {
             items.push({
               city: city,
@@ -4938,33 +4790,9 @@ async function doInlineRouteSearch(locId: string, keyword: string) {
       if (items.length > 0) {
         loc.searchResults = items
       } else {
-        // LocalSearch 无有效 POI 时，与地图弹窗一致：用 Geocoder 全国解析兜底
         tryInlineGeocoderFallback(locId, keyword)
       }
-    }
-
-    // 设置超时保护
-    const timeoutId = setTimeout(() => {
-      if (!callbackFired) {
-        callbackFired = true
-        loc.searching = false
-        tryInlineGeocoderFallback(locId, keyword)
-      }
-    }, 5000)
-
-    const wrappedComplete = (rs: any) => {
-      clearTimeout(timeoutId)
-      onComplete(rs)
-    }
-
-    // 使用 setSearchCompleteCallback（与地图弹窗保持一致）
-    if (typeof localSearch.setSearchCompleteCallback === 'function') {
-      localSearch.setSearchCompleteCallback(wrappedComplete)
-    } else {
-      (localSearch as any).onSearchComplete = wrappedComplete
-    }
-
-    localSearch.search(keyword)
+    })
   } catch (_) {
     loc.searching = false
     loc.searchResults = []
@@ -4976,13 +4804,13 @@ function tryInlineGeocoderFallback(locId: string, keyword: string) {
   const loc = routeLocations.value.find((l) => l.id === locId)
   if (!loc) return
 
-  const BMap = (window as any).BMap
-  if (!BMap) {
+  const AMap = (window as any).AMap
+  if (!AMap) {
     loc.searching = false
     return
   }
 
-  const geocoder = new BMap.Geocoder()
+  const geocoder = new AMap.Geocoder()
   let fired = false
   const timeoutId = setTimeout(() => {
     if (!fired) {
@@ -4991,32 +4819,28 @@ function tryInlineGeocoderFallback(locId: string, keyword: string) {
     }
   }, 4000)
 
-  geocoder.getPoint(keyword, (point: any) => {
+  geocoder.getLocation(keyword, (status: string, result: any) => {
     if (fired) return
     fired = true
     clearTimeout(timeoutId)
 
-    if (!point) {
+    if (status !== 'complete' || !result.geocodes || result.geocodes.length === 0) {
       loc.searching = false
       return
     }
 
-    const lng = typeof point.lng === 'function' ? point.lng() : point.lng
-    const lat = typeof point.lat === 'function' ? point.lat() : point.lat
+    const geocode = result.geocodes[0]
+    const location = geocode.location
+    const lng = location.getLng()
+    const lat = location.getLat()
     const coordsStr = `${Number(lng).toFixed(4)}, ${Number(lat).toFixed(4)}`
+    const comp = geocode.addressComponent || {}
+    const city = comp.city || comp.province || ''
+    const addr = geocode.formattedAddress || keyword.trim()
 
-    geocoder.getLocation(point, (rs: any) => {
-      loc.searching = false
-      if (rs) {
-        const comp = rs.addressComponents || {}
-        const city = comp.city || comp.province || ''
-        const addr = rs.address || keyword.trim()
-        loc.searchResults = [{ city, addr, coords: coordsStr }]
-      } else {
-        loc.searchResults = [{ city: '', addr: keyword.trim(), coords: coordsStr }]
-      }
-    })
-  }, '全国')
+    loc.searching = false
+    loc.searchResults = [{ city, addr, coords: coordsStr }]
+  })
 }
 
 // 选择内联搜索结果
