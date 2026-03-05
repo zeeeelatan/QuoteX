@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
 from typing import List, Optional
 import pandas as pd
+import math
 import io
 from fastapi.responses import StreamingResponse
 from datetime import datetime
@@ -304,6 +305,9 @@ async def import_office_devices(file: UploadFile = File(...), db: Session = Depe
     for r in records:
         r['created_at'] = now
         r['updated_at'] = now
+        for k, v in r.items():
+            if isinstance(v, float) and math.isnan(v):
+                r[k] = None
         objs.append(OfficeDeviceInventory(**r))
 
     if objs:
@@ -366,6 +370,94 @@ def export_office_devices(
         media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         headers={'Content-Disposition': 'attachment; filename="office_devices_export.xlsx"'}
     )
+
+
+@router.post("/replace-import")
+async def replace_import_office_devices(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """清空表并重新导入办公设备数据（替换导入）"""
+    raw = await file.read()
+    bio = io.BytesIO(raw)
+
+    try:
+        xls = pd.ExcelFile(bio)
+        frames = [xls.parse(sn) for sn in xls.sheet_names]
+        df = pd.concat(frames, ignore_index=True)
+    except Exception:
+        bio.seek(0)
+        df = pd.read_excel(bio)
+
+    # 兼容两套列名（脚本旧名 + 现有端点名）
+    cn2field = {
+        '厂商': 'manufacturer',
+        '设备系列': 'device_series',
+        '设备型号': 'model_number',
+        '业务场景': 'business_scenario',
+        '一级分类': 'primary_category',
+        '设备一级分类': 'primary_category',
+        '二级分类': 'secondary_category',
+        '设备二级分类': 'secondary_category',
+        '三级分类': 'tertiary_category',
+        '设备三级分类': 'tertiary_category',
+        '备注': 'remarks',
+        '整机价格': 'device_price',
+        '档次': 'device_grade',
+        '设备档次': 'device_grade',
+    }
+
+    # 验证必要表头
+    required_cn = {'厂商', '设备型号', '整机价格'}
+    actual_columns = set(df.columns.tolist())
+    missing = required_cn - actual_columns
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Excel 缺少必要列: {', '.join(sorted(missing))}")
+
+    matched_columns = [c for c in df.columns if c in cn2field]
+    ignored_columns = [c for c in df.columns if c not in cn2field]
+
+    df = df.rename(columns=cn2field)
+
+    keep_fields = [
+        'manufacturer', 'device_series', 'model_number', 'business_scenario',
+        'primary_category', 'secondary_category', 'tertiary_category',
+        'remarks', 'device_price', 'device_grade'
+    ]
+    df = df[[c for c in keep_fields if c in df.columns]].copy()
+
+    def to_float(x):
+        try:
+            s = str(x).replace(',', '').replace('¥', '').replace('￥', '').strip()
+            return float(s) if s not in (None, '', 'nan') else None
+        except Exception:
+            return None
+
+    if 'device_price' in df.columns:
+        df['device_price'] = df['device_price'].apply(to_float)
+
+    # 清空表
+    db.query(OfficeDeviceInventory).delete()
+
+    # 导入数据
+    now = datetime.now()
+    records = df.to_dict(orient='records')
+    objs = []
+    for r in records:
+        r['created_at'] = now
+        r['updated_at'] = now
+        for k, v in r.items():
+            if isinstance(v, float) and math.isnan(v):
+                r[k] = None
+        objs.append(OfficeDeviceInventory(**r))
+
+    if objs:
+        db.bulk_save_objects(objs)
+    db.commit()
+
+    return {
+        "ok": True,
+        "count": len(objs),
+        "matched_columns": matched_columns,
+        "ignored_columns": ignored_columns
+    }
 
 
 @router.delete("/clear")

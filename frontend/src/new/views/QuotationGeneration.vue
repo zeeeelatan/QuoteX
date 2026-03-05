@@ -530,7 +530,7 @@ const selectedCustomerInfo = computed(() => {
   const id = selectedCustomer.value === '' ? null : Number(selectedCustomer.value)
   if (id == null) {
     return {
-      customerName: '请选择客户',
+      customerName: '-',
       contactPerson: '',
       contactPhone: '',
       customerAddress: ''
@@ -539,7 +539,7 @@ const selectedCustomerInfo = computed(() => {
   const customer = customersList.value.find(c => c.id === id)
   if (!customer) {
     return {
-      customerName: '请选择客户',
+      customerName: '-',
       contactPerson: '',
       contactPhone: '',
       customerAddress: ''
@@ -575,9 +575,6 @@ async function loadCompanyAndCustomers() {
     }
     if (customersData && Array.isArray(customersData)) {
       customersList.value = customersData
-      if (customersList.value.length > 0 && selectedCustomer.value === '') {
-        selectedCustomer.value = customersList.value[0].id
-      }
     } else {
       customersList.value = []
     }

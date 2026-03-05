@@ -17,7 +17,7 @@ print(f"[import_office_device_inventory] target_db={DB_NAME} user={DB_USER} host
 
 # Excel 文件路径
 # Excel 文件路径：请修改为实际路径，或通过环境变量 IMPORT_EXCEL_FILE 指定
-EXCEL_FILE = os.getenv("IMPORT_EXCEL_FILE", "./data/办公设备数据.xlsx")
+EXCEL_FILE = os.getenv("IMPORT_EXCEL_FILE", os.path.expanduser("~/Desktop/报价/维保报价数据/办公设备数据.xlsx"))
 
 def connect_to_db():
     """创建数据库连接"""

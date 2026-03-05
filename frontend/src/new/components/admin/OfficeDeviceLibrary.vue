@@ -53,6 +53,16 @@
             <button class="refresh-btn" @click="resetFilters" title="重置">
               <span class="material-symbols-outlined">refresh</span>
             </button>
+            <button class="filter-btn" @click="triggerReplaceImport" title="更新数据" :disabled="replacing">
+              <span class="material-symbols-outlined">upload_file</span>
+            </button>
+            <input
+              ref="replaceFileInput"
+              type="file"
+              accept=".xlsx,.xls"
+              style="display: none"
+              @change="handleReplaceImport"
+            />
           </div>
         </div>
       </div>
@@ -359,6 +369,8 @@ const batchSaving = ref(false)
 const showAddDialog = ref(false)
 const showBatchEditDialog = ref(false)
 const editingDevice = ref<Device | null>(null)
+const replaceFileInput = ref<HTMLInputElement | null>(null)
+const replacing = ref(false)
 
 // 多选相关状态
 const selectedDevices = ref<number[]>([])
@@ -697,6 +709,58 @@ async function deleteDevice(id: number) {
       console.error('Failed to delete device:', error)
       ElMessage.error('删除设备失败')
     }
+  }
+}
+
+async function triggerReplaceImport() {
+  try {
+    await ElMessageBox.confirm(
+      '此操作将清空现有数据并从 Excel 文件重新导入，是否继续？',
+      '更新数据',
+      {
+        confirmButtonText: '选择文件',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+    replaceFileInput.value?.click()
+  } catch {
+    // cancelled
+  }
+}
+
+async function handleReplaceImport(event: Event) {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+
+  replacing.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', file)
+
+    const response = await axios.post(`${API_URL}/office-devices/replace-import`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+
+    const { count, matched_columns, ignored_columns } = response.data
+    let msg = `导入成功，共 ${count} 条记录`
+    if (ignored_columns?.length) {
+      msg += `\n忽略的列: ${ignored_columns.join(', ')}`
+    }
+    ElMessage.success(msg)
+    loadDevices()
+    loadFilterOptions()
+  } catch (error: any) {
+    const detail = error.response?.data?.detail
+    if (detail) {
+      ElMessage.error(`导入失败: ${detail}`)
+    } else {
+      ElMessage.error('导入失败: ' + error.message)
+    }
+  } finally {
+    replacing.value = false
+    target.value = ''
   }
 }
 

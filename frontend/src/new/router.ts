@@ -13,7 +13,7 @@ import QuoteManagement from './views/QuoteManagement.vue'
 import OnsiteServiceCalculator from './components/pricing/OnsiteServiceCalculator.vue'
 import { openSystemSettings } from './stores/settingsDialogStore'
 const router = createRouter({
-  history: createWebHistory('/new'),
+  history: createWebHistory('/'),
   routes: [
     {
       path: '/',

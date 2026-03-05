@@ -2,7 +2,7 @@
   <div class="quote-management-page">
     <div class="page-header">
       <div class="header-left">
-        <button class="back-btn" @click="$router.push('/new')">
+        <button class="back-btn" @click="$router.push('/')">
           <span class="material-symbols-outlined">arrow_back</span>
         </button>
         <div class="title-section">
@@ -158,7 +158,7 @@ const totalPages = computed(() => Math.ceil(filteredQuotes.value.length / pageSi
 
 // Methods
 function createNewQuote() {
-  router.push('/new/document-recognition')
+  router.push('/document-recognition')
 }
 
 function viewQuote(quote: any) {

@@ -1208,6 +1208,282 @@ const QUOTATION_TYPE_COLUMNS: Record<string, QuotationTypeColumnConfig> = {
     },
     defaults: { '数量': '1', '单位': '台' },
   },
+  '系统集成报价': {
+    targetHeaders: [
+      "序号", "采购服务项", "服务描述", "数量", "单位", "备注"
+    ],
+    visibleColumns: [
+      "序号", "采购服务项", "服务描述", "数量", "单位", "备注"
+    ],
+    manualEntryFieldMap: {
+      '序号': { label: '自动生成', required: false },
+      '采购服务项': { label: '采购服务项*', required: true },
+      '服务描述': { label: '服务描述*', required: true },
+      '数量': { label: '数量*', required: true },
+      '单位': { label: '单位', required: false },
+      '备注': { label: '备注', required: false },
+    },
+    fieldMappings: {
+      '采购服务项': ['采购服务项', '服务项', '费用类别', '费用类型', '采购项', '项目类别', '服务类别', 'service item', 'cost category'],
+      '服务描述': ['服务描述', '服务内容', '描述', '内容描述', '说明', '详细描述', 'description', 'service description'],
+      '数量': ['数量', '台数', '套数', '件数', '次数', '人天数', 'quantity', 'qty', 'count', 'number'],
+      '单位': ['单位', '计量单位', 'unit'],
+      '备注': ['备注', '附注', '其他', 'note', 'remark', 'comment'],
+    },
+    defaults: { '数量': '1', '单位': '项' },
+  },
+  '单次服务报价（一价全包）': {
+    targetHeaders: [
+      "序号", "服务项", "服务内容描述", "工程师类型", "工程师能力级别",
+      "服务地点", "服务模式", "数量", "单位"
+    ],
+    visibleColumns: [
+      "序号", "服务项", "服务内容描述", "工程师类型", "工程师能力级别",
+      "服务地点", "服务模式", "数量", "单位"
+    ],
+    manualEntryFieldMap: {
+      '序号': { label: '自动生成', required: false },
+      '服务项': { label: '服务项*', required: true },
+      '服务内容描述': { label: '服务描述*', required: true },
+      '工程师类型': { label: '工程师类型', required: false },
+      '工程师能力级别': { label: '能力级别', required: false },
+      '服务地点': { label: '服务地点', required: false },
+      '服务模式': { label: '服务模式', required: false },
+      '数量': { label: '数量*', required: true },
+      '单位': { label: '单位', required: false },
+    },
+    fieldMappings: {
+      '服务项': ['服务项', '服务项目', '服务名称', '项目名称', '项目', 'service item', 'service name'],
+      '服务内容描述': ['服务内容描述', '服务内容', '服务描述', '内容描述', '描述', 'service description', 'description'],
+      '工程师类型': ['工程师类型', '人员类型', '工程师', '技术人员类型', 'engineer type'],
+      '工程师能力级别': ['工程师能力级别', '能力级别', '技能级别', '级别', '工程师级别', 'skill level', 'engineer level'],
+      '服务地点': ['服务地点', '地点', '工作地点', '服务地址', '现场地址', 'service location', 'location'],
+      '服务模式': ['服务模式', '服务方式', '模式', '响应方式', 'service mode'],
+      '数量': ['数量', '人数', '台数', '次数', 'quantity', 'count', 'number'],
+      '单位': ['单位', '计量单位', 'unit'],
+    },
+    defaults: { '数量': '1', '单位': '人天' },
+  },
+  '巡检服务报价': {
+    targetHeaders: [
+      "序号", "厂商", "设备/软件型号", "设备/软件分类", "配置信息",
+      "设备数量", "巡检频次", "巡检周期", "巡检内容", "服务地点", "备注"
+    ],
+    visibleColumns: [
+      "序号", "厂商", "设备/软件型号", "设备/软件分类", "配置信息",
+      "设备数量", "巡检频次", "巡检周期", "巡检内容", "服务地点", "备注"
+    ],
+    manualEntryFieldMap: {
+      '序号': { label: '自动生成', required: false },
+      '厂商': { label: '设备品牌*', required: true },
+      '设备/软件型号': { label: '设备型号*', required: true },
+      '设备/软件分类': { label: '设备类型*', required: true },
+      '配置信息': { label: '设备配置', required: false },
+      '设备数量': { label: '数量*', required: true },
+      '巡检频次': { label: '巡检频次*', required: true },
+      '巡检周期': { label: '巡检周期', required: false },
+      '巡检内容': { label: '巡检内容', required: false },
+      '服务地点': { label: '服务地点', required: false },
+      '备注': { label: '备注', required: false },
+    },
+    fieldMappings: {
+      '厂商': ['厂商', '厂商品牌', '品牌', '制造商', '生产商', 'manufacturer', 'vendor', 'brand'],
+      '设备/软件型号': ['设备型号', '软件型号', '设备/软件型号', '型号', '产品型号', '产品名称', '设备名称', 'model', 'product model'],
+      '设备/软件分类': ['设备分类', '软件分类', '设备/软件分类', '分类', '设备类型', '类别', 'category', 'type'],
+      '配置信息': ['配置信息', '配置', '设备配置', '规格', '参数', 'configuration', 'spec'],
+      '设备数量': ['设备数量', '数量', '台数', '套数', 'quantity', 'count', 'number'],
+      '巡检频次': ['巡检频次', '频次', '次数', '巡检次数', '频率', 'frequency', 'inspection frequency'],
+      '巡检周期': ['巡检周期', '周期', '服务周期', '合同期', 'inspection period', 'period'],
+      '巡检内容': ['巡检内容', '巡检项目', '巡检范围', '检查内容', '服务内容', 'inspection scope', 'inspection content'],
+      '服务地点': ['服务地点', '地点', '机房地址', '地址', '巡检地点', 'location', 'service location'],
+      '备注': ['备注', '说明', '附注', 'note', 'remark', 'comment'],
+    },
+    defaults: { '设备数量': '1', '巡检频次': '1次/季度', '巡检周期': '1年' },
+  },
+  '混合服务报价': {
+    targetHeaders: [
+      "序号", "服务类型", "厂商", "设备/软件型号", "设备/软件分类", "配置信息",
+      "设备数量", "服务级别", "服务周期", "服务周期单位", "服务范围", "单价", "备注"
+    ],
+    visibleColumns: [
+      "序号", "服务类型", "厂商", "设备/软件型号", "设备/软件分类", "配置信息",
+      "设备数量", "服务级别", "服务周期", "服务周期单位", "服务范围", "单价", "备注"
+    ],
+    manualEntryFieldMap: {
+      '序号': { label: '自动生成', required: false },
+      '服务类型': { label: '服务类型*', required: true },
+      '厂商': { label: '设备品牌*', required: true },
+      '设备/软件型号': { label: '设备型号*', required: true },
+      '设备/软件分类': { label: '设备类型*', required: true },
+      '配置信息': { label: '设备配置', required: false },
+      '设备数量': { label: '数量*', required: true },
+      '服务级别': { label: '服务级别', required: false },
+      '服务周期': { label: '服务周期', required: false },
+      '服务周期单位': { label: '单位', required: false },
+      '服务范围': { label: '服务范围', required: false },
+      '单价': { label: '单价', required: false },
+      '备注': { label: '备注', required: false },
+    },
+    fieldMappings: {
+      '服务类型': ['服务类型', '服务项', '服务项目', '项目类型', '业务类型', 'service type'],
+      '厂商': ['厂商', '厂商品牌', '品牌', '制造商', '生产商', 'manufacturer', 'vendor', 'brand'],
+      '设备/软件型号': ['设备型号', '软件型号', '设备/软件型号', '型号', '产品型号', '产品名称', '设备名称', 'model', 'product model'],
+      '设备/软件分类': ['设备分类', '软件分类', '设备/软件分类', '分类', '设备类型', '类别', 'category', 'type'],
+      '配置信息': ['配置信息', '配置', '设备配置', '规格', '参数', 'configuration', 'spec'],
+      '设备数量': ['设备数量', '数量', '台数', '套数', 'quantity', 'count', 'number'],
+      '服务级别': ['服务级别', '服务等级', '维保级别', 'service level', 'support level'],
+      '服务周期': ['服务周期', '周期', '合同期', '维保时间', '年限', 'service period', 'contract period'],
+      '服务周期单位': ['周期单位', '单位', '时间单位', 'period unit'],
+      '服务范围': ['服务范围', '服务内容', '维保范围', 'service scope', 'coverage'],
+      '单价': ['单价', '价格', '报价', '维保单价', '年单价', 'price', 'unit price'],
+      '备注': ['备注', '说明', '附注', 'note', 'remark', 'comment'],
+    },
+    defaults: { '设备数量': '1', '服务周期': '1', '服务周期单位': '年' },
+  },
+  '设备/备件租赁报价': {
+    targetHeaders: [
+      "序号", "厂商", "设备/软件型号", "设备/软件分类", "配置信息",
+      "成色", "数量", "单位", "租赁方式", "租赁周期", "租赁单价",
+      "交付地点", "备注"
+    ],
+    visibleColumns: [
+      "序号", "厂商", "设备/软件型号", "设备/软件分类", "配置信息",
+      "成色", "数量", "单位", "租赁方式", "租赁周期", "租赁单价",
+      "交付地点", "备注"
+    ],
+    manualEntryFieldMap: {
+      '序号': { label: '自动生成', required: false },
+      '厂商': { label: '设备品牌*', required: true },
+      '设备/软件型号': { label: '设备型号*', required: true },
+      '设备/软件分类': { label: '设备类型*', required: true },
+      '配置信息': { label: '设备配置', required: false },
+      '成色': { label: '成色', required: false },
+      '数量': { label: '数量*', required: true },
+      '单位': { label: '单位', required: false },
+      '租赁方式': { label: '租赁方式', required: false },
+      '租赁周期': { label: '租赁周期*', required: true },
+      '租赁单价': { label: '租赁单价', required: false },
+      '交付地点': { label: '交付地点', required: false },
+      '备注': { label: '备注', required: false },
+    },
+    fieldMappings: {
+      '厂商': ['厂商', '厂商品牌', '品牌', '制造商', '生产商', 'manufacturer', 'vendor', 'brand'],
+      '设备/软件型号': ['设备型号', '软件型号', '设备/软件型号', '型号', '产品型号', '产品名称', '设备名称', 'model', 'product model'],
+      '设备/软件分类': ['设备分类', '软件分类', '设备/软件分类', '分类', '设备类型', '类别', 'category', 'type'],
+      '配置信息': ['配置信息', '配置', '设备配置', '规格', '参数', 'configuration', 'spec'],
+      '成色': ['成色', '产品成色', '新旧', '新旧程度', '品相', 'condition'],
+      '数量': ['数量', '台数', '套数', '件数', 'quantity', 'qty', 'count'],
+      '单位': ['单位', '计量单位', 'unit'],
+      '租赁方式': ['租赁方式', '租赁类型', '租赁模式', '租用方式', 'lease type', 'rental type'],
+      '租赁周期': ['租赁周期', '租期', '租赁期限', '使用周期', 'lease period', 'rental period'],
+      '租赁单价': ['租赁单价', '租金', '月租金', '租赁价格', '租赁费用', 'rental price', 'lease price'],
+      '交付地点': ['交付地点', '到货地点', '交货地点', '送货地址', '目的地', 'delivery location', 'destination'],
+      '备注': ['备注', '说明', '附注', 'note', 'remark', 'comment'],
+    },
+    defaults: { '数量': '1', '单位': '台', '租赁方式': '经营性租赁' },
+  },
+  '弱电实施报价': {
+    targetHeaders: [
+      "序号", "工程类别", "施工项目", "项目描述", "规格/型号",
+      "数量", "单位", "单价", "施工地点", "备注"
+    ],
+    visibleColumns: [
+      "序号", "工程类别", "施工项目", "项目描述", "规格/型号",
+      "数量", "单位", "单价", "施工地点", "备注"
+    ],
+    manualEntryFieldMap: {
+      '序号': { label: '自动生成', required: false },
+      '工程类别': { label: '工程类别*', required: true },
+      '施工项目': { label: '施工项目*', required: true },
+      '项目描述': { label: '项目描述', required: false },
+      '规格/型号': { label: '规格/型号', required: false },
+      '数量': { label: '数量*', required: true },
+      '单位': { label: '单位', required: false },
+      '单价': { label: '单价', required: false },
+      '施工地点': { label: '施工地点', required: false },
+      '备注': { label: '备注', required: false },
+    },
+    fieldMappings: {
+      '工程类别': ['工程类别', '工程类型', '系统类别', '弱电类别', '子系统', 'project category', 'system type'],
+      '施工项目': ['施工项目', '项目名称', '施工内容', '工程项目', '工程名称', 'construction item', 'project name'],
+      '项目描述': ['项目描述', '描述', '说明', '施工描述', '工程描述', '内容描述', 'description'],
+      '规格/型号': ['规格/型号', '规格型号', '规格', '型号', '材料型号', '设备型号', 'specification', 'model'],
+      '数量': ['数量', '工程量', '施工量', 'quantity', 'qty', 'count'],
+      '单位': ['单位', '计量单位', 'unit'],
+      '单价': ['单价', '价格', '工程单价', '施工单价', 'price', 'unit price'],
+      '施工地点': ['施工地点', '地点', '工程地点', '项目地址', '施工地址', 'location', 'site'],
+      '备注': ['备注', '说明', '附注', 'note', 'remark', 'comment'],
+    },
+    defaults: { '数量': '1', '单位': '个' },
+  },
+  '云服务报价': {
+    targetHeaders: [
+      "序号", "云服务类型", "服务项目", "服务描述", "规格配置",
+      "数量", "单位", "服务周期", "单价", "备注"
+    ],
+    visibleColumns: [
+      "序号", "云服务类型", "服务项目", "服务描述", "规格配置",
+      "数量", "单位", "服务周期", "单价", "备注"
+    ],
+    manualEntryFieldMap: {
+      '序号': { label: '自动生成', required: false },
+      '云服务类型': { label: '云服务类型*', required: true },
+      '服务项目': { label: '服务项目*', required: true },
+      '服务描述': { label: '服务描述', required: false },
+      '规格配置': { label: '规格配置*', required: true },
+      '数量': { label: '数量*', required: true },
+      '单位': { label: '单位', required: false },
+      '服务周期': { label: '服务周期', required: false },
+      '单价': { label: '单价', required: false },
+      '备注': { label: '备注', required: false },
+    },
+    fieldMappings: {
+      '云服务类型': ['云服务类型', '服务类型', '云产品类型', '产品类别', '资源类型', 'cloud type', 'service type'],
+      '服务项目': ['服务项目', '服务名称', '产品名称', '云产品', '资源名称', 'service item', 'product name'],
+      '服务描述': ['服务描述', '描述', '说明', '产品说明', '服务说明', 'description'],
+      '规格配置': ['规格配置', '规格', '配置', '资源规格', '实例规格', '配置信息', 'specification', 'config'],
+      '数量': ['数量', '实例数', '台数', '个数', 'quantity', 'qty', 'count'],
+      '单位': ['单位', '计量单位', 'unit'],
+      '服务周期': ['服务周期', '周期', '使用期限', '订阅周期', '合同期', 'period', 'service period'],
+      '单价': ['单价', '价格', '月单价', '年单价', '订阅价格', 'price', 'unit price'],
+      '备注': ['备注', '说明', '附注', 'note', 'remark', 'comment'],
+    },
+    defaults: { '数量': '1', '单位': '个', '服务周期': '1年' },
+  },
+  '连锁门店服务报价': {
+    targetHeaders: [
+      "序号", "门店名称", "门店地址", "服务项目", "服务描述",
+      "设备数量", "服务周期", "服务频次", "单价", "备注"
+    ],
+    visibleColumns: [
+      "序号", "门店名称", "门店地址", "服务项目", "服务描述",
+      "设备数量", "服务周期", "服务频次", "单价", "备注"
+    ],
+    manualEntryFieldMap: {
+      '序号': { label: '自动生成', required: false },
+      '门店名称': { label: '门店名称*', required: true },
+      '门店地址': { label: '门店地址*', required: true },
+      '服务项目': { label: '服务项目*', required: true },
+      '服务描述': { label: '服务描述', required: false },
+      '设备数量': { label: '设备数量', required: false },
+      '服务周期': { label: '服务周期', required: false },
+      '服务频次': { label: '服务频次', required: false },
+      '单价': { label: '单价', required: false },
+      '备注': { label: '备注', required: false },
+    },
+    fieldMappings: {
+      '门店名称': ['门店名称', '门店', '店名', '网点名称', '网点', '分店', 'store name', 'branch name'],
+      '门店地址': ['门店地址', '地址', '门店位置', '网点地址', '详细地址', 'store address', 'address'],
+      '服务项目': ['服务项目', '服务项', '服务名称', '项目名称', 'service item', 'service name'],
+      '服务描述': ['服务描述', '服务内容', '描述', '内容描述', 'description', 'service description'],
+      '设备数量': ['设备数量', '数量', '台数', '设备台数', 'quantity', 'count'],
+      '服务周期': ['服务周期', '周期', '合同期', '服务期限', 'period', 'service period'],
+      '服务频次': ['服务频次', '频次', '频率', '巡检频次', '服务次数', 'frequency'],
+      '单价': ['单价', '价格', '报价', '服务单价', 'price', 'unit price'],
+      '备注': ['备注', '说明', '附注', 'note', 'remark', 'comment'],
+    },
+    defaults: { '设备数量': '1', '服务周期': '1年' },
+  },
 }
 
 // 默认配置（维保服务报价）

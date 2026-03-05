@@ -222,7 +222,7 @@
             <span class="material-symbols-outlined user-icon">account_circle</span>
             <span class="user-name">{{ displayUsername }}</span>
           </div>
-          <a href="/new" class="back-to-app">
+          <a href="/" class="back-to-app">
             <span class="material-symbols-outlined">home</span>
             返回应用
           </a>
