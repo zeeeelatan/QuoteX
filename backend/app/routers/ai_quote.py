@@ -1,15 +1,18 @@
 """
-首页智能报价：调用本地 Ollama (Qwen) 分析用户需求与文档，结合系统后台数据（RAG）输出建议报价。
+首页智能报价：调用阿里云百炼 (DashScope) 或本地 Ollama 分析用户需求与文档，
+结合系统后台数据（RAG）输出建议报价。支持流式 SSE 输出。
 """
 import os
 import io
 import re
+import json
 import logging
-from typing import Optional, List
+from typing import Optional, List, AsyncIterator
 from decimal import Decimal
 
-import requests
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Request
+import httpx
+from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text, or_
 from pydantic import BaseModel
@@ -19,13 +22,13 @@ from app.database import get_db
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ai-quote", tags=["AI报价"])
 
-# RAG 拉取条数上限，避免上下文过长
-RAG_RATES_LIMIT = 80
-RAG_SERVICE_LEVELS_LIMIT = 30
-RAG_DEVICES_LIMIT = 120
-RAG_OFFICE_DEVICES_LIMIT = 80
-RAG_GPU_LIMIT = 50
-RAG_SPARE_PARTS_LIMIT = 50
+# RAG 拉取条数上限 —— 降低以减少 token 消耗和延迟
+RAG_RATES_LIMIT = 50
+RAG_SERVICE_LEVELS_LIMIT = 20
+RAG_DEVICES_LIMIT = 60
+RAG_OFFICE_DEVICES_LIMIT = 40
+RAG_GPU_LIMIT = 30
+RAG_SPARE_PARTS_LIMIT = 30
 
 # 阿里云百炼（DashScope）配置 —— OpenAI 兼容模式
 DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
@@ -38,6 +41,17 @@ OLLAMA_MODEL = os.getenv("OLLAMA_QUOTE_MODEL", "qwen:latest")
 
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
 MAX_FILE_COUNT = 5
+
+# 复用 httpx 异步客户端（连接池）
+_http_client: Optional[httpx.AsyncClient] = None
+
+
+async def _get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=httpx.Timeout(connect=10, read=180, write=10, pool=10))
+    return _http_client
+
 
 def _use_dashscope() -> bool:
     """判断是否使用阿里云百炼 API（有 API Key 就用百炼，否则回退 Ollama）"""
@@ -92,7 +106,6 @@ def _extract_keywords_for_rag(user_text: str) -> List[str]:
     """从用户描述中提取可能用于检索的关键词（品牌、型号等）。"""
     if not user_text or not user_text.strip():
         return []
-    # 常见品牌/型号关键词（可扩展）
     known = ["戴尔", "DELL", "惠普", "HP", "HPE", "华为", "HUAWEI", "联想", "LENOVO",
              "浪潮", "INSPUR", "新华三", "H3C", "思科", "CISCO", "PowerEdge", "ProLiant",
              "服务器", "存储", "网络", "GPU", "备件"]
@@ -102,7 +115,6 @@ def _extract_keywords_for_rag(user_text: str) -> List[str]:
     for k in known:
         if k.upper() in text_upper or k.lower() in text_lower or k in user_text:
             found.append(k)
-    # 简单提取：连续中文字符段、连续英文/数字段（2字符以上）
     for m in re.finditer(r"[\u4e00-\u9fff]+", user_text):
         w = m.group().strip()
         if len(w) >= 2 and w not in found:
@@ -127,7 +139,7 @@ def get_rag_context(db: Session, user_text: str) -> str:
     lines = ["## 后台数据（以下为系统真实数据，请严格据此作答）", ""]
     keywords = _extract_keywords_for_rag(user_text)
 
-    # 1. 维保费率（按一级/二级/三级分类）
+    # 1. 维保费率
     try:
         rates = (
             db.query(MaintenanceRate)
@@ -156,12 +168,10 @@ def get_rag_context(db: Session, user_text: str) -> str:
         lines.append("### 1. 维保费率：拉取失败")
         lines.append("")
 
-    # 2. 服务级别（level_code, response_time, coefficient）
+    # 2. 服务级别
     try:
         rows = db.execute(
-            text(
-                "SELECT level_code, response_time, coefficient FROM service_level ORDER BY id LIMIT :n"
-            ),
+            text("SELECT level_code, response_time, coefficient FROM service_level ORDER BY id LIMIT :n"),
             {"n": RAG_SERVICE_LEVELS_LIMIT},
         ).fetchall()
         if rows:
@@ -177,7 +187,7 @@ def get_rag_context(db: Session, user_text: str) -> str:
         lines.append("### 2. 服务级别：拉取失败")
         lines.append("")
 
-    # 3. 设备库（数据中心）：按关键词过滤或取样本
+    # 3. 设备库（数据中心）
     try:
         q = db.query(DeviceInventory).order_by(DeviceInventory.id)
         if keywords:
@@ -235,12 +245,7 @@ def get_rag_context(db: Session, user_text: str) -> str:
 
     # 5. GPU 价格
     try:
-        gpus = (
-            db.query(GPUPrice)
-            .order_by(GPUPrice.id)
-            .limit(RAG_GPU_LIMIT)
-            .all()
-        )
+        gpus = db.query(GPUPrice).order_by(GPUPrice.id).limit(RAG_GPU_LIMIT).all()
         if gpus:
             lines.append("### 5. GPU 价格 - 厂商/系列/型号 | 单价(元) | 费率 | 维保服务费(元)")
             for g in gpus:
@@ -264,12 +269,7 @@ def get_rag_context(db: Session, user_text: str) -> str:
 
     # 6. 备件
     try:
-        parts = (
-            db.query(SparePart)
-            .order_by(SparePart.id)
-            .limit(RAG_SPARE_PARTS_LIMIT)
-            .all()
-        )
+        parts = db.query(SparePart).order_by(SparePart.id).limit(RAG_SPARE_PARTS_LIMIT).all()
         if parts:
             lines.append("### 6. 备件 - 厂商 / 备件PN / 描述 / 分类 / 单价(元)")
             for p in parts:
@@ -292,13 +292,13 @@ def get_rag_context(db: Session, user_text: str) -> str:
     return "\n".join(lines)
 
 
-def call_dashscope_chat(system: str, user_content: str, model: str = DASHSCOPE_MODEL) -> str:
-    """通过阿里云百炼 DashScope OpenAI 兼容接口调用大模型。"""
+# ---------------------------------------------------------------------------
+# LLM 调用（非流式 —— 保留旧端点兼容）
+# ---------------------------------------------------------------------------
+
+async def call_dashscope_chat(system: str, user_content: str, model: str = DASHSCOPE_MODEL) -> str:
     url = f"{DASHSCOPE_BASE_URL.rstrip('/')}/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {DASHSCOPE_API_KEY}",
-        "Content-Type": "application/json",
-    }
+    headers = {"Authorization": f"Bearer {DASHSCOPE_API_KEY}", "Content-Type": "application/json"}
     payload = {
         "model": model,
         "messages": [
@@ -306,8 +306,9 @@ def call_dashscope_chat(system: str, user_content: str, model: str = DASHSCOPE_M
             {"role": "user", "content": user_content},
         ],
     }
+    client = await _get_http_client()
     try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=120)
+        resp = await client.post(url, json=payload, headers=headers)
         if resp.status_code == 401:
             raise HTTPException(status_code=502, detail="百炼 API Key 无效或已过期，请检查 DASHSCOPE_API_KEY 配置")
         if resp.status_code == 404:
@@ -322,14 +323,13 @@ def call_dashscope_chat(system: str, user_content: str, model: str = DASHSCOPE_M
         return (choices[0].get("message", {}).get("content") or "").strip()
     except HTTPException:
         raise
-    except requests.exceptions.Timeout:
+    except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="大模型响应超时（120s）")
-    except requests.exceptions.RequestException as e:
+    except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"调用百炼 API 失败: {e}")
 
 
-def call_ollama_chat(system: str, user_content: str, model: str = OLLAMA_MODEL) -> str:
-    """通过本地 Ollama 调用大模型（开发环境回退方案）。"""
+async def call_ollama_chat(system: str, user_content: str, model: str = OLLAMA_MODEL) -> str:
     url = f"{OLLAMA_BASE.rstrip('/')}/api/chat"
     payload = {
         "model": model,
@@ -339,31 +339,112 @@ def call_ollama_chat(system: str, user_content: str, model: str = OLLAMA_MODEL) 
         ],
         "stream": False,
     }
+    client = await _get_http_client()
     try:
-        resp = requests.post(url, json=payload, timeout=120)
+        resp = await client.post(url, json=payload)
         resp.raise_for_status()
         data = resp.json()
         msg = data.get("message") or {}
         return (msg.get("content") or "").strip()
-    except requests.exceptions.ConnectionError:
+    except httpx.ConnectError:
         raise HTTPException(
             status_code=503,
             detail="无法连接本地 Ollama 服务，且未配置百炼 API Key (DASHSCOPE_API_KEY)。请启动 Ollama 或配置云端 API。",
         )
-    except requests.exceptions.Timeout:
+    except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="大模型响应超时")
-    except requests.exceptions.RequestException as e:
+    except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"调用本地模型失败: {e}")
 
 
-def call_llm_chat(system: str, user_content: str, model: str = "") -> str:
-    """统一入口：优先百炼，回退 Ollama。"""
+async def call_llm_chat(system: str, user_content: str, model: str = "") -> str:
     if _use_dashscope():
         effective_model = model if model and model != OLLAMA_MODEL else DASHSCOPE_MODEL
-        return call_dashscope_chat(system, user_content, model=effective_model)
+        return await call_dashscope_chat(system, user_content, model=effective_model)
     else:
         effective_model = model or OLLAMA_MODEL
-        return call_ollama_chat(system, user_content, model=effective_model)
+        return await call_ollama_chat(system, user_content, model=effective_model)
+
+
+# ---------------------------------------------------------------------------
+# LLM 流式调用
+# ---------------------------------------------------------------------------
+
+async def stream_dashscope_chat(system: str, user_content: str, model: str = DASHSCOPE_MODEL) -> AsyncIterator[str]:
+    """流式调用 DashScope，逐块 yield 文本增量。"""
+    url = f"{DASHSCOPE_BASE_URL.rstrip('/')}/chat/completions"
+    headers = {"Authorization": f"Bearer {DASHSCOPE_API_KEY}", "Content-Type": "application/json"}
+    payload = {
+        "model": model,
+        "stream": True,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_content},
+        ],
+    }
+    client = await _get_http_client()
+    async with client.stream("POST", url, json=payload, headers=headers) as resp:
+        if resp.status_code != 200:
+            body = await resp.aread()
+            raise HTTPException(status_code=502, detail=f"百炼 API 返回 {resp.status_code}: {body.decode()[:200]}")
+        async for line in resp.aiter_lines():
+            if not line.startswith("data:"):
+                continue
+            data_str = line[len("data:"):].strip()
+            if data_str == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data_str)
+                delta = (chunk.get("choices") or [{}])[0].get("delta", {})
+                content = delta.get("content", "")
+                if content:
+                    yield content
+            except (json.JSONDecodeError, IndexError, KeyError):
+                continue
+
+
+async def stream_ollama_chat(system: str, user_content: str, model: str = OLLAMA_MODEL) -> AsyncIterator[str]:
+    """流式调用 Ollama，逐块 yield 文本增量。"""
+    url = f"{OLLAMA_BASE.rstrip('/')}/api/chat"
+    payload = {
+        "model": model,
+        "stream": True,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_content},
+        ],
+    }
+    client = await _get_http_client()
+    try:
+        async with client.stream("POST", url, json=payload) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.strip():
+                    continue
+                try:
+                    chunk = json.loads(line)
+                    content = (chunk.get("message") or {}).get("content", "")
+                    if content:
+                        yield content
+                except json.JSONDecodeError:
+                    continue
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=503,
+            detail="无法连接本地 Ollama 服务，且未配置百炼 API Key。",
+        )
+
+
+async def stream_llm_chat(system: str, user_content: str, model: str = "") -> AsyncIterator[str]:
+    """统一流式入口。"""
+    if _use_dashscope():
+        effective_model = model if model and model != OLLAMA_MODEL else DASHSCOPE_MODEL
+        async for chunk in stream_dashscope_chat(system, user_content, model=effective_model):
+            yield chunk
+    else:
+        effective_model = model or OLLAMA_MODEL
+        async for chunk in stream_ollama_chat(system, user_content, model=effective_model):
+            yield chunk
 
 
 SYSTEM_PROMPT_TEMPLATE = """你是智能报价助手，必须**严格基于系统后台数据**作答。
@@ -389,18 +470,14 @@ class ModelsResponse(BaseModel):
 
 
 @router.get("/models", response_model=ModelsResponse)
-def list_available_models():
+async def list_available_models():
     """获取可用模型列表。百炼模式返回预置模型列表，Ollama 模式从本地拉取。"""
     if _use_dashscope():
-        return ModelsResponse(models=[
-            "qwen-plus",
-            "qwen-turbo",
-            "qwen-max",
-        ])
-    # 回退：尝试从本地 Ollama 获取
+        return ModelsResponse(models=["qwen-plus", "qwen-turbo", "qwen-max"])
     url = f"{OLLAMA_BASE.rstrip('/')}/api/tags"
+    client = await _get_http_client()
     try:
-        resp = requests.get(url, timeout=5)
+        resp = await client.get(url, timeout=5)
         if resp.status_code != 200:
             return ModelsResponse(models=[OLLAMA_MODEL])
         data = resp.json()
@@ -411,54 +488,111 @@ def list_available_models():
         return ModelsResponse(models=[OLLAMA_MODEL])
 
 
+# ---------------------------------------------------------------------------
+# 解析 multipart 表单（供 /analyze 和 /analyze-stream 复用）
+# ---------------------------------------------------------------------------
+
+async def _parse_analyze_form(request: Request) -> tuple:
+    """解析 analyze 请求表单，返回 (requirement, model_name, user_content)。"""
+    content_type = request.headers.get("content-type") or ""
+    if "multipart/form-data" not in content_type:
+        raise HTTPException(status_code=400, detail="请使用 multipart/form-data 提交")
+
+    form = await request.form()
+    requirement = (form.get("requirement") or "").strip()
+    model_name = (form.get("model") or "").strip() or OLLAMA_MODEL
+    file_list = form.getlist("files")
+    if not isinstance(file_list, list):
+        file_list = [file_list] if file_list else []
+    file_list = [f for f in file_list if hasattr(f, "read") and hasattr(f, "filename")]
+
+    if not requirement and not file_list:
+        raise HTTPException(status_code=400, detail="请输入需求描述或上传需求文档")
+
+    parts = []
+    if requirement.strip():
+        parts.append("【用户描述】\n" + requirement.strip())
+
+    if len(file_list) > MAX_FILE_COUNT:
+        raise HTTPException(status_code=400, detail=f"最多上传 {MAX_FILE_COUNT} 个文件")
+
+    for f in file_list:
+        content = await f.read() if hasattr(f, "read") else b""
+        filename = getattr(f, "filename", None) or "file"
+        text_content = extract_text_from_file(filename, content)
+        if text_content and not text_content.startswith("["):
+            parts.append(f"【文档: {filename}】\n" + text_content[:30000])
+        elif text_content.startswith("["):
+            parts.append(text_content)
+
+    user_content = "\n\n".join(parts) if parts else "（无文字内容）"
+    return requirement, model_name, user_content
+
+
+# ---------------------------------------------------------------------------
+# 非流式端点（保留兼容）
+# ---------------------------------------------------------------------------
+
 @router.post("/analyze", response_model=AnalyzeResponse)
 async def analyze_requirement(request: Request, db: Session = Depends(get_db)):
-    """分析用户需求与上传文档，调用本地 Ollama (Qwen) 生成报价建议。手动解析 multipart 避免无 files 时 500。"""
+    """非流式分析端点（兼容旧前端）。"""
     try:
-        content_type = request.headers.get("content-type") or ""
-        if "multipart/form-data" not in content_type:
-            raise HTTPException(status_code=400, detail="请使用 multipart/form-data 提交")
-
-        form = await request.form()
-        requirement = (form.get("requirement") or "").strip()
-        model_name = (form.get("model") or "").strip() or OLLAMA_MODEL
-        # 无 files 时 form.getlist("files") 为 []，不会报错
-        file_list = form.getlist("files")
-        if not isinstance(file_list, list):
-            file_list = [file_list] if file_list else []
-        # 过滤掉空值（部分框架会传空字符串）
-        file_list = [f for f in file_list if hasattr(f, "read") and hasattr(f, "filename")]
-
-        if not requirement and not file_list:
-            raise HTTPException(status_code=400, detail="请输入需求描述或上传需求文档")
-
-        # 构建用户内容：需求 + 文档提取文本
-        parts = []
-        if requirement.strip():
-            parts.append("【用户描述】\n" + requirement.strip())
-
-        if len(file_list) > MAX_FILE_COUNT:
-            raise HTTPException(status_code=400, detail=f"最多上传 {MAX_FILE_COUNT} 个文件")
-
-        for f in file_list:
-            content = await f.read() if hasattr(f, "read") else b""
-            filename = getattr(f, "filename", None) or "file"
-            text = extract_text_from_file(filename, content)
-            if text and not text.startswith("["):
-                parts.append(f"【文档: {filename}】\n" + text[:30000])
-            elif text.startswith("["):
-                parts.append(text)
-
-        user_content = "\n\n".join(parts) if parts else "（无文字内容）"
-
-        # RAG：拉取后台数据并注入系统提示，使模型严格基于后台数据作答
+        requirement, model_name, user_content = await _parse_analyze_form(request)
         rag_context = get_rag_context(db, requirement)
         system_prompt = SYSTEM_PROMPT_TEMPLATE.format(rag_context=rag_context)
-
-        analysis = call_llm_chat(system_prompt, user_content, model=model_name)
+        analysis = await call_llm_chat(system_prompt, user_content, model=model_name)
         return AnalyzeResponse(analysis=analysis, suggestion=analysis)
     except HTTPException:
         raise
     except Exception as e:
         logger.exception("ai-quote/analyze 失败: %s", e)
         raise HTTPException(status_code=500, detail=f"分析失败: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# 流式 SSE 端点
+# ---------------------------------------------------------------------------
+
+@router.post("/analyze-stream")
+async def analyze_requirement_stream(request: Request, db: Session = Depends(get_db)):
+    """
+    流式分析端点。返回 text/event-stream (SSE)，前端可逐字接收。
+    每个 SSE event 的 data 字段为一个 JSON: {"content": "..."}
+    结束时发送 {"done": true}
+    """
+    try:
+        requirement, model_name, user_content = await _parse_analyze_form(request)
+    except HTTPException as e:
+        # SSE 端点在流开始前的错误用 JSON 返回
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
+    except Exception as e:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+    rag_context = get_rag_context(db, requirement)
+    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(rag_context=rag_context)
+
+    async def event_generator():
+        try:
+            async for chunk in stream_llm_chat(system_prompt, user_content, model=model_name):
+                payload = json.dumps({"content": chunk}, ensure_ascii=False)
+                yield f"data: {payload}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
+        except HTTPException as e:
+            error_payload = json.dumps({"error": e.detail}, ensure_ascii=False)
+            yield f"data: {error_payload}\n\n"
+        except Exception as e:
+            logger.exception("流式分析失败: %s", e)
+            error_payload = json.dumps({"error": f"分析失败: {str(e)}"}, ensure_ascii=False)
+            yield f"data: {error_payload}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # 禁用 nginx 缓冲
+        },
+    )

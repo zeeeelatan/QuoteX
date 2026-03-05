@@ -23,4 +23,5 @@ alembic>=1.13
 # 测试依赖
 pytest>=7.0
 httpx>=0.24
+sse-starlette>=1.6
 ruff

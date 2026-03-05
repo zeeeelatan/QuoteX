@@ -457,6 +457,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import axios from 'axios'
+import { marked } from 'marked'
 import * as XLSX from 'xlsx'
 import { saveAs } from 'file-saver'
 import { ElMessage } from 'element-plus'
@@ -559,10 +560,8 @@ function formatAnalysis(text: string, isHtml?: boolean): string {
   if (isHtml || text.includes('<table') || text.includes('<div')) {
     return text
   }
-  // 纯文本格式化
-  return text
-    .replace(/\n/g, '<br>')
-    .replace(/^(\d+[\.、])/gm, '<strong>$1</strong>')
+  // 使用 marked 渲染 Markdown
+  return marked.parse(text, { async: false, breaks: true }) as string
 }
 
 function goToDocumentRecognition() {
@@ -641,54 +640,131 @@ async function handleGenerate() {
   const fileNames = attachedFiles.value.map((f) => f.name)
   isGenerating.value = true
   aiResultAnalysis.value = ''
+
+  // 先把用户消息和一条空的 assistant 消息推入聊天，后续流式填充
+  chatMessages.value.push(
+    { role: 'user', content: userContent, fileNames: fileNames.length ? fileNames : undefined },
+    { role: 'assistant', content: '', isHtml: false }
+  )
+  chatMode.value = true
+  const assistantIdx = chatMessages.value.length - 1
+  const inputText = requirementText.value
+  requirementText.value = ''
+  const filesToSend = [...attachedFiles.value]
+  attachedFiles.value = []
+
   try {
     const form = new FormData()
-    form.append('requirement', userContent)
+    form.append('requirement', inputText.trim())
     form.append('model', selectedModel.value)
-    // 传递历史对话，支持多轮上下文（发送精简版，不含 HTML）
-    if (chatMessages.value.length > 0) {
-      const history = chatMessages.value.map(m => {
+    // 传递历史对话（不含刚推入的空 assistant 消息）
+    if (chatMessages.value.length > 2) {
+      const history = chatMessages.value.slice(0, -2).map(m => {
         if (m.role === 'assistant' && m.structured) {
-          // 结构化结果只发送摘要，避免发送大量 HTML
           const s = m.structured
           const devSummary = (s.devices || []).map((d: any) =>
             `${d.manufacturer} ${d.matched_model} ×${d.quantity} 维保单价¥${d.price}`
           ).join('; ')
           return { role: m.role, content: `[报价结果] ${devSummary} | 总价¥${s.total_base}` }
         }
-        // 普通文本消息，截断过长内容
         return { role: m.role, content: (m.content || '').slice(0, 500) }
       })
       form.append('history', JSON.stringify(history))
     }
-    for (const f of attachedFiles.value) {
+    for (const f of filesToSend) {
       form.append('files', f)
     }
-    const res = await axios.post(`${API_BASE}/ai-quote/analyze`, form, {
-      timeout: 120000
+
+    // 使用 fetch 调用流式 SSE 端点
+    console.log('[AI Stream] Sending request to:', `${API_BASE}/ai-quote/analyze-stream`)
+    const resp = await fetch(`${API_BASE}/ai-quote/analyze-stream`, {
+      method: 'POST',
+      body: form,
     })
-    const analysis = res.data?.analysis || res.data?.suggestion || '未返回分析内容'
-    const structured = res.data?.structured || null
-    const isHtml = typeof analysis === 'string' && (analysis.includes('<table') || analysis.includes('<div'))
-    aiResultAnalysis.value = analysis
-    chatMessages.value.push(
-      { role: 'user', content: userContent, fileNames: fileNames.length ? fileNames : undefined },
-      { role: 'assistant', content: analysis, structured, isHtml }
-    )
-    chatMode.value = true
-    requirementText.value = ''
-    attachedFiles.value = []
-    await nextTick()
-    chatMessagesRef.value?.scrollTo({ top: chatMessagesRef.value.scrollHeight, behavior: 'smooth' })
+    console.log('[AI Stream] Response status:', resp.status, 'content-type:', resp.headers.get('content-type'))
+
+    if (!resp.ok) {
+      // 非 200 时读取 JSON 错误信息
+      const errBody = await resp.text().catch(() => '')
+      console.error('[AI Stream] Error response body:', errBody)
+      let detail = `HTTP ${resp.status}`
+      try { detail = JSON.parse(errBody).detail || detail } catch {}
+      throw new Error(detail)
+    }
+
+    const reader = resp.body?.getReader()
+    if (!reader) throw new Error('浏览器不支持流式读取')
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let fullText = ''
+    let streamDone = false
+    let streamError = ''
+
+    while (!streamDone) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      const rawText = decoder.decode(value, { stream: true })
+      buffer += rawText
+      console.log('[AI Stream] Raw chunk:', rawText.slice(0, 200))
+      // 解析 SSE 格式：data: {...}\n\n
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''  // 最后一行可能不完整，留到下次
+
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue
+        const dataStr = line.slice(5).trim()
+        if (!dataStr) continue
+        try {
+          const parsed = JSON.parse(dataStr)
+          if (parsed.error) {
+            streamError = parsed.error
+            streamDone = true
+            break
+          }
+          if (parsed.done) {
+            streamDone = true
+            break
+          }
+          if (parsed.content) {
+            fullText += parsed.content
+            // 实时更新聊天消息（直接修改属性以确保 Vue 响应性）
+            const msg = chatMessages.value[assistantIdx]
+            msg.content = fullText
+            msg.isHtml = fullText.includes('<table') || fullText.includes('<div')
+          }
+        } catch {
+          // 忽略解析错误
+        }
+      }
+
+      // 自动滚动到底部
+      await nextTick()
+      chatMessagesRef.value?.scrollTo({ top: chatMessagesRef.value.scrollHeight })
+    }
+
+    if (streamError) {
+      ElMessage.error(streamError)
+    }
+
+    aiResultAnalysis.value = fullText
+    // 最终更新消息（确保完整内容）
+    const finalMsg = chatMessages.value[assistantIdx]
+    finalMsg.content = fullText || '未返回分析内容'
+    finalMsg.isHtml = fullText.includes('<table') || fullText.includes('<div')
   } catch (err: any) {
-    const detail = err?.response?.data?.detail
-    const msg = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail[0] : err?.message ?? '分析失败，请重试'
+    console.error('[AI Stream] Error:', err)
+    const msg = err?.message ?? '分析失败，请重试'
     ElMessage.error(msg)
-    if (err?.response?.status === 503) {
-      ElMessage.info('AI 服务暂时不可用，请稍后重试或联系管理员检查配置')
+    // 如果完全没有内容，移除空的 assistant 消息
+    if (!chatMessages.value[assistantIdx]?.content) {
+      chatMessages.value.splice(assistantIdx - 1, 2)
     }
   } finally {
     isGenerating.value = false
+    await nextTick()
+    chatMessagesRef.value?.scrollTo({ top: chatMessagesRef.value.scrollHeight, behavior: 'smooth' })
   }
 }
 
@@ -1876,11 +1952,101 @@ onUnmounted(() => {
 
 .cmsg-ai-content :deep(strong) {
   color: #93c5fd;
+  font-weight: 600;
 }
 
 .cmsg-ai-content :deep(b) {
   color: #60a5fa;
   font-weight: 600;
+}
+
+/* Markdown 渲染样式 */
+.cmsg-ai-content :deep(h1),
+.cmsg-ai-content :deep(h2),
+.cmsg-ai-content :deep(h3),
+.cmsg-ai-content :deep(h4) {
+  color: #f1f5f9;
+  margin: 1rem 0 0.5rem;
+  font-weight: 600;
+}
+.cmsg-ai-content :deep(h1) { font-size: 1.25rem; }
+.cmsg-ai-content :deep(h2) { font-size: 1.125rem; }
+.cmsg-ai-content :deep(h3) { font-size: 1rem; }
+.cmsg-ai-content :deep(h4) { font-size: 0.9375rem; }
+
+.cmsg-ai-content :deep(p) {
+  margin: 0.4rem 0;
+}
+
+.cmsg-ai-content :deep(ul),
+.cmsg-ai-content :deep(ol) {
+  margin: 0.4rem 0;
+  padding-left: 1.5rem;
+}
+
+.cmsg-ai-content :deep(li) {
+  margin: 0.2rem 0;
+}
+
+.cmsg-ai-content :deep(blockquote) {
+  border-left: 3px solid #3b82f6;
+  padding: 0.25rem 0.75rem;
+  margin: 0.5rem 0;
+  color: #94a3b8;
+  background: rgba(59, 130, 246, 0.05);
+  border-radius: 0 6px 6px 0;
+}
+
+.cmsg-ai-content :deep(hr) {
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin: 0.75rem 0;
+}
+
+.cmsg-ai-content :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+  font-size: 0.875rem;
+}
+
+.cmsg-ai-content :deep(th),
+.cmsg-ai-content :deep(td) {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+
+.cmsg-ai-content :deep(th) {
+  background: rgba(59, 130, 246, 0.15);
+  color: #93c5fd;
+  font-weight: 600;
+}
+
+.cmsg-ai-content :deep(tr:nth-child(even)) {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.cmsg-ai-content :deep(code) {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.85em;
+  color: #fbbf24;
+}
+
+.cmsg-ai-content :deep(pre) {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 0.75rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 0.5rem 0;
+}
+
+.cmsg-ai-content :deep(pre code) {
+  background: none;
+  padding: 0;
+  color: #e2e8f0;
 }
 
 /* 宽气泡（结构化报价结果） - 让表格有足够空间 */

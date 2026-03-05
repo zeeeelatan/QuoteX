@@ -1,3 +1,12 @@
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+# 加载项目根目录 .env（本地开发时读取，Docker 环境由 compose 注入）
+_env_file = Path(__file__).resolve().parent.parent.parent / ".env"
+if _env_file.exists():
+    load_dotenv(_env_file, override=False)
+
 from fastapi import FastAPI, Depends
 from sqlalchemy.orm import Session
 from . import models, schemas, matching
