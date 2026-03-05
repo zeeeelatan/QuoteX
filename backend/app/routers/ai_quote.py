@@ -27,10 +27,21 @@ RAG_OFFICE_DEVICES_LIMIT = 80
 RAG_GPU_LIMIT = 50
 RAG_SPARE_PARTS_LIMIT = 50
 
+# 阿里云百炼（DashScope）配置 —— OpenAI 兼容模式
+DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
+DASHSCOPE_BASE_URL = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+DASHSCOPE_MODEL = os.getenv("DASHSCOPE_MODEL", "qwen-plus")
+
+# 兼容旧配置：若未设置 DASHSCOPE_API_KEY，尝试回退到本地 Ollama
 OLLAMA_BASE = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_QUOTE_MODEL", "qwen:latest")
+
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
 MAX_FILE_COUNT = 5
+
+def _use_dashscope() -> bool:
+    """判断是否使用阿里云百炼 API（有 API Key 就用百炼，否则回退 Ollama）"""
+    return bool(DASHSCOPE_API_KEY)
 
 
 def _extract_text_pdf(content: bytes) -> str:
@@ -281,7 +292,44 @@ def get_rag_context(db: Session, user_text: str) -> str:
     return "\n".join(lines)
 
 
+def call_dashscope_chat(system: str, user_content: str, model: str = DASHSCOPE_MODEL) -> str:
+    """通过阿里云百炼 DashScope OpenAI 兼容接口调用大模型。"""
+    url = f"{DASHSCOPE_BASE_URL.rstrip('/')}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {DASHSCOPE_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_content},
+        ],
+    }
+    try:
+        resp = requests.post(url, json=payload, headers=headers, timeout=120)
+        if resp.status_code == 401:
+            raise HTTPException(status_code=502, detail="百炼 API Key 无效或已过期，请检查 DASHSCOPE_API_KEY 配置")
+        if resp.status_code == 404:
+            raise HTTPException(status_code=502, detail=f"模型「{model}」不存在，请检查 DASHSCOPE_MODEL 配置")
+        if resp.status_code == 429:
+            raise HTTPException(status_code=429, detail="百炼 API 调用频率超限，请稍后重试")
+        resp.raise_for_status()
+        data = resp.json()
+        choices = data.get("choices") or []
+        if not choices:
+            raise HTTPException(status_code=502, detail="大模型返回空结果")
+        return (choices[0].get("message", {}).get("content") or "").strip()
+    except HTTPException:
+        raise
+    except requests.exceptions.Timeout:
+        raise HTTPException(status_code=504, detail="大模型响应超时（120s）")
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"调用百炼 API 失败: {e}")
+
+
 def call_ollama_chat(system: str, user_content: str, model: str = OLLAMA_MODEL) -> str:
+    """通过本地 Ollama 调用大模型（开发环境回退方案）。"""
     url = f"{OLLAMA_BASE.rstrip('/')}/api/chat"
     payload = {
         "model": model,
@@ -293,35 +341,29 @@ def call_ollama_chat(system: str, user_content: str, model: str = OLLAMA_MODEL) 
     }
     try:
         resp = requests.post(url, json=payload, timeout=120)
-        if resp.status_code == 404:
-            raise HTTPException(
-                status_code=502,
-                detail=f"模型「{model}」未安装或不存在。请在本机执行：ollama pull {model} 或 ollama pull qwen；也可设置环境变量 OLLAMA_QUOTE_MODEL 为已安装的模型名（如 qwen）。",
-            )
         resp.raise_for_status()
-        try:
-            data = resp.json()
-        except ValueError as e:
-            raise HTTPException(status_code=502, detail=f"大模型返回非 JSON: {e}")
+        data = resp.json()
         msg = data.get("message") or {}
         return (msg.get("content") or "").strip()
-    except HTTPException:
-        raise
     except requests.exceptions.ConnectionError:
         raise HTTPException(
             status_code=503,
-            detail="无法连接本地大模型服务。请确认 Ollama 已启动（如未安装请访问 https://ollama.com），并已拉取模型：ollama pull qwen2.5 或 ollama pull qwen。",
+            detail="无法连接本地 Ollama 服务，且未配置百炼 API Key (DASHSCOPE_API_KEY)。请启动 Ollama 或配置云端 API。",
         )
     except requests.exceptions.Timeout:
         raise HTTPException(status_code=504, detail="大模型响应超时")
     except requests.exceptions.RequestException as e:
-        err_msg = str(e)
-        if "404" in err_msg:
-            raise HTTPException(
-                status_code=502,
-                detail=f"模型「{model}」未安装。请执行：ollama pull {model} 或 ollama pull qwen；或设置 OLLAMA_QUOTE_MODEL 为已安装的模型名。",
-            )
-        raise HTTPException(status_code=502, detail=f"调用大模型失败: {err_msg}")
+        raise HTTPException(status_code=502, detail=f"调用本地模型失败: {e}")
+
+
+def call_llm_chat(system: str, user_content: str, model: str = "") -> str:
+    """统一入口：优先百炼，回退 Ollama。"""
+    if _use_dashscope():
+        effective_model = model if model and model != OLLAMA_MODEL else DASHSCOPE_MODEL
+        return call_dashscope_chat(system, user_content, model=effective_model)
+    else:
+        effective_model = model or OLLAMA_MODEL
+        return call_ollama_chat(system, user_content, model=effective_model)
 
 
 SYSTEM_PROMPT_TEMPLATE = """你是智能报价助手，必须**严格基于系统后台数据**作答。
@@ -347,26 +389,25 @@ class ModelsResponse(BaseModel):
 
 
 @router.get("/models", response_model=ModelsResponse)
-def list_ollama_models():
-    """获取本地 Ollama 可用模型列表，供前端模型选择。"""
+def list_available_models():
+    """获取可用模型列表。百炼模式返回预置模型列表，Ollama 模式从本地拉取。"""
+    if _use_dashscope():
+        return ModelsResponse(models=[
+            "qwen-plus",
+            "qwen-turbo",
+            "qwen-max",
+        ])
+    # 回退：尝试从本地 Ollama 获取
     url = f"{OLLAMA_BASE.rstrip('/')}/api/tags"
     try:
         resp = requests.get(url, timeout=5)
         if resp.status_code != 200:
             return ModelsResponse(models=[OLLAMA_MODEL])
         data = resp.json()
-        names = []
-        for m in data.get("models") or []:
-            name = (m.get("name") or "").strip()
-            if name and ":" in name:
-                names.append(name)
-            elif name:
-                names.append(name)
-        if not names:
-            names = [OLLAMA_MODEL]
-        return ModelsResponse(models=names)
+        names = [m.get("name", "").strip() for m in (data.get("models") or []) if m.get("name")]
+        return ModelsResponse(models=names or [OLLAMA_MODEL])
     except Exception as e:
-        logger.warning("拉取 Ollama 模型列表失败: %s", e)
+        logger.warning("拉取模型列表失败: %s", e)
         return ModelsResponse(models=[OLLAMA_MODEL])
 
 
@@ -414,7 +455,7 @@ async def analyze_requirement(request: Request, db: Session = Depends(get_db)):
         rag_context = get_rag_context(db, requirement)
         system_prompt = SYSTEM_PROMPT_TEMPLATE.format(rag_context=rag_context)
 
-        analysis = call_ollama_chat(system_prompt, user_content, model=model_name)
+        analysis = call_llm_chat(system_prompt, user_content, model=model_name)
         return AnalyzeResponse(analysis=analysis, suggestion=analysis)
     except HTTPException:
         raise

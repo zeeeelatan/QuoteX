@@ -494,8 +494,8 @@ const chatMessages = ref<ChatMessage[]>([])
 const chatMessagesRef = ref<HTMLElement | null>(null)
 
 // 模型选择（仅用于接口，无 UI）
-const availableModels = ref<string[]>(['qwen:latest', 'qwen2.5:14b'])
-const selectedModel = ref('qwen:latest')
+const availableModels = ref<string[]>(['qwen-plus'])
+const selectedModel = ref('qwen-plus')
 
 function triggerFileInput() {
   fileInputRef.value?.click()
@@ -685,7 +685,7 @@ async function handleGenerate() {
     const msg = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail[0] : err?.message ?? '分析失败，请重试'
     ElMessage.error(msg)
     if (err?.response?.status === 503) {
-      ElMessage.info('请确保本机已安装并启动 Ollama，并已拉取 Qwen 模型（如 ollama run qwen2.5）')
+      ElMessage.info('AI 服务暂时不可用，请稍后重试或联系管理员检查配置')
     }
   } finally {
     isGenerating.value = false

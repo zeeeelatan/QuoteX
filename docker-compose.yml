@@ -45,6 +45,8 @@ services:
       DB_USER: ${POSTGRES_USER:-device_inventory_user}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-change_me_password}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-secret-change-in-production}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      DASHSCOPE_MODEL: ${DASHSCOPE_MODEL:-qwen-plus}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
       OLLAMA_QUOTE_MODEL: ${OLLAMA_QUOTE_MODEL:-qwen:latest}
     depends_on:
