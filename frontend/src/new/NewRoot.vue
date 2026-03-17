@@ -10,10 +10,11 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import AuthModal from './components/AuthModal.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
-import { initAxiosAuth, clearAuth, getToken, openLoginModal } from './stores/authStore'
+import { initAxiosAuth, clearAuth, getToken, openLoginModal, loadUserProfile } from './stores/authStore'
 
 onMounted(() => {
   initAxiosAuth()
+  loadUserProfile()
   axios.interceptors.response.use(
     (res) => res,
     (err) => {

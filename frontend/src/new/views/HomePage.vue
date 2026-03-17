@@ -461,7 +461,7 @@ import { marked } from 'marked'
 import * as XLSX from 'xlsx'
 import { saveAs } from 'file-saver'
 import { ElMessage } from 'element-plus'
-import { isLoggedInRef, openLoginModal, openRegisterModal, clearAuth } from '../stores/authStore'
+import { isLoggedInRef, openLoginModal, openRegisterModal, clearAuth, userProfileRef, loadUserProfile, refreshUserProfile } from '../stores/authStore'
 import { openSystemSettings, openPersonalSettings, currentSettingsDialog } from '../stores/settingsDialogStore'
 import ProductDatabase from './ProductDatabase.vue'
 import QuoteHistory from './QuoteHistory.vue'
@@ -782,31 +782,13 @@ function applyRouteView() {
   }
 }
 
-// 用户资料
-const userProfile = ref({
-  name: '李明',
-  position: '高级销售经理',
-  avatar: ''
-})
-
-// 加载用户资料
-async function loadUserProfile() {
-  try {
-    const res = await axios.get(`${API_URL}/user-profile/`)
-    if (res.data) {
-      userProfile.value.name = res.data.name || '李明'
-      userProfile.value.position = res.data.position || '高级销售经理'
-      userProfile.value.avatar = res.data.avatar || ''
-    }
-  } catch (err) {
-    console.error('加载用户资料失败', err)
-  }
-}
+// 用户资料（使用全局缓存，避免组件重建时闪烁）
+const userProfile = userProfileRef
 
 // 监听设置弹窗关闭，刷新用户资料
 watch(currentSettingsDialog, (newVal, oldVal) => {
   if (oldVal === 'personal-settings' && newVal === null) {
-    loadUserProfile()
+    refreshUserProfile()
   }
 })
 

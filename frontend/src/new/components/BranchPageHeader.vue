@@ -68,36 +68,15 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import axios from 'axios'
 import SharedNavigation from './SharedNavigation.vue'
-import { clearAuth, isLoggedIn, isLoggedInRef, openLoginModal, openRegisterModal } from '../stores/authStore'
+import { clearAuth, isLoggedIn, isLoggedInRef, openLoginModal, openRegisterModal, userProfileRef, loadUserProfile } from '../stores/authStore'
 import { openSystemSettings, openPersonalSettings } from '../stores/settingsDialogStore'
 
 defineEmits<{
   openProductDatabase: []
 }>()
 
-const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5002'
-
-const userProfile = ref({
-  name: '',
-  position: '',
-  avatar: ''
-})
-
-async function loadUserProfile() {
-  if (!isLoggedIn()) return
-  try {
-    const res = await axios.get(`${API_URL}/user-profile/`)
-    if (res.data) {
-      userProfile.value.name = res.data.name || '用户'
-      userProfile.value.position = res.data.position || '高级销售经理'
-      userProfile.value.avatar = res.data.avatar || ''
-    }
-  } catch (err) {
-    console.error('加载用户资料失败', err)
-  }
-}
+const userProfile = userProfileRef
 
 const isUserMenuOpen = ref(false)
 const userInfoRef = ref<HTMLElement | null>(null)
