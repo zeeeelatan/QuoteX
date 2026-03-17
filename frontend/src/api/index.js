@@ -1,15 +1,32 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0'])
+
+function normalizeApiBaseUrl(url) {
+  if (!url || typeof window === 'undefined') return url
+  const trimmedUrl = url.trim()
+  if (!trimmedUrl) return trimmedUrl
+  if (window.location.protocol === 'https:' && trimmedUrl.startsWith('http://')) {
+    return `https://${trimmedUrl.slice('http://'.length)}`
+  }
+  return trimmedUrl
+}
+
 // 动态检测后端 API 地址
 function detectApiBaseUrl() {
-  const envUrl = import.meta.env?.VITE_API_BASE_URL
+  const envUrl = import.meta.env?.VITE_API_BASE_URL?.trim()
   // 构建时注入的环境变量优先（生产环境为 /api，走 nginx 代理）
-  if (envUrl) return envUrl
+  if (envUrl) return normalizeApiBaseUrl(envUrl)
+
+  if (typeof window === 'undefined') return '/api'
+
   // 本地开发：通过 IP 访问时直连后端，localhost 走 Vite 代理
-  const hostname = window.location.hostname
-  if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-    return `${window.location.protocol}//${hostname}:5002`
+  const { hostname, protocol } = window.location
+  if (!LOCAL_HOSTS.has(hostname)) {
+    // HTTPS 站点禁止回落到 HTTP API，统一走同源代理避免混合内容
+    if (protocol === 'https:') return '/api'
+    return `${protocol}//${hostname}:5002`
   }
   return '/api'
 }

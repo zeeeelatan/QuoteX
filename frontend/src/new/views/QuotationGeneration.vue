@@ -525,6 +525,21 @@ const closeProductDatabaseModal = () => {
   isProductDatabaseModalOpen.value = false
 }
 
+function normalizeLogoSource(logoUrl: string): string {
+  if (!logoUrl) return ''
+  const normalized = logoUrl.trim()
+  if (!normalized) return ''
+
+  // blob URL 不能跨会话持久化，且在 HTTPS 页面中 blob:http:// 会触发不安全警告
+  if (normalized.startsWith('blob:')) return ''
+
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:' && normalized.startsWith('http://')) {
+    return `https://${normalized.slice('http://'.length)}`
+  }
+
+  return normalized
+}
+
 // 根据「客户选择」展示的客户信息（来自个人设置客户列表）
 const selectedCustomerInfo = computed(() => {
   const id = selectedCustomer.value === '' ? null : Number(selectedCustomer.value)
@@ -566,8 +581,9 @@ async function loadCompanyAndCustomers() {
       quoteCompanyName.value = company.company_name || '公司名称'
       quoteCompanyAddress.value = company.company_address || ''
       // 若用户未手动在报价页上传过 Logo，则使用个人设置中的公司 Logo 作为默认
-      if (!customLogoUrl.value && company.company_logo) {
-        customLogoUrl.value = company.company_logo
+      const companyLogo = normalizeLogoSource(company.company_logo || '')
+      if (!customLogoUrl.value && companyLogo) {
+        customLogoUrl.value = companyLogo
       }
     } else {
       quoteCompanyName.value = '公司名称'
@@ -1272,9 +1288,14 @@ function handleLogoUpload(event: Event) {
 // 若用户在报价页手动上传过，localStorage 中的值优先
 function loadCustomLogo() {
   const savedLogo = localStorage.getItem(getStorageKeyPrefix() + 'quotation_custom_logo')
-  if (savedLogo) {
-    customLogoUrl.value = savedLogo
+  if (!savedLogo) return
+
+  const normalizedSavedLogo = normalizeLogoSource(savedLogo)
+  if (!normalizedSavedLogo) {
+    localStorage.removeItem(getStorageKeyPrefix() + 'quotation_custom_logo')
+    return
   }
+  customLogoUrl.value = normalizedSavedLogo
 }
 
 // 使用 Canvas 绘制中文页脚（仅页码），避免 jsPDF 默认字体不支持中文导致乱码
