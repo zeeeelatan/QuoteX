@@ -139,8 +139,17 @@ jobs:
             git pull origin main
             docker compose up -d --build
 
-            echo "等待服务启动..."
+            echo "等待后端就绪..."
             sleep 15
+
+            # 数据库迁移：服务就绪后、健康检查前执行，确保 schema 一致
+            echo "执行数据库迁移..."
+            docker exec AI_Quote_Backend alembic upgrade head 2>&1 || echo "迁移跳过或已是最新"
+
+            # 迁移后重启后端使中间件生效
+            docker compose restart backend
+            sleep 10
+
             if curl -sf http://localhost:8080 >/dev/null 2>&1; then
               echo "部署成功"
             else
@@ -148,10 +157,6 @@ jobs:
               docker compose logs --tail=30
               exit 1
             fi
-
-            # 数据库迁移：在后端容器内执行 Alembic
-            echo "执行数据库迁移..."
-            docker exec AI_Quote_Backend alembic upgrade head 2>&1 || echo "迁移跳过或已是最新"
 
   # ──────────────────────────────────────────────────────────
   # Job 4: 关键版本存档（Release → 构建镜像推送 GHCR + 部署）
@@ -218,8 +223,15 @@ jobs:
             git checkout ${{ github.event.release.tag_name }}
             docker compose up -d --build
 
-            echo "等待服务启动..."
+            echo "等待后端就绪..."
             sleep 15
+
+            echo "执行数据库迁移..."
+            docker exec AI_Quote_Backend alembic upgrade head 2>&1 || echo "迁移跳过或已是最新"
+
+            docker compose restart backend
+            sleep 10
+
             if curl -sf http://localhost:8080 >/dev/null 2>&1; then
               echo "版本 ${{ github.event.release.tag_name }} 部署成功"
             else
@@ -227,6 +239,3 @@ jobs:
               docker compose logs --tail=30
               exit 1
             fi
-
-            echo "执行数据库迁移..."
-            docker exec AI_Quote_Backend alembic upgrade head 2>&1 || echo "迁移跳过或已是最新"

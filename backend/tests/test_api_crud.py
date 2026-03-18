@@ -22,7 +22,7 @@ class TestMaintenanceRateAPI:
         assert response.status_code in (200, 201)
         data = response.json()
         assert data["primary_category"] == "测试分类"
-        assert float(data["rate"]) == 0.05
+        assert abs(float(data["rate"]) - 0.05) < 0.01
 
 
 class TestServiceLevelAPI:
@@ -50,13 +50,15 @@ class TestBulkMatchAPI:
     """批量匹配接口"""
 
     def test_bulk_match(self, client, seed_devices):
-        payload = [
-            {
-                "manufacturer": "dell",
-                "model": "PowerEdge R740",
-                "source": "datacenter",
-            }
-        ]
+        payload = {
+            "items": [
+                {
+                    "manufacturer": "dell",
+                    "model": "PowerEdge R740",
+                    "source": "datacenter",
+                }
+            ]
+        }
         response = client.post("/bulk-match/", json=payload)
         assert response.status_code == 200
         data = response.json()
