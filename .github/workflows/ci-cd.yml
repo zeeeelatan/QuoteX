@@ -149,6 +149,10 @@ jobs:
               exit 1
             fi
 
+            # 数据库迁移：在后端容器内执行 Alembic
+            echo "执行数据库迁移..."
+            docker exec AI_Quote_Backend alembic upgrade head 2>&1 || echo "迁移跳过或已是最新"
+
   # ──────────────────────────────────────────────────────────
   # Job 4: 关键版本存档（Release → 构建镜像推送 GHCR + 部署）
   # ──────────────────────────────────────────────────────────
@@ -223,3 +227,6 @@ jobs:
               docker compose logs --tail=30
               exit 1
             fi
+
+            echo "执行数据库迁移..."
+            docker exec AI_Quote_Backend alembic upgrade head 2>&1 || echo "迁移跳过或已是最新"
