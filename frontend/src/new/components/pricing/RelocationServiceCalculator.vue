@@ -5473,8 +5473,7 @@ const COST_NAME_DESC: Record<string, string> = {
   '增值服务费': '停机测试、设备上下架、线缆拆布等。',
   '其他费用': '专用设备租用、外部人工调用、专用设备采购。',
   '设备保险费': '搬迁过程中设备损坏保险。',
-  '账期成本': '基于账期与资金成本率核算。',
-  '预估总毛利': '按利润率核算的预估毛利。'
+  '账期成本': '基于账期与资金成本率核算。'
 }
 
 function generateOrderNo(): string {
@@ -5489,16 +5488,33 @@ function generateOrderNo(): string {
 const quotationData = computed(() => {
   const vatRate = (globalParams.value.vatRate ?? 6) / 100
   const total = finalProjectAmount.value
-  const items = costBreakdown.value
-    .filter((x) => x.amount > 0)
-    .map((x, i) => ({
+
+  // 将"预估总毛利"按比例摊入其他成本项（报价单面向客户，不单独展示毛利）
+  const costItems = costBreakdown.value.filter((x) => x.amount > 0 && x.name !== '预估总毛利')
+  const profitItem = costBreakdown.value.find((x) => x.name === '预估总毛利')
+  const profitAmount = profitItem?.amount || 0
+  const costTotal = costItems.reduce((sum, x) => sum + x.amount, 0)
+
+  // 按各项成本占比分摊毛利，确保总额不变
+  let distributed = 0
+  const items = costItems.map((x, i, arr) => {
+    let markup: number
+    if (i === arr.length - 1) {
+      // 最后一项兜底，消除舍入误差
+      markup = profitAmount - distributed
+    } else {
+      markup = costTotal > 0 ? Math.round(profitAmount * (x.amount / costTotal)) : 0
+      distributed += markup
+    }
+    return {
       id: i + 1,
       title: x.name,
       desc: COST_NAME_DESC[x.name] || '',
       unit: '项',
       qty: 1,
-      price: x.amount
-    }))
+      price: x.amount + markup
+    }
+  })
   const subTotal = items.reduce((sum, it) => sum + it.qty * it.price, 0)
   return {
     companyName: QUOTATION_COMPANY.name,
@@ -5625,7 +5641,222 @@ function onGenerateQuote() {
 }
 
 function onExportExcel() {
-  ElMessage.info('导出 Excel 明细功能待对接')
+  const wb = XLSX.utils.book_new()
+  const vat = 1 + (globalParams.value.vatRate ?? 6) / 100
+  const profitRate = (globalParams.value.profitRate || 0) / 100
+
+  // ── 辅助函数 ──
+  const fmt = (n: number) => Math.round(n * 100) / 100
+  const money = (n: number) => `¥${n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+  // ── 构建行数据 ──
+  type Row = (string | number | null)[]
+  const rows: Row[] = []
+  let dataStartRow = 0 // Excel 公式用（1-based）
+
+  // ─── 报价单标题 ───
+  rows.push([`${QUOTATION_COMPANY.name} - 搬迁服务报价明细单`])
+  rows.push([])
+  rows.push(['报价方', QUOTATION_COMPANY.name, null, '客户', quotationCustomerName.value || '客户'])
+  rows.push(['联系地址', QUOTATION_COMPANY.address, null, '客户地址', quotationCustomerLocationLines.value.join(' ')])
+  rows.push(['报价日期', new Date().toLocaleDateString('zh-CN'), null, '有效期至', new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString('zh-CN')])
+  rows.push(['增值税率', `${globalParams.value.vatRate}%`, null, '利润率', `${globalParams.value.profitRate}%`])
+  if (globalParams.value.paymentCycle > 0) {
+    rows.push(['账期', `${globalParams.value.paymentCycle} 天`, null, '资金成本率', `${globalParams.value.fundingCostRate}%/年`])
+  }
+  rows.push([])
+
+  // ─── 表头 ───
+  const headerRow = ['分类', '项目名称', '服务描述', '单位', '数量', '单价（含税）', '小计（含税）']
+  rows.push(headerRow)
+  dataStartRow = rows.length + 1 // Excel 1-based, 下一行是第一条数据
+
+  // ── 收集所有明细行用于毛利分摊 ──
+  interface DetailRow { category: string; name: string; desc: string; unit: string; qty: number; unitPrice: number }
+  const detailRows: DetailRow[] = []
+
+  // 1) 人工服务费
+  for (const item of laborCostItems.value) {
+    const q = Number(item.quantity) || 0
+    const p = Number(item.unitPrice) || 0
+    if (q <= 0 || p <= 0) continue
+    const label = item.serviceType === '其它服务' ? (item.customServiceType || '其它服务') : item.serviceType
+    detailRows.push({ category: '人工服务费', name: label, desc: item.serviceDesc || '', unit: '项', qty: q, unitPrice: fmt(p * vat) })
+  }
+
+  // 2) 包装耗材费
+  for (const item of packagingItems.value) {
+    const q = Number(item.quantity) || 0
+    if (q <= 0) continue
+    const tier = packagingTiers.value[item.tierIndex]
+    if (!tier) continue
+    detailRows.push({ category: '包装耗材费', name: `包装 - ${tier.label}（${tier.range}）`, desc: '按设备U数梯度计费', unit: '台', qty: q, unitPrice: fmt(tier.price * vat) })
+  }
+
+  // 3) 物流运输费 - 车辆配送
+  for (const batch of logisticsBatches.value) {
+    for (const item of batch.items) {
+      const q = Number(item.quantity) || 0
+      if (q <= 0) continue
+      const vehicle = vehicleOptions.value.find(v => v.id === item.vehicleId)
+      const vName = vehicle?.vehicle_name || `车型 #${item.vehicleId}`
+      const startP = getStartPriceForVehicle(item.vehicleId)
+      const km = Math.max(0, Number(item.km) || 0)
+      const kmP = Math.max(0, Number(item.kmPrice) || 0)
+      const unitTotal = startP + km * kmP
+      const batchLabel = logisticsBatches.value.length > 1 ? `[${batch.name}] ` : ''
+      detailRows.push({
+        category: '物流运输费',
+        name: `${batchLabel}${vName}`,
+        desc: `起步价${startP} + ${km}km × ${kmP}/km`,
+        unit: '车次',
+        qty: q,
+        unitPrice: fmt(unitTotal * vat)
+      })
+    }
+  }
+
+  // 3b) 物流运输费 - 人工搬运
+  for (const item of manualHandlingItems.value) {
+    const q = Number(item.quantity) || 0
+    if (q <= 0) continue
+    const tier = manualHandlingTiers.value[item.tierIndex]
+    if (!tier) continue
+    detailRows.push({ category: '物流运输费', name: `人工搬运 - ${tier.label}（${tier.range}）`, desc: '按设备U数梯度计费', unit: '台', qty: q, unitPrice: fmt(tier.price * vat) })
+  }
+
+  // 3c) 物流运输费 - 同园区搬迁
+  for (const item of sameParkItems.value) {
+    const q = Number(item.quantity) || 0
+    if (q <= 0) continue
+    const tier = sameParkTiers.value[item.tierIndex]
+    if (!tier) continue
+    detailRows.push({ category: '物流运输费', name: `同园区搬迁 - ${tier.label}（${tier.range}）`, desc: '同园区内设备搬迁', unit: '台', qty: q, unitPrice: fmt(tier.price * vat) })
+  }
+
+  // 4) 增值服务费
+  for (const item of valueAddedItems.value) {
+    const q = Number(item.quantity) || 0
+    const p = Number(item.unitPrice) || 0
+    if (q <= 0 || p <= 0) continue
+    detailRows.push({ category: '增值服务费', name: item.itemName || '增值服务', desc: item.serviceDesc || '', unit: item.unit || '台', qty: q, unitPrice: fmt(p * vat) })
+  }
+
+  // 5) 其他费用 - 专用设备租用
+  for (const item of equipmentRentalItems.value) {
+    const q = Number(item.quantity) || 0
+    const p = Number(item.rentalPrice) || 0
+    if (q <= 0 || p <= 0) continue
+    detailRows.push({ category: '其他费用', name: `设备租用 - ${item.equipmentName || '设备'}`, desc: [item.brand, item.model].filter(Boolean).join(' '), unit: item.unit || '台', qty: q, unitPrice: fmt(p * vat) })
+  }
+
+  // 5b) 其他费用 - 外部人工调用
+  for (const item of externalLaborItems.value) {
+    const q = Number(item.quantity) || 0
+    const p = Number(item.unitPrice) || 0
+    if (q <= 0 || p <= 0) continue
+    detailRows.push({ category: '其他费用', name: `外部人工 - ${item.personnelType || '人员'}`, desc: item.serviceContent || '', unit: item.unit || '人天', qty: q, unitPrice: fmt(p * vat) })
+  }
+
+  // 5c) 其他费用 - 专用设备采购
+  for (const item of equipmentPurchaseItems.value) {
+    const q = Number(item.quantity) || 0
+    const p = Number(item.purchasePrice) || 0
+    if (q <= 0 || p <= 0) continue
+    detailRows.push({ category: '其他费用', name: `设备采购 - ${item.equipmentName || '设备'}`, desc: [item.brand, item.model].filter(Boolean).join(' '), unit: item.unit || '台', qty: q, unitPrice: fmt(p * vat) })
+  }
+
+  // 6) 设备保险费
+  const insVal = Number(declaredValue.value) || 0
+  const insRate = Number(insuranceRatePermille.value) || 0
+  if (insVal > 0 && insRate > 0) {
+    detailRows.push({ category: '设备保险费', name: '设备搬迁保险', desc: `设备申报价值 ${money(insVal)}，费率 ${insRate}‰`, unit: '项', qty: 1, unitPrice: fmt(insuranceCost.value * vat) })
+  }
+
+  // 7) 账期成本
+  if (globalParams.value.paymentCycle > 0) {
+    const fundCost = Math.round(finalProjectAmount.value * fundingCostRateForCycle.value)
+    if (fundCost > 0) {
+      detailRows.push({ category: '账期成本', name: '账期资金成本', desc: `账期 ${globalParams.value.paymentCycle} 天，年化 ${globalParams.value.fundingCostRate}%`, unit: '项', qty: 1, unitPrice: fmt(fundCost) })
+    }
+  }
+
+  // ── 按比例分摊毛利到各行（与报价单逻辑一致） ──
+  const grossProfit = totalGrossProfit.value
+  const rawTotal = detailRows.reduce((s, r) => s + r.qty * r.unitPrice, 0)
+  let profitDistributed = 0
+  const adjustedRows = detailRows.map((r, i) => {
+    let markup: number
+    if (i === detailRows.length - 1) {
+      markup = grossProfit - profitDistributed
+    } else {
+      const sub = r.qty * r.unitPrice
+      markup = rawTotal > 0 ? Math.round(grossProfit * (sub / rawTotal)) : 0
+      profitDistributed += markup
+    }
+    // 将 markup 均摊到单价
+    const adjustedUnitPrice = r.qty > 0 ? fmt(r.unitPrice + markup / r.qty) : r.unitPrice
+    return { ...r, unitPrice: adjustedUnitPrice }
+  })
+
+  // ── 填充明细行 ──
+  let prevCategory = ''
+  for (const r of adjustedRows) {
+    const cat = r.category === prevCategory ? '' : r.category
+    prevCategory = r.category
+    rows.push([cat, r.name, r.desc, r.unit, r.qty, r.unitPrice, null])
+  }
+  const dataEndRow = rows.length // 最后一条数据行（1-based = rows.length）
+
+  // 在小计列写 Excel 公式（G列 = E列 × F列）
+  // 数据行从 dataStartRow 到 dataEndRow
+  // 后面通过 sheet 直接写公式
+
+  // ─── 汇总行 ───
+  rows.push([])
+  const subtotalRowIdx = rows.length
+  rows.push([null, null, null, null, null, '成本小计', null])
+  const totalRowIdx = rows.length
+  rows.push([null, null, null, null, null, '报价总额（含税）', finalProjectAmount.value])
+
+  // ─── 条款 ───
+  rows.push([])
+  rows.push(['备注与条款'])
+  for (const term of QUOTATION_TERMS) {
+    rows.push([term])
+  }
+
+  // ── 生成 sheet ──
+  const ws = XLSX.utils.aoa_to_sheet(rows)
+
+  // ── 写入 Excel 公式：小计 = 数量 × 单价 ──
+  for (let r = dataStartRow; r <= dataEndRow; r++) {
+    const cellRef = XLSX.utils.encode_cell({ r: r - 1, c: 6 }) // G 列
+    ws[cellRef] = { t: 'n', f: `E${r}*F${r}` }
+  }
+  // 成本小计公式
+  const subtotalCell = XLSX.utils.encode_cell({ r: subtotalRowIdx, c: 6 })
+  ws[subtotalCell] = { t: 'n', f: `SUM(G${dataStartRow}:G${dataEndRow})` }
+
+  // ── 列宽 ──
+  ws['!cols'] = [
+    { wch: 14 },  // A: 分类
+    { wch: 28 },  // B: 项目名称
+    { wch: 36 },  // C: 服务描述
+    { wch: 8 },   // D: 单位
+    { wch: 8 },   // E: 数量
+    { wch: 16 },  // F: 单价
+    { wch: 16 },  // G: 小计
+  ]
+
+  // ── 合并单元格 ──
+  ws['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }, // 标题行合并
+  ]
+
+  XLSX.utils.book_append_sheet(wb, ws, '搬迁报价明细')
+  XLSX.writeFile(wb, `搬迁服务报价明细_${quotationOrderNo.value || new Date().toISOString().slice(0, 10)}.xlsx`)
+  ElMessage.success('报价明细已导出')
 }
 
 defineExpose({
