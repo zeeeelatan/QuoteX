@@ -22,8 +22,8 @@
             :style="userProfile.avatar ? { backgroundImage: `url(${userProfile.avatar})`, backgroundSize: 'cover' } : {}"
           ></div>
           <div class="user-details">
-            <span class="user-name">{{ userProfile.name || '用户' }}</span>
-            <span class="user-role">{{ userProfile.position || '高级销售经理' }}</span>
+            <span class="user-name">{{ userProfile.name }}</span>
+            <span class="user-role">{{ userProfile.position }}</span>
           </div>
           <span class="material-symbols-outlined dropdown-arrow" :class="{ expanded: isUserMenuOpen }">expand_more</span>
         </div>
@@ -35,8 +35,8 @@
                 :style="userProfile.avatar ? { backgroundImage: `url(${userProfile.avatar})`, backgroundSize: 'cover' } : {}"
               ></div>
               <div class="dropdown-info">
-                <span class="dropdown-name">{{ userProfile.name || '用户' }}</span>
-                <span class="dropdown-role">{{ userProfile.position || '高级销售经理' }}</span>
+                <span class="dropdown-name">{{ userProfile.name }}</span>
+                <span class="dropdown-role">{{ userProfile.position }}</span>
               </div>
             </div>
             <div class="dropdown-divider"></div>

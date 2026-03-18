@@ -50,10 +50,10 @@ export async function loadUserProfile(): Promise<void> {
   try {
     const API_URL = import.meta.env.VITE_API_BASE_URL || '/api'
     const res = await axios.get(`${API_URL}/user-profile/`)
-    if (res.data) {
+    if (res.data && res.data.id && res.data.id !== 0) {
       userProfile.value = {
-        name: res.data.name || '用户',
-        position: res.data.position || '高级销售经理',
+        name: res.data.name || '',
+        position: res.data.position || '',
         avatar: res.data.avatar || '',
       }
       profileLoaded = true
@@ -77,7 +77,7 @@ export function getUserId(): number | null {
 }
 
 export function getUserName(): string {
-  return user.value?.name ?? '访客'
+  return user.value?.name ?? ''
 }
 
 export function isLoggedIn(): boolean {

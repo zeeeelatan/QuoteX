@@ -103,6 +103,7 @@ class UpdateLastActiveMiddleware(BaseHTTPMiddleware):
             from app.auth import decode_token
             user_id = decode_token(token)
             if user_id:
+                db = None
                 try:
                     from app.database import SessionLocal
                     from app.models.user_profile import UserProfile
@@ -111,9 +112,12 @@ class UpdateLastActiveMiddleware(BaseHTTPMiddleware):
                         {"last_active_at": datetime.utcnow()}, synchronize_session=False
                     )
                     db.commit()
-                    db.close()
                 except Exception:
-                    pass
+                    if db:
+                        db.rollback()
+                finally:
+                    if db:
+                        db.close()
         return response
 
 
