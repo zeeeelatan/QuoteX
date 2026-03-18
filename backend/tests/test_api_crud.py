@@ -15,7 +15,7 @@ class TestMaintenanceRateAPI:
             "primary_category": "测试分类",
             "secondary_category": "测试二级",
             "tertiary_category": "测试三级",
-            "rate": 0.05,
+            "rate": 5,  # 百分比值，后端会 /100 存为 0.05
         }
         response = client.post("/maintenance_rates/", json=payload)
         # 接受 200 或 201
