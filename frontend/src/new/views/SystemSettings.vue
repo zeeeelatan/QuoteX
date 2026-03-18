@@ -145,7 +145,7 @@ const emit = defineEmits<{
 }>()
 
 // Default avatar
-const defaultAvatar = 'https://lh3.googleusercontent.com/aida-public/AB6AXuDseCis7eFPMlDsQTxa4UJDQM0NaKbsbzofX_Mi6TN-2xaKyvlZNIdhkEFOwDBGB-i9nyiKt_NQD_35zysXqWHkzZ1g_Oa3kEvGx2sb3ejxv6cNjGMZy4lnRDsdxNPUiWc_prmCaIHLfF4Z4uWq6Aua_NaQNnlZcaRLwtmBA_DCPh4w-3ZlGOxjmYBBeAOUTKU7GMGNP_LP6ZNHsJ-RUTNwKT09JUOkVgy_JtGHYy5R-69NvRGPNBF7wSBzFWbiltzFmwPA-IUJ34Y'
+const defaultAvatar = '/images/homepage/default-avatar.jpg'
 
 // State
 const avatarInputRef = ref<HTMLInputElement | null>(null)

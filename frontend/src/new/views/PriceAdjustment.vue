@@ -1149,7 +1149,7 @@ h1, h2, h3, h4, h5, h6 {
   width: 2.25rem;
   height: 2.25rem;
   border-radius: 9999px;
-  background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuAZzVh9Czf4lzFyasoKua12Eo_RHM1ujGM5v8mh-HBKcsHP_5jyMC8gYZnu-fmr5pGhTTYYpRiCyUFw_FHBk319iL8wwenXkG9wr10t58CMhxMvy02eYEyj1RTmdLWGLoatidW47JrFehs1ny_2EWjNatPB9Rw9Jz4T2Ao8uZ1rGhJbe2QzgIrJquoWcwdHNdezINC3ZZMlE10NcF7DNlYd6pJXE-cdDrntOREOm4QAbqJSaw13F-IZfQm2vzzUvc-COJeeiC5_Xew");
+  background-image: url("/images/homepage/page-bg.jpg");
   background-size: cover;
   background-position: center;
   ring: 2px solid #232f48;
@@ -1785,19 +1785,19 @@ h1, h2, h3, h4, h5, h6 {
   background-size: cover;
   background-position: center;
   border: 1px solid #232f48;
-  background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuC8bNw8VJItp06hBiecpbq1CYdnpg9R4q3wNGExLtJB12zFGseTVIh55z6R5zDKC7prPhUPYhwetnzi9vbx9T3QGmAJh6O2l05nT-lONOoqsrcl3Ol6TYUgydideuguVTSK7eNinFi9dCbWI9LJ_MsnZVjMzivAP5Mdl37gilACF2rzd-ggEsFPYiT9VT6BMuQpCESt1N3Jsx6KdYdbrlXFkA6Xj9luWDiGVie-kZzJ5srr3l8-CY7lvA5EMjVNMflibVLxvglDkUA');
+  background-image: url('/images/homepage/price-service-1.jpg');
 }
 
 .product-image.samsung {
-  background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuAIeKKDfx84DBSxhWngyV3MazzWz3EBz17Ihi4MlJu2qiKIZaFYhc77Ki89vuk35axwlKCIjejWSaCkic7noYwbiKp6S_k1g6x1HiqgFwh6AuP90s9mqdTNvtdkTeiE6BYBmcndQgVug-vXm49QAR6gXoGBCvUMNWyJNx7xeND8HUzA_gyhOO7ctmCRXw8kjylwH4tA1MhZrI0Vqv6xzbpMABPQx8H_PprTYEPhDwLkMLa4hUNkRGZIPi-Du8cPuXWhfe15rZmrxkU');
+  background-image: url('/images/homepage/price-service-2.jpg');
 }
 
 .product-image.dell {
-  background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuDYW-CRktrjGrEm4rbhQiUFCaKaWiiz-JiyVBzViwQjHIFm7Rlex7mN7hRMqRBKeCo7gY1xc9NEG9my6KDh_VJzXoZSkw9AakZNFzqBU8GUHkKFyRGXPodNdbe-dahsIqy9Rvsm20-mYP36RHYLoGs2XTeAyZg2Dv9XDJRGMDWyQHes0opIm82KTT0Xwj2RHYR78e2rYRoVzfpBS3bgPeDFpkh4HwEoxreMZQ5JdnsNAH1Y01P6oYUqZxNABjQ82_DkJS-RGyTwVC4');
+  background-image: url('/images/homepage/price-service-3.jpg');
 }
 
 .product-image.logitech {
-  background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuAbwE4AjfnCcCebLJpEL1IheLKZz_4RCqHgjiJyy7fV6dUa4A-ysxJGtmYAKN5aOmVRSxuW8rdE5riMMIoCt_sUMnTQT1gy9fod4oVixLJwiExwHIYzufx__XYb8NidjEn2EP8csFaUtnFxwjEczriT1GDOv-PA_rPBITIcSqCioiq0mUusLXKzNi9yuYr5L0KC65U9mynnX69qYFdjSK0aOuIomVqiUEEqVsMP2BaLRLVNteAfook5Cmgjn5M4EDU5ziE6BrfwwGk');
+  background-image: url('/images/homepage/price-service-4.jpg');
 }
 
 .product-details {

@@ -1,9 +1,13 @@
+from datetime import date, datetime, timedelta
+
 from fastapi import APIRouter, Depends, Query, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from app.database import get_db
 from app.models.quote_history import QuoteHistory
+from app.models.user_profile import UserProfile
 from app.schemas.quote_history import QuoteHistoryCreate, QuoteHistoryOut, QuoteHistoryListItem, QuoteHistoryUpdate
 from app.auth import get_current_user_id, get_current_user_required
 
@@ -71,6 +75,33 @@ def get_quote_history_count(
             (QuoteHistory.user_name.ilike(search_pattern))
         )
     return {"total": query.count()}
+
+
+@router.get("/today-count")
+def get_today_quote_count(db: Session = Depends(get_db)):
+    """获取今日及昨日所有用户生成的报价单数量（不区分用户），用于趋势对比"""
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+    completed_filter = QuoteHistory.status == 'completed'
+    today_count = db.query(func.count(QuoteHistory.id)).filter(
+        func.date(QuoteHistory.created_at) == today, completed_filter,
+    ).scalar() or 0
+    yesterday_count = db.query(func.count(QuoteHistory.id)).filter(
+        func.date(QuoteHistory.created_at) == yesterday, completed_filter,
+    ).scalar() or 0
+    total_count = db.query(func.count(QuoteHistory.id)).filter(
+        completed_filter,
+    ).scalar() or 0
+    online_threshold = datetime.utcnow() - timedelta(minutes=15)
+    online_count = db.query(func.count(UserProfile.id)).filter(
+        UserProfile.last_active_at >= online_threshold,
+    ).scalar() or 0
+    return {
+        "today_count": today_count,
+        "yesterday_count": yesterday_count,
+        "total_count": total_count,
+        "online_count": online_count,
+    }
 
 
 @router.get("/{history_id}", response_model=QuoteHistoryOut)

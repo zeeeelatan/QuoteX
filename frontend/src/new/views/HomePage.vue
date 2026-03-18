@@ -357,33 +357,33 @@
               <span class="material-symbols-outlined stat-icon">receipt_long</span>
             </div>
             <div class="stat-content">
-              <h4 class="stat-value">128</h4>
-              <span class="stat-trend positive">
-                <span class="material-symbols-outlined">trending_up</span>
-                +12%
+              <h4 class="stat-value">{{ todayQuoteCount }}</h4>
+              <span class="stat-trend" :class="quoteTrend.direction">
+                <span class="material-symbols-outlined">{{ quoteTrend.direction === 'negative' ? 'trending_down' : 'trending_up' }}</span>
+                {{ quoteTrend.pct }}
               </span>
             </div>
           </div>
 
           <div class="stat-card">
             <div class="stat-header">
-              <p class="stat-label">待审批项目</p>
-              <span class="material-symbols-outlined stat-icon orange">pending_actions</span>
+              <p class="stat-label">报价单总数</p>
+              <span class="material-symbols-outlined stat-icon orange">description</span>
             </div>
             <div class="stat-content">
-              <h4 class="stat-value">15</h4>
-              <span class="stat-subtitle">需要特别关注</span>
+              <h4 class="stat-value">{{ totalQuoteCount }}</h4>
+              <span class="stat-subtitle">累计生成</span>
             </div>
           </div>
 
           <div class="stat-card">
             <div class="stat-header">
-              <p class="stat-label">系统状态</p>
-              <span class="material-symbols-outlined stat-icon green">check_circle</span>
+              <p class="stat-label">在线用户数</p>
+              <span class="material-symbols-outlined stat-icon green">group</span>
             </div>
             <div class="stat-content">
-              <h4 class="stat-value">运行正常</h4>
-              <span class="stat-subtitle green">所有服务在线</span>
+              <h4 class="stat-value">{{ onlineUserCount }}</h4>
+              <span class="stat-subtitle green">近 15 分钟活跃</span>
             </div>
           </div>
         </section>
@@ -471,6 +471,35 @@ import RelocationServiceCalculator from '../components/pricing/RelocationService
 
 const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5002'
 const API_BASE = API_URL.replace(/\/$/, '')
+
+// 今日报价单统计
+const todayQuoteCount = ref(0)
+const yesterdayQuoteCount = ref(0)
+const totalQuoteCount = ref(0)
+const onlineUserCount = ref(0)
+
+const quoteTrend = computed(() => {
+  if (yesterdayQuoteCount.value === 0) {
+    return todayQuoteCount.value > 0 ? { pct: '+100%', direction: 'positive' } : { pct: '0%', direction: 'positive' }
+  }
+  const change = ((todayQuoteCount.value - yesterdayQuoteCount.value) / yesterdayQuoteCount.value) * 100
+  const rounded = Math.round(change)
+  if (rounded > 0) return { pct: `+${rounded}%`, direction: 'positive' }
+  if (rounded < 0) return { pct: `${rounded}%`, direction: 'negative' }
+  return { pct: '0%', direction: 'positive' }
+})
+
+async function loadTodayQuoteCount() {
+  try {
+    const res = await axios.get(`${API_BASE}/quote-history/today-count`)
+    todayQuoteCount.value = res.data?.today_count ?? 0
+    yesterdayQuoteCount.value = res.data?.yesterday_count ?? 0
+    totalQuoteCount.value = res.data?.total_count ?? 0
+    onlineUserCount.value = res.data?.online_count ?? 0
+  } catch (err) {
+    console.error('加载今日报价单数量失败', err)
+  }
+}
 
 // 首页智能报价输入
 const requirementText = ref('')
@@ -874,6 +903,7 @@ watch(isLoggedInRef, (loggedIn) => {
 onMounted(() => {
   document.addEventListener('click', handleClickOutside)
   loadModels()
+  loadTodayQuoteCount()
   if (isLoggedInRef.value) loadUserProfile()
   applyRouteView()
 })
@@ -1418,7 +1448,7 @@ onUnmounted(() => {
   padding: 2rem;
   text-align: center;
   background-image: linear-gradient(rgba(11, 17, 32, 0.85), rgba(11, 17, 32, 0.7)),
-                    url("https://lh3.googleusercontent.com/aida-public/AB6AXuBxOMNwFgRaFuZYRYn6o1pLKcyfUbKBPDhzXxoxmNkhMVt3t54CLsxmZFPSBNZhNAWV6imkNDZXt2lO9I_qfQQGogyz7VKmrPxuScBo5nu-QMMVTc9515CDFL1wkJ6-sCPqX6HKLRBu-Gyic3gDab1sYO9X-BRTk9p3j9sRQOpmroYDsozJVZeLnpKiTJ-tew6MrIkEQE00D9uoiAULS-Y7iRrCtJhKHqRwPhl1Db5lE4b-xqZgPe5hvKUO9TjgaMD3zyI8ZrBldZs");
+                    url("/images/homepage/hero-bg.jpg");
   background-size: cover;
   background-position: center;
 }
@@ -2625,6 +2655,11 @@ onUnmounted(() => {
   background-color: rgba(34, 197, 94, 0.1);
 }
 
+.stat-trend.negative {
+  color: #ef4444;
+  background-color: rgba(239, 68, 68, 0.1);
+}
+
 .stat-trend .material-symbols-outlined {
   font-size: 0.75rem;
 }
@@ -2732,15 +2767,15 @@ onUnmounted(() => {
 }
 
 .category-image.datacenter {
-  background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuCOHlzEIY4W-0s6iWRScx8m0LmVQdQByh73Vt3_KXDwPPmuzvBY2nd1kncOoiad6vTEaSL5O0f55kiGjVW6SGGibDy8GcDiKUGdULBE0NPY3FE_bOh0U3CN3twcRnDEEuU9DxozpSC3z-UaQ_lxkqxq3ne56TSvRVEKTBw0zbfWaRDqDdv23dTLD027qAQ5Qe-hMk_BSUlbfxMmqOqIDQZZ9w00Jjj3voSqLo8e1fa4iCXAxz-G_Jud8W6G-tsGsr8SIoajVPUNMjM");
+  background-image: url("/images/homepage/category-datacenter.jpg");
 }
 
 .category-image.office {
-  background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuAsiwbdo-0xcdfPRny-2ypDGqfXmc2tgXsxlXGenwnr6joNJ_d6qRCV19QPivH6SHRFW6RJjSE4CB6b9Zm21B4fHS7FOcIkCceVdEB9igDV1nFcrNzQSQHH8_SD0PXDldCUdNrr2ep56-46PSDT9_FSlN68ntue58QheY7xcHu-iatrsmSbq9SXLCsdREtpydf3ZsBjl_7LR0q6ppLfnJygpMCIN3AP3uxXrSM4CM_87MTTgERb3E0un1CnL7GfEc7dFSqF_MJdakI");
+  background-image: url("/images/homepage/category-office.jpg");
 }
 
 .category-image.security {
-  background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuAj41-Ihy33RX-A4pqAq2Uh64MXHMoNJVS5YlGXGE0jYsVN6Pca1l3akzixJrSe4Q6NX2YT_FCHk8OmiaS7D03z6gxHW39lDNcyTMvs8noG_8Q2AbzwXZC4qqurryxcydNtlHnPQAKHAzbS9gY0gBK2sNNcEtJ0gXplO1CJv4Cc810Rr9n2JOE7feMqTyjkBP1XdrneGBzqMWuxD5-Inhrhr-achGTp_plrnAliepUbQIygEC7TtLtn6gUjDA3nlAKrtUUpIswWnJI");
+  background-image: url("/images/homepage/category-security.jpg");
 }
 
 .category-content {

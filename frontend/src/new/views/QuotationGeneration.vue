@@ -2190,7 +2190,7 @@ h1, h2, h3, h4, h5, h6 {
   width: 2.25rem;
   height: 2.25rem;
   border-radius: 9999px;
-  background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuAZzVh9Czf4lzFyasoKua12Eo_RHM1ujGM5v8mh-HBKcsHP_5jyMC8gYZnu-fmr5pGhTTYYpRiCyUFw_FHBk319iL8wwenXkG9wr10t58CMhxMvy02eYEyj1RTmdLWGLoatidW47JrFehs1ny_2EWjNatPB9Rw9Jz4T2Ao8uZ1rGhJbe2QzgIrJquoWcwdHNdezINC3ZZMlE10NcF7DNlYd6pJXE-cdDrntOREOm4QAbqJSaw13F-IZfQm2vzzUvc-COJeeiC5_Xew");
+  background-image: url("/images/homepage/page-bg.jpg");
   background-size: cover;
   background-position: center;
   ring: 2px solid #232f48;

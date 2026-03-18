@@ -87,6 +87,38 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# 轻量中间件：已登录用户每次请求更新 last_active_at（用于在线用户统计）
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from datetime import datetime
+
+
+class UpdateLastActiveMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+            from app.auth import decode_token
+            user_id = decode_token(token)
+            if user_id:
+                try:
+                    from app.database import SessionLocal
+                    from app.models.user_profile import UserProfile
+                    db = SessionLocal()
+                    db.query(UserProfile).filter(UserProfile.id == user_id).update(
+                        {"last_active_at": datetime.utcnow()}, synchronize_session=False
+                    )
+                    db.commit()
+                    db.close()
+                except Exception:
+                    pass
+        return response
+
+
+app.add_middleware(UpdateLastActiveMiddleware)
+
 from fastapi import Query
 
 @app.get("/search/")

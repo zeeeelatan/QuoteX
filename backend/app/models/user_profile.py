@@ -21,6 +21,7 @@ class UserProfile(Base):
     currency = Column(String(8), default='CNY')  # 默认币种
     permission_level = Column(String(32), default='普通报价师')  # 权限等级
     tags = Column(Text, nullable=True)  # 常用客户标签，JSON格式
+    last_active_at = Column(DateTime, nullable=True)  # 最近活跃时间（用于在线用户统计）
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
