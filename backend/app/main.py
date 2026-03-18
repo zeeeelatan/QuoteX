@@ -62,6 +62,9 @@ def _wait_for_db(max_attempts: int = 30, interval: float = 1.0):
 @app.on_event("startup")
 def on_startup():
     """确保数据库就绪、表存在、默认账户存在"""
+    import logging
+    logger = logging.getLogger("app.startup")
+
     _wait_for_db()
     # 优先尝试 Alembic 迁移；若 Alembic 未初始化则退回 create_all
     try:
@@ -72,10 +75,13 @@ def on_startup():
         if os.path.exists(alembic_ini):
             alembic_cfg = Config(alembic_ini)
             command.upgrade(alembic_cfg, "head")
+            logger.info("Alembic 迁移执行成功")
         else:
+            logger.warning("alembic.ini 不存在，退回 create_all")
             Base.metadata.create_all(bind=engine)
-    except Exception:
+    except Exception as e:
         # Alembic 迁移失败时退回 create_all，确保首次部署仍能启动
+        logger.error(f"Alembic 迁移失败，退回 create_all: {e}")
         Base.metadata.create_all(bind=engine)
     ensure_default_user()
 
