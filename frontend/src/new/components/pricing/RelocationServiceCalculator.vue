@@ -5640,64 +5640,161 @@ function onGenerateQuote() {
   }
 }
 
-function onExportExcel() {
-  const wb = XLSX.utils.book_new()
+async function onExportExcel() {
+  const ExcelJS = (await import('exceljs')).default
+  const { saveAs } = await import('file-saver')
+
+  const wb = new ExcelJS.Workbook()
+  wb.creator = QUOTATION_COMPANY.name
+  wb.created = new Date()
+  const ws = wb.addWorksheet('搬迁报价明细', {
+    properties: { defaultRowHeight: 22 },
+    pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1 }
+  })
+
   const vat = 1 + (globalParams.value.vatRate ?? 6) / 100
-  const profitRate = (globalParams.value.profitRate || 0) / 100
+  const fmtNum = (n: number) => Math.round(n * 100) / 100
+  const moneyStr = (n: number) => `¥${n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
-  // ── 辅助函数 ──
-  const fmt = (n: number) => Math.round(n * 100) / 100
-  const money = (n: number) => `¥${n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-
-  // ── 构建行数据 ──
-  type Row = (string | number | null)[]
-  const rows: Row[] = []
-  let dataStartRow = 0 // Excel 公式用（1-based）
-
-  // ─── 报价单标题 ───
-  rows.push([`${QUOTATION_COMPANY.name} - 搬迁服务报价明细单`])
-  rows.push([])
-  rows.push(['报价方', QUOTATION_COMPANY.name, null, '客户', quotationCustomerName.value || '客户'])
-  rows.push(['联系地址', QUOTATION_COMPANY.address, null, '客户地址', quotationCustomerLocationLines.value.join(' ')])
-  rows.push(['报价日期', new Date().toLocaleDateString('zh-CN'), null, '有效期至', new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString('zh-CN')])
-  rows.push(['增值税率', `${globalParams.value.vatRate}%`, null, '利润率', `${globalParams.value.profitRate}%`])
-  if (globalParams.value.paymentCycle > 0) {
-    rows.push(['账期', `${globalParams.value.paymentCycle} 天`, null, '资金成本率', `${globalParams.value.fundingCostRate}%/年`])
+  // ── 色板 ──
+  const C = {
+    primary: '1A3C6D',      // 深海蓝 - 标题
+    primaryLight: 'E8EDF5',  // 浅蓝灰 - 信息区背景
+    headerBg: '2B5797',      // 表头蓝
+    headerFont: 'FFFFFF',    // 表头白字
+    categoryBg: 'F0F4FA',    // 分类行浅蓝
+    categoryFont: '1A3C6D',  // 分类行深蓝字
+    subtotalBg: 'E8EDF5',    // 小计行
+    totalBg: '1A3C6D',       // 总计行深蓝
+    totalFont: 'FFFFFF',     // 总计白字
+    borderColor: 'B8C4D8',   // 边框色
+    termsBg: 'F8F9FB',       // 条款背景
+    grayText: '5A6A80',      // 灰色文字
   }
-  rows.push([])
 
-  // ─── 表头 ───
-  const headerRow = ['分类', '项目名称', '服务描述', '单位', '数量', '单价（含税）', '小计（含税）']
-  rows.push(headerRow)
-  dataStartRow = rows.length + 1 // Excel 1-based, 下一行是第一条数据
+  // ── 列宽 ──
+  ws.columns = [
+    { key: 'A', width: 16 },
+    { key: 'B', width: 30 },
+    { key: 'C', width: 40 },
+    { key: 'D', width: 10 },
+    { key: 'E', width: 10 },
+    { key: 'F', width: 16 },
+    { key: 'G', width: 16 },
+  ]
 
-  // ── 收集所有明细行用于毛利分摊 ──
+  const thinBorder = (color: string): ExcelJS.Border => ({ style: 'thin', color: { argb: color } })
+  const allBorders = (color = C.borderColor) => ({
+    top: thinBorder(color), bottom: thinBorder(color),
+    left: thinBorder(color), right: thinBorder(color)
+  })
+
+  // ══════════════════════════════════════
+  //  标题区
+  // ══════════════════════════════════════
+  let row = 1
+  ws.mergeCells(`A${row}:G${row}`)
+  const titleCell = ws.getCell(`A${row}`)
+  titleCell.value = `${QUOTATION_COMPANY.name} — 搬迁服务报价明细单`
+  titleCell.font = { name: '微软雅黑', size: 18, bold: true, color: { argb: C.primary } }
+  titleCell.alignment = { horizontal: 'center', vertical: 'middle' }
+  ws.getRow(row).height = 42
+
+  // 副标题线
+  row++
+  ws.mergeCells(`A${row}:G${row}`)
+  ws.getCell(`A${row}`).border = { bottom: { style: 'medium', color: { argb: C.primary } } }
+  ws.getRow(row).height = 6
+
+  // ══════════════════════════════════════
+  //  报价信息区（两栏布局）
+  // ══════════════════════════════════════
+  row++
+  ws.getRow(row).height = 8 // 间距
+
+  const infoLabelFont: Partial<ExcelJS.Font> = { name: '微软雅黑', size: 9, color: { argb: C.grayText } }
+  const infoValueFont: Partial<ExcelJS.Font> = { name: '微软雅黑', size: 10, bold: true, color: { argb: '1A1A2E' } }
+
+  const infoRows: [string, string, string, string][] = [
+    ['报价方', QUOTATION_COMPANY.name, '客户名称', quotationCustomerName.value || '客户'],
+    ['联系地址', QUOTATION_COMPANY.address, '客户地址', quotationCustomerLocationLines.value.join(' ')],
+    ['报价日期', new Date().toLocaleDateString('zh-CN'), '有效期至', new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString('zh-CN')],
+    ['增值税率', `${globalParams.value.vatRate}%`, '币种', '人民币 (CNY)'],
+  ]
+  if (globalParams.value.paymentCycle > 0) {
+    infoRows.push(['账期', `${globalParams.value.paymentCycle} 天`, '资金成本率', `${globalParams.value.fundingCostRate}%/年`])
+  }
+
+  for (const [lbl1, val1, lbl2, val2] of infoRows) {
+    row++
+    ws.getRow(row).height = 24
+    // 左栏 label
+    ws.getCell(`A${row}`).value = lbl1
+    ws.getCell(`A${row}`).font = infoLabelFont
+    ws.getCell(`A${row}`).alignment = { horizontal: 'right', vertical: 'middle' }
+    // 左栏 value（合并 B-C）
+    ws.mergeCells(`B${row}:C${row}`)
+    ws.getCell(`B${row}`).value = val1
+    ws.getCell(`B${row}`).font = infoValueFont
+    ws.getCell(`B${row}`).alignment = { vertical: 'middle' }
+    // 右栏 label
+    ws.getCell(`E${row}`).value = lbl2
+    ws.getCell(`E${row}`).font = infoLabelFont
+    ws.getCell(`E${row}`).alignment = { horizontal: 'right', vertical: 'middle' }
+    // 右栏 value（合并 F-G）
+    ws.mergeCells(`F${row}:G${row}`)
+    ws.getCell(`F${row}`).value = val2
+    ws.getCell(`F${row}`).font = infoValueFont
+    ws.getCell(`F${row}`).alignment = { vertical: 'middle' }
+    // 背景
+    for (const c of ['A','B','C','D','E','F','G']) {
+      ws.getCell(`${c}${row}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.primaryLight } }
+    }
+  }
+
+  row++ // 空行
+  ws.getRow(row).height = 10
+
+  // ══════════════════════════════════════
+  //  表头
+  // ══════════════════════════════════════
+  row++
+  const headerRowNum = row
+  const headers = ['分类', '项目名称', '服务描述', '单位', '数量', '单价（含税）', '小计（含税）']
+  const headerCols = ['A','B','C','D','E','F','G']
+  headers.forEach((h, i) => {
+    const cell = ws.getCell(`${headerCols[i]}${row}`)
+    cell.value = h
+    cell.font = { name: '微软雅黑', size: 10, bold: true, color: { argb: C.headerFont } }
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.headerBg } }
+    cell.alignment = { horizontal: i >= 3 ? 'center' : 'left', vertical: 'middle' }
+    cell.border = allBorders(C.headerBg)
+  })
+  ws.getRow(row).height = 30
+
+  // ══════════════════════════════════════
+  //  收集明细数据
+  // ══════════════════════════════════════
   interface DetailRow { category: string; name: string; desc: string; unit: string; qty: number; unitPrice: number }
   const detailRows: DetailRow[] = []
 
   // 1) 人工服务费
   for (const item of laborCostItems.value) {
-    const q = Number(item.quantity) || 0
-    const p = Number(item.unitPrice) || 0
+    const q = Number(item.quantity) || 0; const p = Number(item.unitPrice) || 0
     if (q <= 0 || p <= 0) continue
     const label = item.serviceType === '其它服务' ? (item.customServiceType || '其它服务') : item.serviceType
-    detailRows.push({ category: '人工服务费', name: label, desc: item.serviceDesc || '', unit: '项', qty: q, unitPrice: fmt(p * vat) })
+    detailRows.push({ category: '人工服务费', name: label, desc: item.serviceDesc || '', unit: '项', qty: q, unitPrice: fmtNum(p * vat) })
   }
-
   // 2) 包装耗材费
   for (const item of packagingItems.value) {
-    const q = Number(item.quantity) || 0
-    if (q <= 0) continue
-    const tier = packagingTiers.value[item.tierIndex]
-    if (!tier) continue
-    detailRows.push({ category: '包装耗材费', name: `包装 - ${tier.label}（${tier.range}）`, desc: '按设备U数梯度计费', unit: '台', qty: q, unitPrice: fmt(tier.price * vat) })
+    const q = Number(item.quantity) || 0; if (q <= 0) continue
+    const tier = packagingTiers.value[item.tierIndex]; if (!tier) continue
+    detailRows.push({ category: '包装耗材费', name: `包装 - ${tier.label}（${tier.range}）`, desc: '按设备U数梯度计费', unit: '台', qty: q, unitPrice: fmtNum(tier.price * vat) })
   }
-
   // 3) 物流运输费 - 车辆配送
   for (const batch of logisticsBatches.value) {
     for (const item of batch.items) {
-      const q = Number(item.quantity) || 0
-      if (q <= 0) continue
+      const q = Number(item.quantity) || 0; if (q <= 0) continue
       const vehicle = vehicleOptions.value.find(v => v.id === item.vehicleId)
       const vName = vehicle?.vehicle_name || `车型 #${item.vehicleId}`
       const startP = getStartPriceForVehicle(item.vehicleId)
@@ -5705,83 +5802,58 @@ function onExportExcel() {
       const kmP = Math.max(0, Number(item.kmPrice) || 0)
       const unitTotal = startP + km * kmP
       const batchLabel = logisticsBatches.value.length > 1 ? `[${batch.name}] ` : ''
-      detailRows.push({
-        category: '物流运输费',
-        name: `${batchLabel}${vName}`,
-        desc: `起步价${startP} + ${km}km × ${kmP}/km`,
-        unit: '车次',
-        qty: q,
-        unitPrice: fmt(unitTotal * vat)
-      })
+      detailRows.push({ category: '物流运输费', name: `${batchLabel}${vName}`, desc: `起步价${startP} + ${km}km × ${kmP}/km`, unit: '车次', qty: q, unitPrice: fmtNum(unitTotal * vat) })
     }
   }
-
-  // 3b) 物流运输费 - 人工搬运
+  // 3b) 人工搬运
   for (const item of manualHandlingItems.value) {
-    const q = Number(item.quantity) || 0
-    if (q <= 0) continue
-    const tier = manualHandlingTiers.value[item.tierIndex]
-    if (!tier) continue
-    detailRows.push({ category: '物流运输费', name: `人工搬运 - ${tier.label}（${tier.range}）`, desc: '按设备U数梯度计费', unit: '台', qty: q, unitPrice: fmt(tier.price * vat) })
+    const q = Number(item.quantity) || 0; if (q <= 0) continue
+    const tier = manualHandlingTiers.value[item.tierIndex]; if (!tier) continue
+    detailRows.push({ category: '物流运输费', name: `人工搬运 - ${tier.label}（${tier.range}）`, desc: '按设备U数梯度计费', unit: '台', qty: q, unitPrice: fmtNum(tier.price * vat) })
   }
-
-  // 3c) 物流运输费 - 同园区搬迁
+  // 3c) 同园区搬迁
   for (const item of sameParkItems.value) {
-    const q = Number(item.quantity) || 0
-    if (q <= 0) continue
-    const tier = sameParkTiers.value[item.tierIndex]
-    if (!tier) continue
-    detailRows.push({ category: '物流运输费', name: `同园区搬迁 - ${tier.label}（${tier.range}）`, desc: '同园区内设备搬迁', unit: '台', qty: q, unitPrice: fmt(tier.price * vat) })
+    const q = Number(item.quantity) || 0; if (q <= 0) continue
+    const tier = sameParkTiers.value[item.tierIndex]; if (!tier) continue
+    detailRows.push({ category: '物流运输费', name: `同园区搬迁 - ${tier.label}（${tier.range}）`, desc: '同园区内设备搬迁', unit: '台', qty: q, unitPrice: fmtNum(tier.price * vat) })
   }
-
   // 4) 增值服务费
   for (const item of valueAddedItems.value) {
-    const q = Number(item.quantity) || 0
-    const p = Number(item.unitPrice) || 0
+    const q = Number(item.quantity) || 0; const p = Number(item.unitPrice) || 0
     if (q <= 0 || p <= 0) continue
-    detailRows.push({ category: '增值服务费', name: item.itemName || '增值服务', desc: item.serviceDesc || '', unit: item.unit || '台', qty: q, unitPrice: fmt(p * vat) })
+    detailRows.push({ category: '增值服务费', name: item.itemName || '增值服务', desc: item.serviceDesc || '', unit: item.unit || '台', qty: q, unitPrice: fmtNum(p * vat) })
   }
-
-  // 5) 其他费用 - 专用设备租用
+  // 5) 其他费用
   for (const item of equipmentRentalItems.value) {
-    const q = Number(item.quantity) || 0
-    const p = Number(item.rentalPrice) || 0
+    const q = Number(item.quantity) || 0; const p = Number(item.rentalPrice) || 0
     if (q <= 0 || p <= 0) continue
-    detailRows.push({ category: '其他费用', name: `设备租用 - ${item.equipmentName || '设备'}`, desc: [item.brand, item.model].filter(Boolean).join(' '), unit: item.unit || '台', qty: q, unitPrice: fmt(p * vat) })
+    detailRows.push({ category: '其他费用', name: `设备租用 - ${item.equipmentName || '设备'}`, desc: [item.brand, item.model].filter(Boolean).join(' '), unit: item.unit || '台', qty: q, unitPrice: fmtNum(p * vat) })
   }
-
-  // 5b) 其他费用 - 外部人工调用
   for (const item of externalLaborItems.value) {
-    const q = Number(item.quantity) || 0
-    const p = Number(item.unitPrice) || 0
+    const q = Number(item.quantity) || 0; const p = Number(item.unitPrice) || 0
     if (q <= 0 || p <= 0) continue
-    detailRows.push({ category: '其他费用', name: `外部人工 - ${item.personnelType || '人员'}`, desc: item.serviceContent || '', unit: item.unit || '人天', qty: q, unitPrice: fmt(p * vat) })
+    detailRows.push({ category: '其他费用', name: `外部人工 - ${item.personnelType || '人员'}`, desc: item.serviceContent || '', unit: item.unit || '人天', qty: q, unitPrice: fmtNum(p * vat) })
   }
-
-  // 5c) 其他费用 - 专用设备采购
   for (const item of equipmentPurchaseItems.value) {
-    const q = Number(item.quantity) || 0
-    const p = Number(item.purchasePrice) || 0
+    const q = Number(item.quantity) || 0; const p = Number(item.purchasePrice) || 0
     if (q <= 0 || p <= 0) continue
-    detailRows.push({ category: '其他费用', name: `设备采购 - ${item.equipmentName || '设备'}`, desc: [item.brand, item.model].filter(Boolean).join(' '), unit: item.unit || '台', qty: q, unitPrice: fmt(p * vat) })
+    detailRows.push({ category: '其他费用', name: `设备采购 - ${item.equipmentName || '设备'}`, desc: [item.brand, item.model].filter(Boolean).join(' '), unit: item.unit || '台', qty: q, unitPrice: fmtNum(p * vat) })
   }
-
   // 6) 设备保险费
   const insVal = Number(declaredValue.value) || 0
   const insRate = Number(insuranceRatePermille.value) || 0
   if (insVal > 0 && insRate > 0) {
-    detailRows.push({ category: '设备保险费', name: '设备搬迁保险', desc: `设备申报价值 ${money(insVal)}，费率 ${insRate}‰`, unit: '项', qty: 1, unitPrice: fmt(insuranceCost.value * vat) })
+    detailRows.push({ category: '设备保险费', name: '设备搬迁保险', desc: `设备申报价值 ${moneyStr(insVal)}，费率 ${insRate}‰`, unit: '项', qty: 1, unitPrice: fmtNum(insuranceCost.value * vat) })
   }
-
   // 7) 账期成本
   if (globalParams.value.paymentCycle > 0) {
     const fundCost = Math.round(finalProjectAmount.value * fundingCostRateForCycle.value)
     if (fundCost > 0) {
-      detailRows.push({ category: '账期成本', name: '账期资金成本', desc: `账期 ${globalParams.value.paymentCycle} 天，年化 ${globalParams.value.fundingCostRate}%`, unit: '项', qty: 1, unitPrice: fmt(fundCost) })
+      detailRows.push({ category: '账期成本', name: '账期资金成本', desc: `账期 ${globalParams.value.paymentCycle} 天，年化 ${globalParams.value.fundingCostRate}%`, unit: '项', qty: 1, unitPrice: fmtNum(fundCost) })
     }
   }
 
-  // ── 按比例分摊毛利到各行（与报价单逻辑一致） ──
+  // ── 按比例分摊毛利 ──
   const grossProfit = totalGrossProfit.value
   const rawTotal = detailRows.reduce((s, r) => s + r.qty * r.unitPrice, 0)
   let profitDistributed = 0
@@ -5794,68 +5866,169 @@ function onExportExcel() {
       markup = rawTotal > 0 ? Math.round(grossProfit * (sub / rawTotal)) : 0
       profitDistributed += markup
     }
-    // 将 markup 均摊到单价
-    const adjustedUnitPrice = r.qty > 0 ? fmt(r.unitPrice + markup / r.qty) : r.unitPrice
+    const adjustedUnitPrice = r.qty > 0 ? fmtNum(r.unitPrice + markup / r.qty) : r.unitPrice
     return { ...r, unitPrice: adjustedUnitPrice }
   })
 
-  // ── 填充明细行 ──
-  let prevCategory = ''
+  // ══════════════════════════════════════
+  //  填充明细行（带分类行 + 斑马纹）
+  // ══════════════════════════════════════
+  const dataFont: Partial<ExcelJS.Font> = { name: '微软雅黑', size: 10, color: { argb: '2D3748' } }
+  const moneyFmt = '#,##0.00'
+  const dataStartRow = row + 1 // 第一条数据行号
+
+  // 按分类分组
+  const categoryGroups: { category: string; items: typeof adjustedRows }[] = []
+  let lastCat = ''
   for (const r of adjustedRows) {
-    const cat = r.category === prevCategory ? '' : r.category
-    prevCategory = r.category
-    rows.push([cat, r.name, r.desc, r.unit, r.qty, r.unitPrice, null])
+    if (r.category !== lastCat) {
+      categoryGroups.push({ category: r.category, items: [] })
+      lastCat = r.category
+    }
+    categoryGroups[categoryGroups.length - 1].items.push(r)
   }
-  const dataEndRow = rows.length // 最后一条数据行（1-based = rows.length）
 
-  // 在小计列写 Excel 公式（G列 = E列 × F列）
-  // 数据行从 dataStartRow 到 dataEndRow
-  // 后面通过 sheet 直接写公式
+  const detailDataRows: number[] = [] // 记录数据行号（用于公式）
 
-  // ─── 汇总行 ───
-  rows.push([])
-  const subtotalRowIdx = rows.length
-  rows.push([null, null, null, null, null, '成本小计', null])
-  const totalRowIdx = rows.length
-  rows.push([null, null, null, null, null, '报价总额（含税）', finalProjectAmount.value])
+  for (const group of categoryGroups) {
+    // ── 分类标题行 ──
+    row++
+    ws.mergeCells(`A${row}:G${row}`)
+    const catCell = ws.getCell(`A${row}`)
+    catCell.value = `  ${group.category}`
+    catCell.font = { name: '微软雅黑', size: 10, bold: true, color: { argb: C.categoryFont } }
+    catCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.categoryBg } }
+    catCell.alignment = { vertical: 'middle' }
+    catCell.border = { bottom: thinBorder(C.borderColor) }
+    ws.getRow(row).height = 26
 
-  // ─── 条款 ───
-  rows.push([])
-  rows.push(['备注与条款'])
+    // ── 分类下的明细行 ──
+    group.items.forEach((r, idx) => {
+      row++
+      detailDataRows.push(row)
+      const isEven = idx % 2 === 0
+      const rowBg = isEven ? 'FFFFFF' : 'F7F9FC'
+
+      ws.getCell(`A${row}`).value = '' // 分类已在标题行显示
+      ws.getCell(`B${row}`).value = r.name
+      ws.getCell(`C${row}`).value = r.desc
+      ws.getCell(`D${row}`).value = r.unit
+      ws.getCell(`E${row}`).value = r.qty
+      ws.getCell(`F${row}`).value = r.unitPrice
+      ws.getCell(`G${row}`).value = { formula: `E${row}*F${row}` } as any
+
+      for (const c of headerCols) {
+        const cell = ws.getCell(`${c}${row}`)
+        cell.font = dataFont
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } }
+        cell.border = { bottom: thinBorder('E2E8F0') }
+      }
+      // 对齐
+      ws.getCell(`D${row}`).alignment = { horizontal: 'center', vertical: 'middle' }
+      ws.getCell(`E${row}`).alignment = { horizontal: 'center', vertical: 'middle' }
+      ws.getCell(`F${row}`).alignment = { horizontal: 'right', vertical: 'middle' }
+      ws.getCell(`G${row}`).alignment = { horizontal: 'right', vertical: 'middle' }
+      ws.getCell(`B${row}`).alignment = { vertical: 'middle', wrapText: true }
+      ws.getCell(`C${row}`).alignment = { vertical: 'middle', wrapText: true }
+      // 数字格式
+      ws.getCell(`F${row}`).numFmt = moneyFmt
+      ws.getCell(`G${row}`).numFmt = moneyFmt
+      ws.getRow(row).height = 24
+    })
+
+    // ── 分类小计行 ──
+    const catDetailRows = detailDataRows.slice(-group.items.length)
+    if (catDetailRows.length > 0) {
+      row++
+      ws.mergeCells(`A${row}:E${row}`)
+      ws.getCell(`A${row}`).value = `${group.category} 小计`
+      ws.getCell(`A${row}`).font = { name: '微软雅黑', size: 10, bold: true, color: { argb: C.categoryFont } }
+      ws.getCell(`A${row}`).alignment = { horizontal: 'right', vertical: 'middle' }
+      ws.getCell(`F${row}`).value = ''
+      ws.getCell(`G${row}`).value = { formula: catDetailRows.map(r => `G${r}`).join('+') } as any
+      ws.getCell(`G${row}`).font = { name: '微软雅黑', size: 10, bold: true, color: { argb: C.categoryFont } }
+      ws.getCell(`G${row}`).numFmt = moneyFmt
+      ws.getCell(`G${row}`).alignment = { horizontal: 'right', vertical: 'middle' }
+      for (const c of headerCols) {
+        ws.getCell(`${c}${row}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.subtotalBg } }
+        ws.getCell(`${c}${row}`).border = { top: thinBorder(C.borderColor), bottom: thinBorder(C.borderColor) }
+      }
+      ws.getRow(row).height = 26
+    }
+  }
+
+  const dataEndRow = row
+
+  // ══════════════════════════════════════
+  //  汇总区
+  // ══════════════════════════════════════
+  row++ // 空行
+  ws.getRow(row).height = 6
+
+  // 成本小计
+  row++
+  ws.mergeCells(`A${row}:E${row}`)
+  ws.getCell(`A${row}`).value = '成本小计'
+  ws.getCell(`A${row}`).font = { name: '微软雅黑', size: 11, bold: true, color: { argb: C.primary } }
+  ws.getCell(`A${row}`).alignment = { horizontal: 'right', vertical: 'middle' }
+  ws.getCell(`F${row}`).value = ''
+  ws.getCell(`G${row}`).value = { formula: detailDataRows.map(r => `G${r}`).join('+') } as any
+  ws.getCell(`G${row}`).font = { name: '微软雅黑', size: 11, bold: true, color: { argb: C.primary } }
+  ws.getCell(`G${row}`).numFmt = moneyFmt
+  ws.getCell(`G${row}`).alignment = { horizontal: 'right', vertical: 'middle' }
+  for (const c of headerCols) {
+    ws.getCell(`${c}${row}`).border = { top: { style: 'medium', color: { argb: C.primary } }, bottom: thinBorder(C.borderColor) }
+  }
+  ws.getRow(row).height = 30
+
+  // 报价总额
+  row++
+  ws.mergeCells(`A${row}:E${row}`)
+  ws.getCell(`A${row}`).value = '报价总额（含税）'
+  ws.getCell(`A${row}`).font = { name: '微软雅黑', size: 13, bold: true, color: { argb: C.totalFont } }
+  ws.getCell(`A${row}`).alignment = { horizontal: 'right', vertical: 'middle' }
+  ws.getCell(`F${row}`).value = ''
+  ws.getCell(`G${row}`).value = finalProjectAmount.value
+  ws.getCell(`G${row}`).font = { name: '微软雅黑', size: 13, bold: true, color: { argb: C.totalFont } }
+  ws.getCell(`G${row}`).numFmt = `"¥"${moneyFmt}`
+  ws.getCell(`G${row}`).alignment = { horizontal: 'right', vertical: 'middle' }
+  for (const c of headerCols) {
+    ws.getCell(`${c}${row}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.totalBg } }
+    ws.getCell(`${c}${row}`).border = allBorders(C.totalBg)
+  }
+  ws.getRow(row).height = 36
+
+  // ══════════════════════════════════════
+  //  条款区
+  // ══════════════════════════════════════
+  row += 2
+  ws.mergeCells(`A${row}:G${row}`)
+  ws.getCell(`A${row}`).value = '备注与条款'
+  ws.getCell(`A${row}`).font = { name: '微软雅黑', size: 10, bold: true, color: { argb: C.primary } }
+  ws.getCell(`A${row}`).border = { bottom: thinBorder(C.borderColor) }
+  ws.getRow(row).height = 26
+
   for (const term of QUOTATION_TERMS) {
-    rows.push([term])
+    row++
+    ws.mergeCells(`A${row}:G${row}`)
+    ws.getCell(`A${row}`).value = `  ${term}`
+    ws.getCell(`A${row}`).font = { name: '微软雅黑', size: 9, color: { argb: C.grayText } }
+    ws.getCell(`A${row}`).alignment = { wrapText: true, vertical: 'top' }
+    ws.getCell(`A${row}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.termsBg } }
+    ws.getRow(row).height = 32
   }
 
-  // ── 生成 sheet ──
-  const ws = XLSX.utils.aoa_to_sheet(rows)
+  // ── 页脚 ──
+  row += 2
+  ws.mergeCells(`A${row}:G${row}`)
+  ws.getCell(`A${row}`).value = `${QUOTATION_COMPANY.name}  |  本报价单有效期 30 天  |  生成时间：${new Date().toLocaleString('zh-CN')}`
+  ws.getCell(`A${row}`).font = { name: '微软雅黑', size: 8, italic: true, color: { argb: 'A0AEC0' } }
+  ws.getCell(`A${row}`).alignment = { horizontal: 'center', vertical: 'middle' }
 
-  // ── 写入 Excel 公式：小计 = 数量 × 单价 ──
-  for (let r = dataStartRow; r <= dataEndRow; r++) {
-    const cellRef = XLSX.utils.encode_cell({ r: r - 1, c: 6 }) // G 列
-    ws[cellRef] = { t: 'n', f: `E${r}*F${r}` }
-  }
-  // 成本小计公式
-  const subtotalCell = XLSX.utils.encode_cell({ r: subtotalRowIdx, c: 6 })
-  ws[subtotalCell] = { t: 'n', f: `SUM(G${dataStartRow}:G${dataEndRow})` }
-
-  // ── 列宽 ──
-  ws['!cols'] = [
-    { wch: 14 },  // A: 分类
-    { wch: 28 },  // B: 项目名称
-    { wch: 36 },  // C: 服务描述
-    { wch: 8 },   // D: 单位
-    { wch: 8 },   // E: 数量
-    { wch: 16 },  // F: 单价
-    { wch: 16 },  // G: 小计
-  ]
-
-  // ── 合并单元格 ──
-  ws['!merges'] = [
-    { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }, // 标题行合并
-  ]
-
-  XLSX.utils.book_append_sheet(wb, ws, '搬迁报价明细')
-  XLSX.writeFile(wb, `搬迁服务报价明细_${quotationOrderNo.value || new Date().toISOString().slice(0, 10)}.xlsx`)
+  // ── 导出 ──
+  const buffer = await wb.xlsx.writeBuffer()
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+  saveAs(blob, `搬迁服务报价明细_${quotationOrderNo.value || new Date().toISOString().slice(0, 10)}.xlsx`)
   ElMessage.success('报价明细已导出')
 }
 
