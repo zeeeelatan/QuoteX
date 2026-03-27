@@ -356,13 +356,14 @@
                     <th class="col-no">序号</th>
                     <th class="col-desc">项目描述</th>
                     <th class="col-qty">数量</th>
+                    <th class="col-period">服务周期</th>
                     <th class="col-price">单价</th>
                     <th class="col-total">总价</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-if="!quoteMetadata?.table_data?.length">
-                    <td colspan="5" class="no-data-cell">暂无数据</td>
+                    <td colspan="6" class="no-data-cell">暂无数据</td>
                   </tr>
                   <tr v-for="(item, index) in quoteMetadata?.table_data" :key="index" class="item-row">
                     <td class="text-center col-no">{{ index + 1 }}</td>
@@ -372,12 +373,12 @@
                         厂商: {{ formatManufacturer(item.matchedManufacturer) || '-' }}
                         <span v-if="item.matchedSeries"> | 系列: {{ item.matchedSeries }}</span>
                         <span v-if="item.serviceLevel"> | 服务级别: {{ item.serviceLevel }}</span>
-                        <span v-if="item.servicePeriodUnit"> | 周期: {{ item.servicePeriodUnit }}</span>
                       </p>
                     </td>
-                    <td class="text-center">{{ item.quantity || 1 }}</td>
-                    <td class="text-right">¥{{ (item.finalPrice || 0).toFixed(2) }}</td>
-                    <td class="text-right item-total">¥{{ ((item.finalPrice || 0) * (item.quantity || 1)).toFixed(2) }}</td>
+                    <td class="text-center">{{ getItemQuantity(item) }}</td>
+                    <td class="text-center">{{ formatServicePeriodDisplay(item) }}</td>
+                    <td class="text-right">¥{{ getItemUnitPrice(item).toFixed(2) }}</td>
+                    <td class="text-right item-total">¥{{ getItemTotalPrice(item).toFixed(2) }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -519,11 +520,55 @@ const adjustData = computed(() => props.historyData?.price_adjust_data)
 const quoteData = computed(() => props.historyData?.quote_data)
 const quoteMetadata = computed(() => props.historyData?.quote_metadata)
 
+function getItemUnitPrice(item: any): number {
+  return Number(item?.finalPrice ?? item?.suggestedPrice ?? 0) || 0
+}
+
+function getItemQuantity(item: any): number {
+  const quantity = Number(item?.quantity)
+  return Number.isFinite(quantity) && quantity > 0 ? quantity : 1
+}
+
+function getItemServicePeriod(item: any): number {
+  const raw = item?.servicePeriod
+  if (raw === null || raw === undefined || raw === '') return 1
+
+  if (typeof raw === 'number') {
+    return Number.isFinite(raw) && raw > 0 ? raw : 1
+  }
+
+  const normalized = String(raw).trim()
+  if (!normalized) return 1
+
+  const matched = normalized.match(/(\d+(?:\.\d+)?)/)
+  if (!matched) return 1
+
+  const period = Number(matched[1])
+  return Number.isFinite(period) && period > 0 ? period : 1
+}
+
+function formatServicePeriodDisplay(item: any): string {
+  const rawPeriod = item?.servicePeriod
+  const normalizedPeriod = rawPeriod === null || rawPeriod === undefined ? '' : String(rawPeriod).trim()
+  const unit = item?.servicePeriodUnit ? String(item.servicePeriodUnit).trim() : ''
+
+  if (normalizedPeriod) {
+    if (unit && normalizedPeriod.includes(unit)) return normalizedPeriod
+    return `${normalizedPeriod}${unit}`
+  }
+
+  return `1${unit || ''}`
+}
+
+function getItemTotalPrice(item: any): number {
+  return getItemUnitPrice(item) * getItemQuantity(item) * getItemServicePeriod(item)
+}
+
 // 设备总数量（对数量列求和）
 const historyTotalDeviceCount = computed(() => {
   if (!quoteMetadata.value?.table_data) return 0
   return quoteMetadata.value.table_data.reduce((sum: number, item: any) => {
-    return sum + (parseInt(item.quantity) || 1)
+    return sum + getItemQuantity(item)
   }, 0)
 })
 
@@ -531,9 +576,7 @@ const historyTotalDeviceCount = computed(() => {
 const quoteSubtotal = computed(() => {
   if (!quoteMetadata.value?.table_data) return 0
   return quoteMetadata.value.table_data.reduce((sum: number, item: any) => {
-    const price = parseFloat(item.finalPrice) || 0
-    const quantity = parseInt(item.quantity) || 1
-    return sum + (price * quantity)
+    return sum + getItemTotalPrice(item)
   }, 0)
 })
 
@@ -978,10 +1021,10 @@ async function exportQuoteExcel() {
       '厂商': formatManufacturer(item.matchedManufacturer) || '-',
       '系列': item.matchedSeries || '-',
       '服务级别': item.serviceLevel || '-',
-      '服务周期': item.servicePeriodUnit || '-',
-      '数量': item.quantity || 1,
-      '单价': (item.finalPrice || 0).toFixed(2),
-      '总价': ((item.finalPrice || 0) * (item.quantity || 1)).toFixed(2)
+      '服务周期': formatServicePeriodDisplay(item),
+      '数量': getItemQuantity(item),
+      '单价': getItemUnitPrice(item).toFixed(2),
+      '总价': getItemTotalPrice(item).toFixed(2)
     }))
 
     // 创建工作簿
@@ -2003,6 +2046,11 @@ async function exportQuoteExcel() {
   text-align: center;
 }
 
+.quote-table .col-period {
+  width: 100px;
+  text-align: center;
+}
+
 .quote-table .col-price,
 .quote-table .col-total {
   width: 100px;
@@ -2132,8 +2180,4 @@ async function exportQuoteExcel() {
   margin: 0;
 }
 </style>
-
-
-
-
 

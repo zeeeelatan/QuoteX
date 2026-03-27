@@ -124,13 +124,14 @@
                       <th class="col-no">序号</th>
                       <th class="col-desc">项目描述</th>
                       <th class="col-qty">数量</th>
+                      <th class="col-period">服务周期</th>
                       <th class="col-price">单价</th>
                       <th class="col-total">总价</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr v-if="tableData.length === 0">
-                      <td colspan="5" style="text-align: center; padding: 3rem; color: #94a3b8;">
+                      <td colspan="6" style="text-align: center; padding: 3rem; color: #94a3b8;">
                         暂无数据，请先完成价格调整
                       </td>
                     </tr>
@@ -142,12 +143,12 @@
                           厂商: {{ formatManufacturer(item.matchedManufacturer || item.manufacturer) || '-' }}
                           <span v-if="item.matchedSeries"> | 系列: {{ item.matchedSeries }}</span>
                           <span v-if="item.serviceLevel"> | 服务级别: {{ item.serviceLevel }}</span>
-                          <span v-if="item.servicePeriodUnit"> | 周期: {{ item.servicePeriodUnit }}</span>
                         </p>
                       </td>
                       <td class="text-center">{{ item.quantity || 1 }}</td>
-                      <td class="text-right">¥{{ (item.finalPrice || 0).toFixed(2) }}</td>
-                      <td class="text-right item-total">¥{{ ((item.finalPrice || 0) * (item.quantity || 1)).toFixed(2) }}</td>
+                      <td class="text-center">{{ formatServicePeriodDisplay(item) }}</td>
+                      <td class="text-right">¥{{ getItemUnitPrice(item).toFixed(2) }}</td>
+                      <td class="text-right item-total">¥{{ getItemTotalPrice(item).toFixed(2) }}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -919,9 +920,7 @@ const completeQuotation = async () => {
 
       // 计算总价
       const totalAmount = tableData.value.reduce((sum, item) => {
-        const price = parseFloat(item.suggestedPrice) || 0
-        const quantity = parseInt(item.quantity) || 1
-        return sum + (price * quantity)
+        return sum + getItemTotalPrice(item)
       }, 0)
 
       // 收集页面状态（与草稿保存模式一致）
@@ -969,10 +968,12 @@ const completeQuotation = async () => {
             matchedManufacturer: item.matchedManufacturer || item.manufacturer,
             matchedSeries: item.matchedSeries,
             serviceLevel: item.serviceLevel,
+            servicePeriod: getItemServicePeriod(item),
             servicePeriodUnit: item.servicePeriodUnit,
-            quantity: item.quantity || 1,
-            finalPrice: item.finalPrice || item.suggestedPrice || 0,
-            suggestedPrice: item.suggestedPrice
+            quantity: getItemQuantity(item),
+            finalPrice: getItemUnitPrice(item),
+            suggestedPrice: item.suggestedPrice,
+            totalPrice: getItemTotalPrice(item)
           }))
         }
       }
@@ -1102,8 +1103,7 @@ const validityDate = computed(() => {
 // Computed: Subtotal
 const subtotal = computed(() => {
   return tableData.value.reduce((sum, item) => {
-    const price = item.finalPrice || 0
-    return sum + (price * (item.quantity || 1))
+    return sum + getItemTotalPrice(item)
   }, 0)
 })
 
@@ -1242,6 +1242,50 @@ function formatManufacturer(manufacturer: string | undefined): string {
     return manufacturer.split('/')[0]
   }
   return manufacturer
+}
+
+function getItemUnitPrice(item: any): number {
+  return Number(item?.finalPrice ?? item?.suggestedPrice ?? 0) || 0
+}
+
+function getItemQuantity(item: any): number {
+  const quantity = Number(item?.quantity)
+  return Number.isFinite(quantity) && quantity > 0 ? quantity : 1
+}
+
+function getItemServicePeriod(item: any): number {
+  const raw = item?.servicePeriod
+  if (raw === null || raw === undefined || raw === '') return 1
+
+  if (typeof raw === 'number') {
+    return Number.isFinite(raw) && raw > 0 ? raw : 1
+  }
+
+  const normalized = String(raw).trim()
+  if (!normalized) return 1
+
+  const matched = normalized.match(/(\d+(?:\.\d+)?)/)
+  if (!matched) return 1
+
+  const period = Number(matched[1])
+  return Number.isFinite(period) && period > 0 ? period : 1
+}
+
+function formatServicePeriodDisplay(item: any): string {
+  const rawPeriod = item?.servicePeriod
+  const normalizedPeriod = rawPeriod === null || rawPeriod === undefined ? '' : String(rawPeriod).trim()
+  const unit = item?.servicePeriodUnit ? String(item.servicePeriodUnit).trim() : ''
+
+  if (normalizedPeriod) {
+    if (unit && normalizedPeriod.includes(unit)) return normalizedPeriod
+    return `${normalizedPeriod}${unit}`
+  }
+
+  return `1${unit || ''}`
+}
+
+function getItemTotalPrice(item: any): number {
+  return getItemUnitPrice(item) * getItemQuantity(item) * getItemServicePeriod(item)
 }
 
 // ========== Logo 上传功能 ==========
@@ -2633,6 +2677,11 @@ h1, h2, h3, h4, h5, h6 {
 
 .col-qty {
   width: 10%;
+  text-align: center;
+}
+
+.col-period {
+  width: 12%;
   text-align: center;
 }
 
