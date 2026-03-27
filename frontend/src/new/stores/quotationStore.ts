@@ -46,6 +46,12 @@ export interface DocumentRecognitionState {
   visibleColumns: string[]
   isUploadSectionCollapsed: boolean
   columnMappings?: Record<string, string>
+  sourceSelectionRange?: {
+    startRow: number
+    endRow: number
+    startCol: number
+    endCol: number
+  } | null
   selectedQuotationType?: string
   hasData: boolean
 }

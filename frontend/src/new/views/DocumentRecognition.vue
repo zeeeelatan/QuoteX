@@ -355,8 +355,26 @@
             <!-- Split View: Original Table -->
             <div class="split-view" @click="handleClickOutside">
               <div class="table-section original-table">
-                <h4 class="table-title-with-count">原始表格 <span class="table-count">已识别 {{ originalTableData.length }} 项</span></h4>
-                <div class="table-wrapper">
+                <div class="table-section-header original-table-header">
+                  <div>
+                    <h4 class="table-title-with-count">原始表格 <span class="table-count">已识别 {{ originalTableData.length }} 项</span></h4>
+                    <p class="selection-summary">{{ originalSelectionSummary }}</p>
+                  </div>
+                  <div class="original-selection-actions">
+                    <button class="toolbar-btn" @click="openFullscreenModal('original-selection')" title="全屏框选原始表格">
+                      <span class="material-symbols-outlined">open_in_full</span>
+                    </button>
+                    <button class="toolbar-btn primary" @click="applyOriginalSelection" :disabled="!hasOriginalSelection">
+                      <span class="material-symbols-outlined">crop</span>
+                      按选区生成
+                    </button>
+                    <button class="toolbar-btn text-btn" @click="clearOriginalSelectionAndRestoreFullTable" :disabled="!hasAppliedOriginalSelection && !hasOriginalSelection">
+                      <span class="material-symbols-outlined">select_all</span>
+                      恢复整表
+                    </button>
+                  </div>
+                </div>
+                <div class="table-wrapper original-table-wrapper" ref="originalTableWrapperRef" @mouseup="stopOriginalSelection">
                   <table class="data-table">
                     <thead>
                       <tr>
@@ -367,7 +385,15 @@
                     </thead>
                     <tbody>
                       <tr v-for="(row, rowIndex) in originalTableData" :key="rowIndex">
-                        <td v-for="(header, colIndex) in originalHeaders" :key="colIndex">
+                        <td
+                          v-for="(header, colIndex) in originalHeaders"
+                          :key="colIndex"
+                          :class="getOriginalCellClass(rowIndex, colIndex)"
+                          :data-original-row="rowIndex"
+                          :data-original-col="colIndex"
+                          @mousedown.stop="handleOriginalCellMouseDown(rowIndex, colIndex, $event)"
+                          @mouseenter="handleOriginalCellMouseEnter(rowIndex, colIndex)"
+                        >
                           {{ row[header] || '' }}
                         </td>
                       </tr>
@@ -445,7 +471,7 @@
                               </div>
                               <div class="dropdown-options">
                                 <div
-                                  v-for="originalHeader in originalHeaders"
+                                  v-for="originalHeader in activeOriginalHeaders"
                                   :key="originalHeader"
                                   class="dropdown-option"
                                   :class="{ selected: columnMappings[header] === originalHeader }"
@@ -457,7 +483,7 @@
                                   <span class="option-text">{{ originalHeader }}</span>
                                 </div>
                                 <div
-                                  v-if="originalHeaders.length === 0"
+                                  v-if="activeOriginalHeaders.length === 0"
                                   class="dropdown-empty"
                                 >
                                   请先上传Excel文件
@@ -564,8 +590,10 @@
           <div class="modal-header" @mousedown="startDrag">
             <div class="modal-title">
               <span class="material-symbols-outlined">table_view</span>
-              识别结果
-              <span class="modal-count">共 {{ originalTableData.length }} 项</span>
+              {{ fullscreenModalMode === 'original-selection' ? '原始表格选区' : '识别结果' }}
+              <span class="modal-count">
+                {{ fullscreenModalMode === 'original-selection' ? `共 ${originalTableData.length} 行` : `共 ${originalTableData.length} 项` }}
+              </span>
             </div>
             <div class="modal-actions">
               <button class="modal-btn" @click="toggleMaximize" :title="isModalMaximized ? '还原' : '最大化'">
@@ -579,14 +607,73 @@
           
           <!-- 模态框内容 -->
           <div class="modal-content">
-            <div class="modal-split-view">
+            <div v-if="fullscreenModalMode === 'original-selection'" class="modal-single-view">
+              <div class="modal-table-section original-selection-fullscreen">
+                <div class="modal-section-header modal-original-header">
+                  <div>
+                    <h4 class="modal-table-title">
+                      原始表格
+                      <span class="modal-table-count">拖拽框选后，首行将作为表头参与匹配</span>
+                    </h4>
+                    <p class="selection-summary">{{ originalSelectionSummary }}</p>
+                  </div>
+                  <div class="original-selection-actions">
+                    <button class="modal-toolbar-btn primary" @click="applyOriginalSelection" :disabled="!hasOriginalSelection">
+                      <span class="material-symbols-outlined">crop</span>
+                      <span>按选区生成</span>
+                    </button>
+                    <button class="modal-toolbar-btn text-btn" @click="clearOriginalSelectionAndRestoreFullTable" :disabled="!hasAppliedOriginalSelection && !hasOriginalSelection">
+                      <span class="material-symbols-outlined">select_all</span>
+                    </button>
+                  </div>
+                </div>
+                <div class="modal-table-wrapper original-selection-modal-wrapper" ref="modalOriginalTableWrapperRef" @mouseup="stopOriginalSelection">
+                  <table class="modal-data-table">
+                    <thead>
+                      <tr>
+                        <th v-for="(header, index) in originalHeaders" :key="index">{{ header }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(row, rowIndex) in originalTableData" :key="`original-only-${rowIndex}`">
+                        <td
+                          v-for="(header, colIndex) in originalHeaders"
+                          :key="`${rowIndex}-${colIndex}`"
+                          :class="getOriginalCellClass(rowIndex, colIndex)"
+                          :data-original-row="rowIndex"
+                          :data-original-col="colIndex"
+                          @mousedown.stop="handleOriginalCellMouseDown(rowIndex, colIndex, $event)"
+                          @mouseenter="handleOriginalCellMouseEnter(rowIndex, colIndex)"
+                        >
+                          {{ row[header] || '' }}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+            <div v-else class="modal-split-view">
               <!-- 原始表格 -->
               <div class="modal-table-section">
-                <h4 class="modal-table-title">
-                  原始表格 
-                  <span class="modal-table-count">已识别 {{ originalTableData.length }} 项</span>
-                </h4>
-                <div class="modal-table-wrapper">
+                <div class="modal-section-header modal-original-header">
+                  <div>
+                    <h4 class="modal-table-title">
+                      原始表格 
+                      <span class="modal-table-count">已识别 {{ originalTableData.length }} 项</span>
+                    </h4>
+                    <p class="selection-summary">{{ originalSelectionSummary }}</p>
+                  </div>
+                  <div class="original-selection-actions">
+                    <button class="modal-toolbar-btn primary" @click="applyOriginalSelection" :disabled="!hasOriginalSelection">
+                      <span class="material-symbols-outlined">crop</span>
+                    </button>
+                    <button class="modal-toolbar-btn text-btn" @click="clearOriginalSelectionAndRestoreFullTable" :disabled="!hasAppliedOriginalSelection && !hasOriginalSelection">
+                      <span class="material-symbols-outlined">select_all</span>
+                    </button>
+                  </div>
+                </div>
+                <div class="modal-table-wrapper" ref="modalOriginalTableWrapperRef" @mouseup="stopOriginalSelection">
                   <table class="modal-data-table">
                     <thead>
                       <tr>
@@ -595,7 +682,17 @@
                     </thead>
                     <tbody>
                       <tr v-for="(row, rowIndex) in originalTableData" :key="rowIndex">
-                        <td v-for="(header, colIndex) in originalHeaders" :key="colIndex">{{ row[header] || '' }}</td>
+                        <td
+                          v-for="(header, colIndex) in originalHeaders"
+                          :key="colIndex"
+                          :class="getOriginalCellClass(rowIndex, colIndex)"
+                          :data-original-row="rowIndex"
+                          :data-original-col="colIndex"
+                          @mousedown.stop="handleOriginalCellMouseDown(rowIndex, colIndex, $event)"
+                          @mouseenter="handleOriginalCellMouseEnter(rowIndex, colIndex)"
+                        >
+                          {{ row[header] || '' }}
+                        </td>
                       </tr>
                     </tbody>
                   </table>
@@ -674,7 +771,7 @@
                               </div>
                               <div class="modal-dropdown-options">
                                 <div
-                                  v-for="originalHeader in originalHeaders"
+                                  v-for="originalHeader in activeOriginalHeaders"
                                   :key="originalHeader"
                                   class="modal-dropdown-option"
                                   :class="{ selected: columnMappings[header] === originalHeader }"
@@ -685,7 +782,7 @@
                                   </span>
                                   <span class="modal-option-text">{{ originalHeader }}</span>
                                 </div>
-                                <div v-if="originalHeaders.length === 0" class="modal-dropdown-empty">
+                                <div v-if="activeOriginalHeaders.length === 0" class="modal-dropdown-empty">
                                   请先上传Excel文件
                                 </div>
                               </div>
@@ -748,18 +845,22 @@
             <div class="modal-stats">
               <div class="stat-item">
                 <span class="stat-label">总项数</span>
-                <span class="stat-value">{{ originalTableData.length }}</span>
+                <span class="stat-value">{{ fullscreenModalMode === 'original-selection' ? activeOriginalRowCount : originalTableData.length }}</span>
               </div>
               <div class="stat-divider"></div>
               <div class="stat-item">
-                <span class="stat-label">总数量</span>
-                <span class="stat-value">{{ totalQuantity }}</span>
+                <span class="stat-label">{{ fullscreenModalMode === 'original-selection' ? '当前选区' : '总数量' }}</span>
+                <span class="stat-value">{{ fullscreenModalMode === 'original-selection' ? originalSelectionSummary : totalQuantity }}</span>
               </div>
             </div>
             <div class="modal-footer-actions">
-              <button class="modal-export-btn" @click="exportConvertedData">
+              <button v-if="fullscreenModalMode !== 'original-selection'" class="modal-export-btn" @click="exportConvertedData">
                 <span class="material-symbols-outlined">download</span>
                 导出 Excel
+              </button>
+              <button v-if="fullscreenModalMode === 'original-selection'" class="modal-export-btn" @click="applyOriginalSelection" :disabled="!hasOriginalSelection">
+                <span class="material-symbols-outlined">crop</span>
+                应用选区
               </button>
               <button class="modal-close-btn" @click="closeFullscreenModal">
                 返回
@@ -856,6 +957,8 @@ onMounted(() => {
   loadRecentUploads()
   restorePageStateOnMount()
   window.addEventListener('keydown', handleKeyDown)
+  window.addEventListener('mouseup', stopOriginalSelection)
+  window.addEventListener('mousemove', handleWindowMouseMove)
   // 如果是维保服务报价且没有数据，初始化手动输入表格
   if (selectedQuotationType.value === '维保服务报价' && originalTableData.value.length === 0 && convertedTableData.value.length === 0) {
     initManualEntryTable(5)
@@ -864,11 +967,14 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeyDown)
+  window.removeEventListener('mouseup', stopOriginalSelection)
+  window.removeEventListener('mousemove', handleWindowMouseMove)
 })
 
 // 全屏模态框状态
 const isFullscreenModalOpen = ref(false)
 const isModalMaximized = ref(false)
+const fullscreenModalMode = ref<'full' | 'original-selection'>('full')
 const modalRef = ref<HTMLElement | null>(null)
 const modalPosition = ref({ x: 100, y: 50 })
 const modalSize = ref({ width: 1200, height: 700 })
@@ -882,6 +988,23 @@ const dragStart = ref({ x: 0, y: 0 })
 const originalTableData = shallowRef<any[]>([])
 const originalHeaders = ref<string[]>([])
 const convertedTableData = shallowRef<any[]>([])
+
+interface OriginalSelectionRange {
+  startRow: number
+  endRow: number
+  startCol: number
+  endCol: number
+}
+
+const originalSelectionStart = ref<{ row: number; col: number } | null>(null)
+const originalSelectionEnd = ref<{ row: number; col: number } | null>(null)
+const isOriginalSelecting = ref(false)
+const appliedOriginalSelection = ref<OriginalSelectionRange | null>(null)
+const originalTableWrapperRef = ref<HTMLElement | null>(null)
+const modalOriginalTableWrapperRef = ref<HTMLElement | null>(null)
+const originalSelectionContainer = ref<HTMLElement | null>(null)
+const originalPointerPosition = ref<{ x: number; y: number } | null>(null)
+let originalAutoScrollFrame: number | null = null
 
 // Multi-sheet support
 const workbookRef = ref<any>(null)  // Store the workbook object
@@ -915,6 +1038,244 @@ const historyIndex = ref(-1)  // 当前历史记录索引
 const initialTableData = ref<any[]>([])  // 初始表格数据（用于重置）
 const maxHistorySize = 50  // 最大历史记录数
 
+function normalizeOriginalSelectionRange(
+  start: { row: number; col: number },
+  end: { row: number; col: number }
+): OriginalSelectionRange {
+  return {
+    startRow: Math.min(start.row, end.row),
+    endRow: Math.max(start.row, end.row),
+    startCol: Math.min(start.col, end.col),
+    endCol: Math.max(start.col, end.col)
+  }
+}
+
+function getCurrentOriginalSelectionRange(): OriginalSelectionRange | null {
+  if (!originalSelectionStart.value || !originalSelectionEnd.value) return null
+  return normalizeOriginalSelectionRange(originalSelectionStart.value, originalSelectionEnd.value)
+}
+
+function clearOriginalSelectionVisual() {
+  originalSelectionStart.value = null
+  originalSelectionEnd.value = null
+  isOriginalSelecting.value = false
+  originalPointerPosition.value = null
+  originalSelectionContainer.value = null
+  if (originalAutoScrollFrame !== null) {
+    cancelAnimationFrame(originalAutoScrollFrame)
+    originalAutoScrollFrame = null
+  }
+}
+
+function clearOriginalSelectionAndRestoreFullTable() {
+  appliedOriginalSelection.value = null
+  clearOriginalSelectionVisual()
+  if (originalTableData.value.length > 0 && originalHeaders.value.length > 0) {
+    convertData(originalTableData.value, originalHeaders.value)
+  }
+}
+
+function getActiveOriginalSource() {
+  if (!appliedOriginalSelection.value || originalHeaders.value.length === 0) {
+    return {
+      headers: originalHeaders.value,
+      data: originalTableData.value
+    }
+  }
+
+  const range = appliedOriginalSelection.value
+  const selectedColumns = originalHeaders.value.slice(range.startCol, range.endCol + 1)
+  const selectedRows = originalTableData.value.slice(range.startRow, range.endRow + 1)
+
+  if (selectedColumns.length === 0 || selectedRows.length === 0) {
+    return { headers: [], data: [] }
+  }
+
+  const shouldUseFirstRowAsHeaders = selectedRows.length > 1
+
+  if (shouldUseFirstRowAsHeaders) {
+    const headerRow = selectedRows[0]
+    const usedHeaders = new Set<string>()
+    const inferredHeaders = selectedColumns.map((columnKey, index) => {
+      const rawHeader = String(headerRow?.[columnKey] ?? '').trim()
+      const fallbackHeader = `列${index + 1}`
+      let nextHeader = rawHeader || fallbackHeader
+
+      if (usedHeaders.has(nextHeader)) {
+        let duplicateIndex = 2
+        while (usedHeaders.has(`${nextHeader}_${duplicateIndex}`)) {
+          duplicateIndex += 1
+        }
+        nextHeader = `${nextHeader}_${duplicateIndex}`
+      }
+
+      usedHeaders.add(nextHeader)
+      return nextHeader
+    })
+
+    const data = selectedRows.slice(1).map((row) => {
+      const filteredRow: Record<string, any> = {}
+      selectedColumns.forEach((columnKey, index) => {
+        filteredRow[inferredHeaders[index]] = row?.[columnKey] ?? ''
+      })
+      return filteredRow
+    })
+
+    if (data.length > 0) {
+      return { headers: inferredHeaders, data }
+    }
+  }
+
+  const data = selectedRows.map((row) => {
+    const filteredRow: Record<string, any> = {}
+    selectedColumns.forEach((header) => {
+      filteredRow[header] = row?.[header] ?? ''
+    })
+    return filteredRow
+  })
+
+  return { headers: selectedColumns, data }
+}
+
+const hasOriginalSelection = computed(() => !!getCurrentOriginalSelectionRange())
+const hasAppliedOriginalSelection = computed(() => !!appliedOriginalSelection.value)
+const activeOriginalRowCount = computed(() => getActiveOriginalSource().data.length)
+const activeOriginalHeaders = computed(() => getActiveOriginalSource().headers)
+
+const originalSelectionSummary = computed(() => {
+  const range = appliedOriginalSelection.value || getCurrentOriginalSelectionRange()
+  if (!range) return '未选择区域，默认使用整张原始表格'
+
+  const rowCount = range.endRow - range.startRow + 1
+  const colCount = range.endCol - range.startCol + 1
+  const modeLabel = appliedOriginalSelection.value ? '已应用选区' : '当前选区'
+  return `${modeLabel}: ${rowCount} 行 × ${colCount} 列`
+})
+
+function isOriginalCellSelected(row: number, col: number) {
+  const range = getCurrentOriginalSelectionRange()
+  if (!range) return false
+  return row >= range.startRow && row <= range.endRow && col >= range.startCol && col <= range.endCol
+}
+
+function getOriginalCellClass(row: number, col: number) {
+  const classes = ['original-cell']
+  if (isOriginalCellSelected(row, col)) classes.push('selected')
+  if (
+    appliedOriginalSelection.value &&
+    row >= appliedOriginalSelection.value.startRow &&
+    row <= appliedOriginalSelection.value.endRow &&
+    col >= appliedOriginalSelection.value.startCol &&
+    col <= appliedOriginalSelection.value.endCol
+  ) {
+    classes.push('applied')
+  }
+  return classes.join(' ')
+}
+
+function updateOriginalSelectionFromPointer(clientX: number, clientY: number) {
+  const target = document.elementFromPoint(clientX, clientY) as HTMLElement | null
+  const cell = target?.closest('[data-original-row][data-original-col]') as HTMLElement | null
+  if (!cell) return
+
+  const row = Number(cell.dataset.originalRow)
+  const col = Number(cell.dataset.originalCol)
+  if (!Number.isFinite(row) || !Number.isFinite(col)) return
+
+  originalSelectionEnd.value = { row, col }
+}
+
+function stepOriginalAutoScroll() {
+  if (!isOriginalSelecting.value || !originalSelectionContainer.value || !originalPointerPosition.value) {
+    originalAutoScrollFrame = null
+    return
+  }
+
+  const container = originalSelectionContainer.value
+  const { x, y } = originalPointerPosition.value
+  const rect = container.getBoundingClientRect()
+  const threshold = 36
+  const maxStep = 22
+
+  let deltaX = 0
+  let deltaY = 0
+
+  if (x < rect.left + threshold) {
+    deltaX = -Math.min(maxStep, rect.left + threshold - x)
+  } else if (x > rect.right - threshold) {
+    deltaX = Math.min(maxStep, x - (rect.right - threshold))
+  }
+
+  if (y < rect.top + threshold) {
+    deltaY = -Math.min(maxStep, rect.top + threshold - y)
+  } else if (y > rect.bottom - threshold) {
+    deltaY = Math.min(maxStep, y - (rect.bottom - threshold))
+  }
+
+  if (deltaX !== 0 || deltaY !== 0) {
+    container.scrollLeft += deltaX
+    container.scrollTop += deltaY
+    updateOriginalSelectionFromPointer(x, y)
+  }
+
+  originalAutoScrollFrame = requestAnimationFrame(stepOriginalAutoScroll)
+}
+
+function ensureOriginalAutoScroll() {
+  if (originalAutoScrollFrame === null) {
+    originalAutoScrollFrame = requestAnimationFrame(stepOriginalAutoScroll)
+  }
+}
+
+function handleWindowMouseMove(event: MouseEvent) {
+  if (!isOriginalSelecting.value) return
+  originalPointerPosition.value = { x: event.clientX, y: event.clientY }
+  updateOriginalSelectionFromPointer(event.clientX, event.clientY)
+  ensureOriginalAutoScroll()
+}
+
+function handleOriginalCellMouseDown(row: number, col: number, event: MouseEvent) {
+  event.preventDefault()
+  originalSelectionStart.value = { row, col }
+  originalSelectionEnd.value = { row, col }
+  isOriginalSelecting.value = true
+  originalPointerPosition.value = { x: event.clientX, y: event.clientY }
+  originalSelectionContainer.value =
+    ((event.currentTarget as HTMLElement | null)?.closest('.original-table-wrapper, .modal-table-wrapper') as HTMLElement | null)
+  ensureOriginalAutoScroll()
+}
+
+function handleOriginalCellMouseEnter(row: number, col: number) {
+  if (!isOriginalSelecting.value || !originalSelectionStart.value) return
+  originalSelectionEnd.value = { row, col }
+}
+
+function stopOriginalSelection() {
+  if (!isOriginalSelecting.value) return
+  isOriginalSelecting.value = false
+  if (originalAutoScrollFrame !== null) {
+    cancelAnimationFrame(originalAutoScrollFrame)
+    originalAutoScrollFrame = null
+  }
+}
+
+function applyOriginalSelection() {
+  const range = getCurrentOriginalSelectionRange()
+  if (!range) {
+    ElMessage.warning('请先在原始表格中框选有效数据区域')
+    return
+  }
+
+  appliedOriginalSelection.value = range
+  const source = getActiveOriginalSource()
+  if (source.data.length === 0 || source.headers.length === 0) {
+    ElMessage.warning('当前选区无法生成有效的转换后表格，请扩大选区并包含表头行')
+    return
+  }
+  convertData(source.data, source.headers)
+  ElMessage.success(`已按选区生成转换后表格，共 ${source.data.length} 行，使用 ${source.headers.length} 列`)
+}
+
 // Recent uploads history
 interface UploadRecord {
   id: string
@@ -945,6 +1306,7 @@ function restorePageStateOnMount() {
     isUploadSectionCollapsed.value = savedState.isUploadSectionCollapsed || false
     // 恢复列映射状态
     columnMappings.value = savedState.columnMappings || {}
+    appliedOriginalSelection.value = savedState.sourceSelectionRange || null
     // 恢复报价类型选择
     selectedQuotationType.value = savedState.selectedQuotationType || ''
   }
@@ -961,6 +1323,7 @@ function getCurrentState(): DocumentRecognitionState {
     visibleColumns: [],
     isUploadSectionCollapsed: isUploadSectionCollapsed.value,
     columnMappings: columnMappings.value,
+    sourceSelectionRange: appliedOriginalSelection.value,
     selectedQuotationType: selectedQuotationType.value,
     hasData: convertedTableData.value.length > 0
   }
@@ -1647,6 +2010,11 @@ const navigateToQuotationGeneration = () => {
 
 // 流程推进：保存当前状态并进入下一步（由"下一步"按钮调用）
 const goToSmartMatching = () => {
+  if (hasOriginalSelection.value && !hasAppliedOriginalSelection.value) {
+    ElMessage.warning('已框选原始表格区域，请先点击“按选区生成”后再进入下一步')
+    return
+  }
+
   // 保存当前页面状态
   savePageState(PAGE_STATE_KEYS.DOC_RECOGNITION, getCurrentState())
   // 保存流程数据供下一页面使用
@@ -1951,6 +2319,8 @@ function loadSheetData(sheetName: string) {
 
   originalHeaders.value = headers
   originalTableData.value = jsonData
+  appliedOriginalSelection.value = null
+  clearOriginalSelectionVisual()
 
   // Convert data
   convertData(jsonData, headers)
@@ -1968,6 +2338,8 @@ function loadParsedSheetData(sheetName: string) {
 
   originalHeaders.value = sheet.headers
   originalTableData.value = sheet.data
+  appliedOriginalSelection.value = null
+  clearOriginalSelectionVisual()
 
   // 复用已有的字段转换逻辑
   convertData(sheet.data, sheet.headers)
@@ -2052,11 +2424,12 @@ function convertData(jsonData: any[], headers: string[]) {
 // 根据映射关系重新生成转换后数据
 // changedColumn: 手动修改映射的列名，只更新这一列的数据
 function remapDataUsingMappings(changedColumn?: string) {
-  if (originalTableData.value.length === 0) return
+  const { data: sourceData } = getActiveOriginalSource()
+  if (sourceData.length === 0) return
 
   // 如果是初次转换（没有指定变化的列），则生成完整数据
   if (!changedColumn) {
-    convertedTableData.value = originalTableData.value.map((row, index) => {
+    convertedTableData.value = sourceData.map((row, index) => {
       const convertedRow: any = {}
 
       // 初始化所有列为空
@@ -2085,7 +2458,7 @@ function remapDataUsingMappings(changedColumn?: string) {
     const sourceHeader = columnMappings.value[changedColumn]
     if (sourceHeader) {
       convertedTableData.value.forEach((row, index) => {
-        const originalRow = originalTableData.value[index]
+        const originalRow = sourceData[index]
         if (originalRow && originalRow[sourceHeader] !== undefined) {
           row[changedColumn] = originalRow[sourceHeader].toString()
         } else {
@@ -2760,7 +3133,8 @@ const modalStyle = computed(() => {
 })
 
 // 打开全屏模态框
-const openFullscreenModal = () => {
+const openFullscreenModal = (mode: 'full' | 'original-selection' = 'full') => {
+  fullscreenModalMode.value = mode
   isFullscreenModalOpen.value = true
   // 居中显示
   const viewportWidth = window.innerWidth
@@ -2775,6 +3149,7 @@ const openFullscreenModal = () => {
 const closeFullscreenModal = () => {
   isFullscreenModalOpen.value = false
   isModalMaximized.value = false
+  fullscreenModalMode.value = 'full'
 }
 
 // 切换最大化
@@ -2861,6 +3236,8 @@ const resetData = () => {
     originalTableData.value = []
     originalHeaders.value = []
     convertedTableData.value = []
+    appliedOriginalSelection.value = null
+    clearOriginalSelectionVisual()
     currentFileName.value = ''
     currentFileBase64.value = ''  // 清除文件base64数据
     // Clear multi-sheet state
@@ -4324,6 +4701,24 @@ const getTotalAmount = () => {
   margin-bottom: 0.75rem;
 }
 
+.original-table-header,
+.modal-original-header {
+  align-items: flex-start;
+}
+
+.selection-summary {
+  margin: -0.25rem 0 0;
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.original-selection-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
 .excel-toolbar {
   display: flex;
   align-items: center;
@@ -4360,6 +4755,22 @@ const getTotalAmount = () => {
 
 .toolbar-btn .material-symbols-outlined {
   font-size: 1.125rem;
+}
+
+.toolbar-btn.primary {
+  width: auto;
+  gap: 0.375rem;
+  padding: 0 0.625rem;
+  background: rgba(19, 91, 236, 0.12);
+  color: #bfdbfe;
+}
+
+.toolbar-btn.text-btn {
+  width: auto;
+  height: 1.75rem;
+  gap: 0.375rem;
+  padding: 0 0.625rem;
+  white-space: nowrap;
 }
 
 .toolbar-btn.reset-btn:hover:not(:disabled) {
@@ -4416,6 +4827,21 @@ const getTotalAmount = () => {
   padding: 0.625rem 0.75rem;
   color: #6b7280;
   font-size: 0.8125rem;
+}
+
+.original-cell {
+  cursor: crosshair;
+  transition: background-color 0.15s, box-shadow 0.15s;
+}
+
+.original-cell.selected {
+  background: rgba(19, 91, 236, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.45);
+}
+
+.original-cell.applied {
+  background: rgba(34, 197, 94, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(74, 222, 128, 0.3);
 }
 
 .excel-cell.selected {
@@ -5301,6 +5727,22 @@ const getTotalAmount = () => {
 
 .modal-toolbar-btn .material-symbols-outlined {
   font-size: 1rem;
+}
+
+.modal-toolbar-btn.primary {
+  width: auto;
+  gap: 0.25rem;
+  padding: 0 0.5rem;
+  background: rgba(19, 91, 236, 0.16);
+  color: #bfdbfe;
+}
+
+.modal-toolbar-btn.text-btn {
+  width: auto;
+  min-width: fit-content;
+  gap: 0.25rem;
+  padding: 0 0.5rem;
+  white-space: nowrap;
 }
 
 .modal-toolbar-btn.reset-btn:hover:not(:disabled) {
