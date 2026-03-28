@@ -30,6 +30,8 @@ from app.routers import city_social_insurance
 from app.routers import china_city_tier
 from app.routers import relocation_vehicle
 from app.routers import device_inventory, office_device_inventory
+from app.routers import manufacturer as manufacturer_router
+from app.routers import device_field_config as device_field_config_router
 from app.routers import user_profile, auth
 from app.routers import ai_quote
 from app.routers import document_parser
@@ -154,84 +156,57 @@ def devices_search(
     source: str = Query('datacenter'),  # datacenter | office | hybrid
     db: Session = Depends(get_db)
 ):
-    from app.models.office_device_inventory import OfficeDeviceInventory
+    from sqlalchemy import case, or_
+    import re
 
-    def base_query(table_cls):
-        from sqlalchemy import case, or_
-        import re
-        q = db.query(table_cls)
-        if model or model_number:
-            keyword = model or model_number
-            
-            # 智能搜索：生成多个搜索变体
-            # 1. 原始关键词
-            # 2. 去掉常见后缀（-S, -A, -B, -X, -E 等）
-            # 3. 去掉所有横杠后的部分
-            search_variants = [keyword]
-            
-            # 去掉常见后缀
-            suffix_pattern = r'[-_]?[A-Za-z]$'
-            base_keyword = re.sub(suffix_pattern, '', keyword)
-            if base_keyword and base_keyword != keyword:
-                search_variants.append(base_keyword)
-            
-            # 去掉最后一个横杠后的所有内容
-            if '-' in keyword:
-                base_part = keyword.rsplit('-', 1)[0]
-                if base_part and base_part not in search_variants:
-                    search_variants.append(base_part)
-            
-            # 构建 OR 条件：任一变体匹配即可
-            filter_conditions = []
-            for variant in search_variants:
-                filter_conditions.append(table_cls.model_number.ilike(f"%{variant}%"))
-            
-            q = q.filter(or_(*filter_conditions))
-            
-            # 精确匹配的排在前面，然后是包含关键词的
-            q = q.order_by(
-                case(
-                    (table_cls.model_number == keyword, 1),
-                    (table_cls.model_number.ilike(f"{keyword}%"), 2),
-                    else_=3
-                ),
-                table_cls.model_number
-            )
-        return q
+    q = db.query(models.DeviceInventory)
 
+    # 通过 business_scenario 过滤数据源
     if source == 'datacenter':
-        q = base_query(models.DeviceInventory)
-        total = q.count()
-        devices = q.offset(offset).limit(limit).all()
+        q = q.filter(
+            or_(
+                models.DeviceInventory.business_scenario.is_(None),
+                models.DeviceInventory.business_scenario == '',
+                ~models.DeviceInventory.business_scenario.ilike('%办公%')
+            )
+        )
     elif source == 'office':
-        q = base_query(OfficeDeviceInventory)
-        total = q.count()
-        devices = q.offset(offset).limit(limit).all()
-    else:  # hybrid
-        # 对于混合模式，我们需要分别查询然后合并并排序
-        q1 = base_query(models.DeviceInventory)
-        q2 = base_query(OfficeDeviceInventory)
-        total1 = q1.count()
-        total2 = q2.count()
-        total = total1 + total2
-        
-        devices1 = q1.all()
-        devices2 = q2.all()
-        
-        # 合并结果并按匹配度排序
-        all_devices = []
-        if model or model_number:
-            keyword = model or model_number
-            # 为每个设备添加匹配度
-            for device in devices1 + devices2:
-                match_score = 1 if device.model_number == keyword else 2
-                all_devices.append((match_score, device.model_number, device))
-            
-            # 按匹配度和型号排序
-            all_devices.sort(key=lambda x: (x[0], x[1]))
-            devices = [x[2] for x in all_devices[offset:offset+limit]]
-        else:
-            devices = (devices1 + devices2)[offset:offset+limit]
+        q = q.filter(models.DeviceInventory.business_scenario.ilike('%办公%'))
+    # hybrid: 不加过滤
+
+    if model or model_number:
+        keyword = model or model_number
+
+        # 智能搜索：生成多个搜索变体
+        search_variants = [keyword]
+
+        suffix_pattern = r'[-_]?[A-Za-z]$'
+        base_keyword = re.sub(suffix_pattern, '', keyword)
+        if base_keyword and base_keyword != keyword:
+            search_variants.append(base_keyword)
+
+        if '-' in keyword:
+            base_part = keyword.rsplit('-', 1)[0]
+            if base_part and base_part not in search_variants:
+                search_variants.append(base_part)
+
+        filter_conditions = []
+        for variant in search_variants:
+            filter_conditions.append(models.DeviceInventory.model_number.ilike(f"%{variant}%"))
+
+        q = q.filter(or_(*filter_conditions))
+
+        q = q.order_by(
+            case(
+                (models.DeviceInventory.model_number == keyword, 1),
+                (models.DeviceInventory.model_number.ilike(f"{keyword}%"), 2),
+                else_=3
+            ),
+            models.DeviceInventory.model_number
+        )
+
+    total = q.count()
+    devices = q.offset(offset).limit(limit).all()
 
     return {
         "data": [
@@ -289,6 +264,8 @@ app.include_router(china_city_tier.router)
 app.include_router(relocation_vehicle.router)
 app.include_router(device_inventory.router)
 app.include_router(office_device_inventory.router)
+app.include_router(manufacturer_router.router)
+app.include_router(device_field_config_router.router)
 app.include_router(user_profile.router)
 app.include_router(auth.router)
 app.include_router(ai_quote.router)

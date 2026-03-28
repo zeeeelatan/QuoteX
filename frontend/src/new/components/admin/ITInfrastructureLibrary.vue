@@ -6,6 +6,14 @@
       <div class="filter-search-bar">
         <div class="filter-grid">
           <div class="filter-item">
+            <label>数据源</label>
+            <select v-model="currentSource" @change="onSourceChange">
+              <option value="">全部设备</option>
+              <option value="datacenter">数据中心</option>
+              <option value="office">办公设备</option>
+            </select>
+          </div>
+          <div class="filter-item">
             <label>厂商</label>
             <select v-model="filters.manufacturer" @change="applyFilters">
               <option value="">全部厂商</option>
@@ -112,6 +120,7 @@
               <th>整机价格 (¥)</th>
               <th>档次</th>
               <th>机架高度(U)</th>
+              <th v-for="fc in dynamicFieldConfigs" :key="fc.field_key">{{ fc.field_label }}</th>
               <th class="actions-col">管理操作</th>
             </tr>
           </thead>
@@ -124,7 +133,7 @@
                   @change="toggleSelect(device.id)"
                 />
               </td>
-              <td class="font-bold">{{ device.manufacturer || '-' }}</td>
+              <td class="font-bold">{{ device.manufacturer_name || device.manufacturer || '-' }}</td>
               <td>{{ device.device_series || '-' }}</td>
               <td class="model-number">{{ device.model_number || '-' }}</td>
               <td>
@@ -145,6 +154,9 @@
                 </div>
               </td>
               <td class="rack-height">{{ device.rack_height_u || '-' }}</td>
+              <td v-for="fc in dynamicFieldConfigs" :key="fc.field_key">
+                {{ getDynamicFieldValue(device, fc.field_key) }}
+              </td>
               <td class="actions">
                 <button class="action-btn edit" @click="editDevice(device)" title="编辑">
                   <span class="material-symbols-outlined">edit</span>
@@ -277,6 +289,23 @@
               <label>备注</label>
               <textarea v-model="formData.remarks" rows="2" placeholder="设备备注信息..."></textarea>
             </div>
+            <!-- 动态扩展字段 -->
+            <template v-if="dynamicFieldConfigs.length > 0">
+              <div class="form-section-title full-width">扩展字段</div>
+              <div v-for="fc in dynamicFieldConfigs" :key="fc.field_key" class="form-group">
+                <label>{{ fc.field_label }} <span v-if="fc.required" class="required">*</span></label>
+                <select v-if="fc.field_type === 'enum'" v-model="formDynamicAttrs[fc.field_key]">
+                  <option value="">请选择</option>
+                  <option v-for="opt in (fc.enum_options || [])" :key="opt" :value="opt">{{ opt }}</option>
+                </select>
+                <input v-else-if="fc.field_type === 'number'" v-model.number="formDynamicAttrs[fc.field_key]" type="number" :placeholder="fc.field_label" />
+                <label v-else-if="fc.field_type === 'boolean'" class="checkbox-label">
+                  <input type="checkbox" v-model="formDynamicAttrs[fc.field_key]" />
+                  {{ fc.field_label }}
+                </label>
+                <input v-else v-model="formDynamicAttrs[fc.field_key]" :placeholder="fc.field_label" />
+              </div>
+            </template>
           </div>
         </div>
         <div class="dialog-footer">
@@ -356,6 +385,8 @@ const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5002'
 interface Device {
   id: number
   manufacturer?: string
+  manufacturer_id?: number
+  manufacturer_name?: string
   model_number?: string
   device_series?: string
   primary_category?: string
@@ -365,9 +396,24 @@ interface Device {
   remarks?: string
   device_grade?: string
   device_price?: number
-  rack_height_u?: number  // 机架高度(U)
+  rack_height_u?: number
+  type_attributes?: Record<string, any>
+  custom_attributes?: Record<string, any>
   created_at?: string
   updated_at?: string
+}
+
+interface FieldConfig {
+  id: number
+  device_type: string | null
+  field_key: string
+  field_label: string
+  field_type: string
+  required: boolean
+  enum_options?: any[]
+  default_value?: string
+  display_order: number
+  scope: string
 }
 
 // State
@@ -381,6 +427,13 @@ const editingDevice = ref<Device | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 const replaceFileInput = ref<HTMLInputElement | null>(null)
 const replacing = ref(false)
+
+// 数据源切换
+const currentSource = ref('')
+
+// 动态字段配置
+const dynamicFieldConfigs = ref<FieldConfig[]>([])
+const formDynamicAttrs = ref<Record<string, any>>({})
 
 // 多选相关状态
 const selectedDevices = ref<number[]>([])
@@ -569,6 +622,7 @@ async function loadDevices() {
       limit: String(pagination.value.pageSize)
     })
 
+    if (currentSource.value) params.append('source', currentSource.value)
     if (filters.value.search) params.append('search', filters.value.search)
     if (filters.value.manufacturer) params.append('manufacturer', filters.value.manufacturer)
     if (filters.value.device_series) params.append('device_series', filters.value.device_series)
@@ -590,11 +644,12 @@ async function loadDevices() {
 
 async function loadFilterOptions() {
   try {
+    const sourceParam = currentSource.value ? `?source=${currentSource.value}` : ''
     const [manufRes, seriesRes, scenariosRes, gradesRes] = await Promise.all([
-      axios.get(`${API_URL}/devices/manufacturers`),
-      axios.get(`${API_URL}/devices/device-series`),
-      axios.get(`${API_URL}/devices/business-scenarios`),
-      axios.get(`${API_URL}/devices/device-grades`)
+      axios.get(`${API_URL}/devices/manufacturers${sourceParam}`),
+      axios.get(`${API_URL}/devices/device-series${sourceParam}`),
+      axios.get(`${API_URL}/devices/business-scenarios${sourceParam}`),
+      axios.get(`${API_URL}/devices/device-grades${sourceParam}`)
     ])
     filterOptions.value.manufacturers = manufRes.data || []
     filterOptions.value.series = seriesRes.data || []
@@ -603,6 +658,29 @@ async function loadFilterOptions() {
   } catch (error) {
     console.error('Failed to load filter options:', error)
   }
+}
+
+async function loadDynamicFieldConfigs() {
+  try {
+    const res = await axios.get(`${API_URL}/device-field-configs/`, {
+      params: { scope: 'type' }
+    })
+    dynamicFieldConfigs.value = res.data?.data || []
+  } catch (error) {
+    console.error('Failed to load field configs:', error)
+  }
+}
+
+function getDynamicFieldValue(device: Device, fieldKey: string): string {
+  const val = (device.type_attributes || {})[fieldKey] ?? (device.custom_attributes || {})[fieldKey]
+  if (val === null || val === undefined) return '-'
+  return String(val)
+}
+
+function onSourceChange() {
+  pagination.value.page = 1
+  loadDevices()
+  loadFilterOptions()
 }
 
 function resetFilters() {
@@ -643,7 +721,7 @@ function onPageSizeChange() {
 function editDevice(device: Device) {
   editingDevice.value = device
   formData.value = {
-    manufacturer: device.manufacturer || '',
+    manufacturer: device.manufacturer_name || device.manufacturer || '',
     model_number: device.model_number || '',
     device_series: device.device_series || '',
     business_scenario: device.business_scenario || '',
@@ -655,6 +733,8 @@ function editDevice(device: Device) {
     rack_height_u: device.rack_height_u || null,
     remarks: device.remarks || ''
   }
+  // 加载动态字段到表单
+  formDynamicAttrs.value = { ...(device.type_attributes || {}), ...(device.custom_attributes || {}) }
 }
 
 function closeDialog() {
@@ -673,6 +753,7 @@ function closeDialog() {
     rack_height_u: null,
     remarks: ''
   }
+  formDynamicAttrs.value = {}
 }
 
 async function saveDevice() {
@@ -683,9 +764,24 @@ async function saveDevice() {
 
   saving.value = true
   try {
+    // 分离动态字段中的 type 和 custom
+    const configKeys = new Set(dynamicFieldConfigs.value.map(c => c.field_key))
+    const typeAttrs: Record<string, any> = {}
+    const customAttrs: Record<string, any> = {}
+    for (const [k, v] of Object.entries(formDynamicAttrs.value)) {
+      if (v === '' || v === null || v === undefined) continue
+      if (configKeys.has(k)) {
+        typeAttrs[k] = v
+      } else {
+        customAttrs[k] = v
+      }
+    }
+
     const data = {
       ...formData.value,
-      device_price: formData.value.device_price || null
+      device_price: formData.value.device_price || null,
+      type_attributes: typeAttrs,
+      custom_attributes: customAttrs,
     }
 
     if (editingDevice.value) {
@@ -749,7 +845,8 @@ async function handleImport(event: Event) {
     const formData = new FormData()
     formData.append('file', file)
 
-    const response = await axios.post(`${API_URL}/devices/import`, formData, {
+    const params = currentSource.value ? `?source=${currentSource.value}` : ''
+    const response = await axios.post(`${API_URL}/devices/import${params}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
 
@@ -791,7 +888,8 @@ async function handleReplaceImport(event: Event) {
     const fd = new FormData()
     fd.append('file', file)
 
-    const response = await axios.post(`${API_URL}/devices/replace-import`, fd, {
+    const params = currentSource.value ? `?source=${currentSource.value}` : ''
+    const response = await axios.post(`${API_URL}/devices/replace-import${params}`, fd, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
 
@@ -838,6 +936,7 @@ function getGradeClass(grade: string | undefined): string {
 onMounted(() => {
   loadDevices()
   loadFilterOptions()
+  loadDynamicFieldConfigs()
 })
 </script>
 
@@ -1586,5 +1685,29 @@ onMounted(() => {
 .table-wrapper::-webkit-scrollbar-thumb:hover,
 .dialog::-webkit-scrollbar-thumb:hover {
   background: #475569;
+}
+
+/* 动态字段相关样式 */
+.form-section-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #007AFF;
+  padding: 0.5rem 0 0.25rem;
+  border-top: 1px solid rgba(51, 65, 85, 0.5);
+  margin-top: 0.5rem;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #94a3b8;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
 }
 </style>
