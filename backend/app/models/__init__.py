@@ -7,3 +7,5 @@ from .quote_history import QuoteHistory
 from .product_parameter import BaseRate, SLAConfig, HardwareDepreciation, RegionalAdjustment
 from .relocation_vehicle import RelocationVehicle
 from .china_city_tier import ChinaCityTier
+from .manufacturer import Manufacturer
+from .device_field_config import DeviceFieldConfig

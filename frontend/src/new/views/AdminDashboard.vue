@@ -22,16 +22,25 @@
             @click.prevent="switchModule('itinfra')"
           >
             <span class="material-symbols-outlined">storage</span>
-            <span v-show="!sidebarCollapsed" class="nav-text">IT基础架构库</span>
+            <span v-show="!sidebarCollapsed" class="nav-text">设备库管理</span>
           </a>
           <a
             href="#"
             class="nav-item"
-            :class="{ active: activeModule === 'office' }"
-            @click.prevent="switchModule('office')"
+            :class="{ active: activeModule === 'manufacturer' }"
+            @click.prevent="switchModule('manufacturer')"
           >
-            <span class="material-symbols-outlined">devices</span>
-            <span v-show="!sidebarCollapsed" class="nav-text">终端设备库</span>
+            <span class="material-symbols-outlined">factory</span>
+            <span v-show="!sidebarCollapsed" class="nav-text">品牌管理</span>
+          </a>
+          <a
+            href="#"
+            class="nav-item"
+            :class="{ active: activeModule === 'field-config' }"
+            @click.prevent="switchModule('field-config')"
+          >
+            <span class="material-symbols-outlined">tune</span>
+            <span v-show="!sidebarCollapsed" class="nav-text">字段配置</span>
           </a>
           <a
             href="#"
@@ -232,14 +241,19 @@
       <!-- Content Area -->
       <div class="content-area">
         <!-- 数据管理模块 -->
-        <!-- IT基础架构库 -->
+        <!-- 设备库管理（统一，内含数据源切换） -->
         <div v-show="activeModule === 'itinfra'" class="module-content full-height">
           <ITInfrastructureLibrary />
         </div>
 
-        <!-- 终端设备库 -->
-        <div v-show="activeModule === 'office'" class="module-content full-height">
-          <OfficeDeviceLibrary />
+        <!-- 品牌管理 -->
+        <div v-show="activeModule === 'manufacturer'" class="module-content full-height">
+          <ManufacturerManagement />
+        </div>
+
+        <!-- 字段配置 -->
+        <div v-show="activeModule === 'field-config'" class="module-content full-height">
+          <DeviceFieldConfigManagement />
         </div>
 
         <!-- GPU 价格管理 -->
@@ -352,7 +366,8 @@ import ManualMatchingManagement from '../components/admin/ManualMatchingManageme
 import SystemSettings from '../components/admin/SystemSettings.vue'
 import ServiceTermsManagement from '../components/admin/ServiceTermsManagement.vue'
 import ITInfrastructureLibrary from '../components/admin/ITInfrastructureLibrary.vue'
-import OfficeDeviceLibrary from '../components/admin/OfficeDeviceLibrary.vue'
+import ManufacturerManagement from '../components/admin/ManufacturerManagement.vue'
+import DeviceFieldConfigManagement from '../components/admin/DeviceFieldConfigManagement.vue'
 import ProductManagement from '../components/admin/ProductManagement.vue'
 import ServicePersonnelManagement from '../components/admin/ServicePersonnelManagement.vue'
 import SingleServiceManagement from '../components/admin/SingleServiceManagement.vue'

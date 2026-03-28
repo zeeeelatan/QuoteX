@@ -132,7 +132,6 @@ def get_rag_context(db: Session, user_text: str) -> str:
     供大模型严格基于「后台数据」作答；缺失项需明确说明，推断需标注。
     """
     from app.models import DeviceInventory, MaintenanceRate
-    from app.models.office_device_inventory import OfficeDeviceInventory
     from app.models.gpu_price import GPUPrice
     from app.models.spare_part import SparePart
 
@@ -187,67 +186,42 @@ def get_rag_context(db: Session, user_text: str) -> str:
         lines.append("### 2. 服务级别：拉取失败")
         lines.append("")
 
-    # 3. 设备库（数据中心）
+    # 3. 设备库（统一查 device_inventory，按 business_scenario 标注来源）
     try:
         q = db.query(DeviceInventory).order_by(DeviceInventory.id)
         if keywords:
             or_clauses = []
             for kw in keywords[:5]:
                 or_clauses.append(DeviceInventory.manufacturer.ilike(f"%{kw}%"))
+                or_clauses.append(DeviceInventory.manufacturer_name.ilike(f"%{kw}%"))
                 or_clauses.append(DeviceInventory.model_number.ilike(f"%{kw}%"))
                 or_clauses.append(DeviceInventory.primary_category.ilike(f"%{kw}%"))
             q = q.filter(or_(*or_clauses))
-        devices = q.limit(RAG_DEVICES_LIMIT).all()
-        if devices:
-            lines.append("### 3. 设备库（数据中心）- 厂商 / 型号 / 一级分类 / 参考价格（元）")
-            for d in devices:
+        all_devices = q.limit(RAG_DEVICES_LIMIT + RAG_OFFICE_DEVICES_LIMIT).all()
+        if all_devices:
+            lines.append("### 3. 设备库 - 厂商 / 型号 / 一级分类 / 参考价格（元） / 场景")
+            for d in all_devices:
                 price = float(d.device_price) if d.device_price is not None else None
                 price_str = f"{price:,.0f}" if price is not None else "无"
+                mfr = d.manufacturer_name or d.manufacturer or ''
+                scenario = d.business_scenario or '数据中心'
                 lines.append(
-                    f"  - {d.manufacturer or ''} | {d.model_number or ''} | {d.primary_category or ''} | {price_str}"
+                    f"  - {mfr} | {d.model_number or ''} | {d.primary_category or ''} | {price_str} | {scenario}"
                 )
             lines.append("")
         else:
-            lines.append("### 3. 设备库（数据中心）：后台暂无匹配数据")
+            lines.append("### 3. 设备库：后台暂无匹配数据")
             lines.append("")
     except Exception as e:
         logger.warning("RAG 拉取设备库失败: %s", e)
-        lines.append("### 3. 设备库（数据中心）：拉取失败")
-        lines.append("")
-
-    # 4. 设备库（办公）
-    try:
-        q = db.query(OfficeDeviceInventory).order_by(OfficeDeviceInventory.id)
-        if keywords:
-            or_clauses = []
-            for kw in keywords[:5]:
-                or_clauses.append(OfficeDeviceInventory.manufacturer.ilike(f"%{kw}%"))
-                or_clauses.append(OfficeDeviceInventory.model_number.ilike(f"%{kw}%"))
-                or_clauses.append(OfficeDeviceInventory.primary_category.ilike(f"%{kw}%"))
-            q = q.filter(or_(*or_clauses))
-        office = q.limit(RAG_OFFICE_DEVICES_LIMIT).all()
-        if office:
-            lines.append("### 4. 设备库（办公）- 厂商 / 型号 / 一级分类 / 参考价格（元）")
-            for d in office:
-                price = float(d.device_price) if d.device_price is not None else None
-                price_str = f"{price:,.0f}" if price is not None else "无"
-                lines.append(
-                    f"  - {d.manufacturer or ''} | {d.model_number or ''} | {d.primary_category or ''} | {price_str}"
-                )
-            lines.append("")
-        else:
-            lines.append("### 4. 设备库（办公）：后台暂无匹配数据")
-            lines.append("")
-    except Exception as e:
-        logger.warning("RAG 拉取办公设备库失败: %s", e)
-        lines.append("### 4. 设备库（办公）：拉取失败")
+        lines.append("### 3. 设备库：拉取失败")
         lines.append("")
 
     # 5. GPU 价格
     try:
         gpus = db.query(GPUPrice).order_by(GPUPrice.id).limit(RAG_GPU_LIMIT).all()
         if gpus:
-            lines.append("### 5. GPU 价格 - 厂商/系列/型号 | 单价(元) | 费率 | 维保服务费(元)")
+            lines.append("### 4. GPU 价格 - 厂商/系列/型号 | 单价(元) | 费率 | 维保服务费(元)")
             for g in gpus:
                 price = float(g.gpu_price) if g.gpu_price is not None else None
                 rate = float(g.gpu_rate) * 100 if g.gpu_rate is not None else None
@@ -260,18 +234,18 @@ def get_rag_context(db: Session, user_text: str) -> str:
                 )
             lines.append("")
         else:
-            lines.append("### 5. GPU 价格：后台暂无数据")
+            lines.append("### 4. GPU 价格：后台暂无数据")
             lines.append("")
     except Exception as e:
         logger.warning("RAG 拉取 GPU 价格失败: %s", e)
-        lines.append("### 5. GPU 价格：拉取失败")
+        lines.append("### 4. GPU 价格：拉取失败")
         lines.append("")
 
     # 6. 备件
     try:
         parts = db.query(SparePart).order_by(SparePart.id).limit(RAG_SPARE_PARTS_LIMIT).all()
         if parts:
-            lines.append("### 6. 备件 - 厂商 / 备件PN / 描述 / 分类 / 单价(元)")
+            lines.append("### 5. 备件 - 厂商 / 备件PN / 描述 / 分类 / 单价(元)")
             for p in parts:
                 up = float(p.unit_price) if p.unit_price is not None else "无"
                 up_s = f"{up:,.0f}" if isinstance(up, (int, float)) else str(up)
@@ -280,11 +254,11 @@ def get_rag_context(db: Session, user_text: str) -> str:
                 )
             lines.append("")
         else:
-            lines.append("### 6. 备件：后台暂无数据")
+            lines.append("### 5. 备件：后台暂无数据")
             lines.append("")
     except Exception as e:
         logger.warning("RAG 拉取备件失败: %s", e)
-        lines.append("### 6. 备件：拉取失败")
+        lines.append("### 5. 备件：拉取失败")
         lines.append("")
 
     lines.append("---")
