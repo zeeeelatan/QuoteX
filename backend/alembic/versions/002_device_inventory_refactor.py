@@ -72,8 +72,8 @@ def upgrade() -> None:
     new_columns = [
         ("manufacturer_id", sa.Integer(), None),
         ("manufacturer_name", sa.String(), None),
-        ("type_attributes", JSONB(), "'{}'"),
-        ("custom_attributes", JSONB(), "'{}'"),
+        ("type_attributes", JSONB(), sa.text("'{}'")),
+        ("custom_attributes", JSONB(), sa.text("'{}'")),
     ]
     for col_name, col_type, server_default in new_columns:
         if not _column_exists(conn, "device_inventory", col_name):

@@ -144,7 +144,11 @@ jobs:
 
             # 数据库迁移：服务就绪后、健康检查前执行，确保 schema 一致
             echo "执行数据库迁移..."
-            docker exec AI_Quote_Backend alembic upgrade head 2>&1
+            if ! docker exec AI_Quote_Backend alembic upgrade head 2>&1; then
+              echo "数据库迁移失败！"
+              docker compose logs --tail=30 backend
+              exit 1
+            fi
             echo "数据库迁移完成"
 
             # 迁移后重启后端使中间件生效
@@ -228,7 +232,11 @@ jobs:
             sleep 15
 
             echo "执行数据库迁移..."
-            docker exec AI_Quote_Backend alembic upgrade head 2>&1
+            if ! docker exec AI_Quote_Backend alembic upgrade head 2>&1; then
+              echo "数据库迁移失败！"
+              docker compose logs --tail=30 backend
+              exit 1
+            fi
             echo "数据库迁移完成"
 
             docker compose restart backend
