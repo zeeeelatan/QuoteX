@@ -34,9 +34,9 @@ class TestNormalizeManufacturer:
         assert normalize_manufacturer("h3c") == "新华三/H3C"
 
     def test_unknown_passthrough(self):
-        """未知品牌应原样返回（小写）"""
+        """未知品牌应原样返回"""
         result = normalize_manufacturer("SomeUnknownBrand")
-        assert result == "someunknownbrand"
+        assert result == "SomeUnknownBrand"
 
 
 # ──────────────────────────────────────────────
