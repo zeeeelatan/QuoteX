@@ -9,7 +9,7 @@
       </div>
       <div class="toolbar-right">
         <div class="filter-group">
-          <label>一级分类</label>
+          <label>设备分类</label>
           <select v-model="filterDeviceType" @change="fetchConfigs">
             <option value="">全部（含全局）</option>
             <option v-for="dt in deviceTypes" :key="dt" :value="dt">{{ dt }}</option>
@@ -130,8 +130,8 @@
         </div>
         <div class="dialog-body">
           <div class="form-group">
-            <label>一级分类名称 <span class="hint">（留空表示全局配置）</span></label>
-            <input v-model="form.device_type" placeholder="例如: 服务器" />
+            <label>设备分类 <span class="hint">（支持一/二/三级分类名称，留空表示全局配置）</span></label>
+            <input v-model="form.device_type" placeholder="例如: X86服务器、网络设备、计算" />
           </div>
           <div class="form-group">
             <label>字段标识 <span class="required-mark">*</span></label>

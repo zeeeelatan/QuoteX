@@ -8,7 +8,7 @@ class DeviceFieldConfig(Base):
     __tablename__ = "device_field_config"
 
     id = Column(Integer, primary_key=True, index=True)
-    device_type = Column(String, nullable=True, index=True)  # 关联 primary_category，NULL 表示全局通用
+    device_type = Column(String, nullable=True, index=True)  # 关联任意分类级别(一/二/三级)，NULL 表示全局通用
     field_key = Column(String, nullable=False)                # 字段标识，如 "port_speed"
     field_label = Column(String, nullable=False)              # 显示名，如 "端口速率"
     field_type = Column(String, default="string")             # string / number / enum / boolean

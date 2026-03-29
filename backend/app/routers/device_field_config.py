@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from typing import Optional
 from datetime import datetime
 
@@ -34,7 +35,7 @@ def config_to_dict(c: DeviceFieldConfig) -> dict:
 def list_configs(
     skip: int = Query(0, ge=0),
     limit: int = Query(200, ge=1, le=500),
-    device_type: Optional[str] = Query(None, description="按设备类型筛选"),
+    device_type: Optional[str] = Query(None, description="按设备类型筛选（精确匹配单个分类）"),
     scope: Optional[str] = Query(None, description="按作用域筛选: type/instance"),
     db: Session = Depends(get_db),
 ):
@@ -58,6 +59,62 @@ def list_configs(
         data=[config_to_dict(c) for c in items],
         total=total,
     )
+
+
+@router.get("/by-categories", response_model=DeviceFieldConfigListResponse)
+def list_configs_by_categories(
+    primary_category: Optional[str] = Query(None, description="一级分类"),
+    secondary_category: Optional[str] = Query(None, description="二级分类"),
+    tertiary_category: Optional[str] = Query(None, description="三级分类"),
+    scope: Optional[str] = Query(None, description="按作用域筛选: type/instance"),
+    db: Session = Depends(get_db),
+):
+    """根据设备的一/二/三级分类，返回所有匹配的字段配置。
+
+    匹配规则：返回 device_type 匹配任一分类级别的配置 + 全局配置(device_type IS NULL)。
+    例如设备分类为 计算/服务器/X86服务器，会返回 device_type 为
+    "计算"、"服务器"、"X86服务器" 以及 NULL(全局) 的所有字段配置。
+    """
+    # 收集所有非空的分类值
+    categories = [c for c in [primary_category, secondary_category, tertiary_category] if c]
+
+    query = db.query(DeviceFieldConfig)
+
+    if categories:
+        query = query.filter(
+            or_(
+                DeviceFieldConfig.device_type.in_(categories),
+                DeviceFieldConfig.device_type.is_(None),
+            )
+        )
+    else:
+        # 没有传分类时，只返回全局配置
+        query = query.filter(DeviceFieldConfig.device_type.is_(None))
+
+    if scope:
+        query = query.filter(DeviceFieldConfig.scope == scope)
+
+    items = query.order_by(DeviceFieldConfig.device_type, DeviceFieldConfig.display_order).all()
+
+    # 去重：如果多个分类级别命中了同一个 field_key，保留最具体的那个
+    seen_keys: dict[str, dict] = {}
+    category_priority = {c: i for i, c in enumerate(reversed(categories))} if categories else {}
+    # 三级分类优先级最高，全局最低
+    for item in items:
+        d = config_to_dict(item)
+        key = d["field_key"]
+        if key not in seen_keys:
+            seen_keys[key] = d
+        else:
+            existing_type = seen_keys[key]["device_type"]
+            new_type = d["device_type"]
+            existing_priority = category_priority.get(existing_type, -1) if existing_type else -1
+            new_priority = category_priority.get(new_type, -1) if new_type else -1
+            if new_priority > existing_priority:
+                seen_keys[key] = d
+
+    result = sorted(seen_keys.values(), key=lambda x: x.get("display_order", 0))
+    return DeviceFieldConfigListResponse(data=result, total=len(result))
 
 
 @router.get("/device-types")

@@ -258,15 +258,15 @@
             </div>
             <div class="form-group">
               <label>一级分类</label>
-              <input v-model="formData.primary_category" placeholder="例如: 计算" />
+              <input v-model="formData.primary_category" placeholder="例如: 计算" @change="onFormCategoryChange" />
             </div>
             <div class="form-group">
               <label>二级分类</label>
-              <input v-model="formData.secondary_category" placeholder="例如: 机架式" />
+              <input v-model="formData.secondary_category" placeholder="例如: 机架式" @change="onFormCategoryChange" />
             </div>
             <div class="form-group">
               <label>三级分类</label>
-              <input v-model="formData.tertiary_category" placeholder="例如: 2U双路" />
+              <input v-model="formData.tertiary_category" placeholder="例如: 2U双路" @change="onFormCategoryChange" />
             </div>
             <div class="form-group">
               <label>设备档次</label>
@@ -660,12 +660,21 @@ async function loadFilterOptions() {
   }
 }
 
-async function loadDynamicFieldConfigs() {
+async function loadDynamicFieldConfigs(categories?: { primary?: string, secondary?: string, tertiary?: string }) {
   try {
-    const res = await axios.get(`${API_URL}/device-field-configs/`, {
-      params: { scope: 'type' }
-    })
-    dynamicFieldConfigs.value = res.data?.data || []
+    const params: Record<string, string> = { scope: 'type' }
+    if (categories) {
+      // 按分类层级查询匹配的字段配置
+      if (categories.primary) params.primary_category = categories.primary
+      if (categories.secondary) params.secondary_category = categories.secondary
+      if (categories.tertiary) params.tertiary_category = categories.tertiary
+      const res = await axios.get(`${API_URL}/device-field-configs/by-categories`, { params })
+      dynamicFieldConfigs.value = res.data?.data || []
+    } else {
+      // 无分类过滤时，加载所有配置用于表格列头展示
+      const res = await axios.get(`${API_URL}/device-field-configs/`, { params })
+      dynamicFieldConfigs.value = res.data?.data || []
+    }
   } catch (error) {
     console.error('Failed to load field configs:', error)
   }
@@ -681,6 +690,14 @@ function onSourceChange() {
   pagination.value.page = 1
   loadDevices()
   loadFilterOptions()
+}
+
+function onFormCategoryChange() {
+  loadDynamicFieldConfigs({
+    primary: formData.value.primary_category || undefined,
+    secondary: formData.value.secondary_category || undefined,
+    tertiary: formData.value.tertiary_category || undefined,
+  })
 }
 
 function resetFilters() {
@@ -735,6 +752,12 @@ function editDevice(device: Device) {
   }
   // 加载动态字段到表单
   formDynamicAttrs.value = { ...(device.type_attributes || {}), ...(device.custom_attributes || {}) }
+  // 按设备分类加载对应的字段配置
+  loadDynamicFieldConfigs({
+    primary: device.primary_category || undefined,
+    secondary: device.secondary_category || undefined,
+    tertiary: device.tertiary_category || undefined,
+  })
 }
 
 function closeDialog() {
@@ -754,6 +777,8 @@ function closeDialog() {
     remarks: ''
   }
   formDynamicAttrs.value = {}
+  // 恢复表格列展示用的全量字段配置
+  loadDynamicFieldConfigs()
 }
 
 async function saveDevice() {

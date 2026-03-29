@@ -3,7 +3,7 @@ from typing import Optional, Any
 
 
 class DeviceFieldConfigBase(BaseModel):
-    device_type: Optional[str] = Field(None, description="设备类型(一级分类)，NULL表示全局通用")
+    device_type: Optional[str] = Field(None, description="设备分类(支持一/二/三级分类名称)，NULL表示全局通用")
     field_key: str = Field(..., description="字段标识")
     field_label: str = Field(..., description="字段显示名")
     field_type: str = Field("string", description="字段类型: string/number/enum/boolean")
