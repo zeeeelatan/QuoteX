@@ -1722,225 +1722,441 @@ async function exportQuotationExcel() {
     console.log('[Export] priceDataMap 共', priceDataMap.size, '条, tableData 共', tableData.value.length, '条')
 
     // ===== 文件1：保留原始格式的报价表（仅在空白列添加价格） =====
+    // 使用 JSZip 直接操作 xlsx 内部 XML，避免 ExcelJS load→save 丢失主题色/样式
     let hasOriginalFile = false
     if (originalExcelBase64 && selectedSheetName) {
       try {
-        console.log('[Export] 生成文件1：原始格式报价表')
+        console.log('[Export] 生成文件1：原始格式报价表（JSZip 方式保留样式）')
 
-        // 将base64转换为ArrayBuffer
         const binaryString = atob(originalExcelBase64)
         const bytes = new Uint8Array(binaryString.length)
         for (let i = 0; i < binaryString.length; i++) {
           bytes[i] = binaryString.charCodeAt(i)
         }
 
-        // 使用ExcelJS加载原始文件
-        const workbook1 = new ExcelJS.Workbook()
-        await workbook1.xlsx.load(bytes.buffer)
+        const JSZip = (await import('jszip')).default
+        const zip = await JSZip.loadAsync(bytes.buffer)
 
-        // 尝试按名称获取工作表，失败则尝试按索引或模糊匹配
-        let worksheet = workbook1.getWorksheet(selectedSheetName)
-        if (!worksheet) {
-          console.warn('[Export] 未找到工作表:', selectedSheetName, ', 尝试模糊匹配...')
-          // 尝试模糊匹配工作表名称
-          workbook1.eachSheet((ws: any, _id: number) => {
-            if (!worksheet && ws.name && (
-              ws.name.includes(selectedSheetName) ||
-              selectedSheetName.includes(ws.name) ||
-              ws.name.replace(/\s/g, '') === selectedSheetName.replace(/\s/g, '')
-            )) {
-              worksheet = ws
-              console.log('[Export] 模糊匹配到工作表:', ws.name)
-            }
-          })
-          // 仍未找到则使用第一个工作表
-          if (!worksheet) {
-            worksheet = workbook1.worksheets[0]
-            if (worksheet) {
-              console.log('[Export] 使用第一个工作表:', worksheet.name)
+        // 读取 workbook.xml 找到目标 sheet 的 rId
+        const workbookXml = await zip.file('xl/workbook.xml')?.async('string')
+        if (!workbookXml) throw new Error('无法读取 workbook.xml')
+
+        // 解析所有 sheet 名称和 rId
+        const sheetMatches = [...workbookXml.matchAll(/<sheet\s+[^>]*name="([^"]*)"[^>]*r:id="([^"]*)"[^>]*\/?>/g)]
+        let targetRId = ''
+        // 按名称匹配 → 模糊匹配 → 第一个
+        for (const m of sheetMatches) {
+          if (m[1] === selectedSheetName) { targetRId = m[2]; break }
+        }
+        if (!targetRId) {
+          for (const m of sheetMatches) {
+            if (m[1].includes(selectedSheetName) || selectedSheetName.includes(m[1]) ||
+                m[1].replace(/\s/g, '') === selectedSheetName.replace(/\s/g, '')) {
+              targetRId = m[2]; break
             }
           }
         }
+        if (!targetRId && sheetMatches.length > 0) targetRId = sheetMatches[0][2]
 
-        if (worksheet) {
-          hasOriginalFile = true
-          // ============ 智能检测表头行位置 ============
-          // 原始 Excel 表头可能不在第 1 行（如前几行是商机信息/客户信息等元数据）
-          // 策略1: 使用已识别的列名匹配
-          // 策略2: 使用常见设备表头关键字匹配
-          let headerRowNum = 1  // 默认第 1 行
+        // 通过 rId 在 workbook.xml.rels 中找到 sheet 文件路径
+        const relsXml = await zip.file('xl/_rels/workbook.xml.rels')?.async('string') || ''
+        const relMatch = relsXml.match(new RegExp(`<Relationship[^>]*Id="${targetRId}"[^>]*Target="([^"]*)"[^>]*/>`))
+        let sheetPath = relMatch ? `xl/${relMatch[1]}` : 'xl/worksheets/sheet1.xml'
+        // 修正相对路径
+        sheetPath = sheetPath.replace('xl/xl/', 'xl/')
 
-          // 策略1: 从已识别的列名中提取有意义的列名
-          const knownHeaders = originalTableData.value?.headers || []
-          const significantHeaders = knownHeaders
-            .filter(h => h && !h.startsWith('列') && h !== '序号')
-            .slice(0, 5)
-            .map(h => h.replace(/[\s*]/g, ''))
+        const sheetXml = await zip.file(sheetPath)?.async('string')
+        if (!sheetXml) throw new Error(`无法读取工作表: ${sheetPath}`)
 
-          // 策略2: 常见设备清单表头关键字（适用于列名为 '列N' 的情况）
-          const commonDeviceKeywords = ['产品大类', '设备类型', '设备品牌', '设备型号', '序列号', '设备地点', 'SLA', '服务时长', '序号']
+        console.log('[Export] 目标工作表路径:', sheetPath)
 
-          for (let r = 1; r <= Math.min(worksheet.rowCount, 30); r++) {
-            const wsRow = worksheet.getRow(r)
-            const rowValues: string[] = []
-            wsRow.eachCell({ includeEmpty: false }, (cell: any) => {
-              if (cell.value !== null && cell.value !== undefined) {
-                rowValues.push(String(cell.value).replace(/[\s*\n]/g, ''))
-              }
-            })
-            if (rowValues.length < 3) continue  // 跳过列数过少的行
+        // ---- 解析 sheet XML ----
+        const parser = new DOMParser()
+        const doc = parser.parseFromString(sheetXml, 'application/xml')
+        const nsResolver = doc.documentElement.namespaceURI || 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
 
-            // 策略1: 匹配已识别的列名
-            if (significantHeaders.length >= 3) {
-              let matchCount = 0
-              for (const sh of significantHeaders) {
-                if (rowValues.some(v => v.includes(sh) || sh.includes(v))) {
-                  matchCount++
-                }
-              }
-              if (matchCount >= Math.min(3, significantHeaders.length)) {
-                headerRowNum = r
-                console.log('[Export] 策略1: 检测到表头行位于第', r, '行, 匹配已识别列名', matchCount, '/', significantHeaders.length)
-                break
+        const sheetDataEl = doc.getElementsByTagNameNS(nsResolver, 'sheetData')[0]
+        if (!sheetDataEl) throw new Error('未找到 sheetData')
+
+        const rows = sheetDataEl.getElementsByTagNameNS(nsResolver, 'row')
+
+        // 辅助函数：列号转字母（1→A, 2→B, 27→AA）
+        const colToLetter = (col: number): string => {
+          let s = ''
+          while (col > 0) {
+            col--
+            s = String.fromCharCode(65 + (col % 26)) + s
+            col = Math.floor(col / 26)
+          }
+          return s
+        }
+
+        // 辅助函数：从单元格引用提取行号和列号
+        const parseRef = (ref: string) => {
+          const match = ref.match(/^([A-Z]+)(\d+)$/)
+          if (!match) return { col: 0, row: 0 }
+          let col = 0
+          for (const ch of match[1]) col = col * 26 + (ch.charCodeAt(0) - 64)
+          return { col, row: parseInt(match[2]) }
+        }
+
+        // 找最大列号
+        let maxCol = 0
+        for (let i = 0; i < rows.length; i++) {
+          const cells = rows[i].getElementsByTagNameNS(nsResolver, 'c')
+          for (let j = 0; j < cells.length; j++) {
+            const ref = cells[j].getAttribute('r') || ''
+            const { col } = parseRef(ref)
+            if (col > maxCol) maxCol = col
+          }
+        }
+        const priceColIndex = maxCol + 1
+        const priceColLetter = colToLetter(priceColIndex)
+
+        // ---- 智能检测表头行位置 ----
+        const knownHeaders = originalTableData.value?.headers || []
+        const significantHeaders = knownHeaders
+          .filter((h: string) => h && !h.startsWith('列') && h !== '序号')
+          .slice(0, 5)
+          .map((h: string) => h.replace(/[\s*]/g, ''))
+        const commonDeviceKeywords = ['产品大类', '设备类型', '设备品牌', '设备型号', '序列号', '设备地点', 'SLA', '服务时长', '序号']
+
+        // 读取 sharedStrings 用于获取单元格文本值
+        let sharedStrings: string[] = []
+        const ssXml = await zip.file('xl/sharedStrings.xml')?.async('string')
+        if (ssXml) {
+          const ssDoc = parser.parseFromString(ssXml, 'application/xml')
+          const ssNs = ssDoc.documentElement.namespaceURI || nsResolver
+          const siEls = ssDoc.getElementsByTagNameNS(ssNs, 'si')
+          for (let i = 0; i < siEls.length; i++) {
+            // 获取 si 下所有 t 元素的文本并拼接
+            const tEls = siEls[i].getElementsByTagNameNS(ssNs, 't')
+            let text = ''
+            for (let j = 0; j < tEls.length; j++) text += tEls[j].textContent || ''
+            sharedStrings.push(text)
+          }
+        }
+
+        // 获取行中所有单元格的文本值
+        const getRowTexts = (rowEl: Element): string[] => {
+          const texts: string[] = []
+          const cells = rowEl.getElementsByTagNameNS(nsResolver, 'c')
+          for (let j = 0; j < cells.length; j++) {
+            const vEl = cells[j].getElementsByTagNameNS(nsResolver, 'v')[0]
+            const cellType = cells[j].getAttribute('t')
+            if (vEl && vEl.textContent) {
+              if (cellType === 's') {
+                const idx = parseInt(vEl.textContent)
+                texts.push((sharedStrings[idx] || '').replace(/[\s*\n]/g, ''))
+              } else {
+                texts.push(vEl.textContent.replace(/[\s*\n]/g, ''))
               }
             }
+          }
+          return texts
+        }
 
-            // 策略2: 匹配常见设备表头关键字
-            let keywordMatchCount = 0
-            for (const kw of commonDeviceKeywords) {
-              if (rowValues.some(v => v.includes(kw))) {
-                keywordMatchCount++
-              }
+        let headerRowNum = 1
+        for (let i = 0; i < Math.min(rows.length, 30); i++) {
+          const rowNum = parseInt(rows[i].getAttribute('r') || String(i + 1))
+          const texts = getRowTexts(rows[i])
+          if (texts.length < 3) continue
+
+          if (significantHeaders.length >= 3) {
+            let matchCount = 0
+            for (const sh of significantHeaders) {
+              if (texts.some(v => v.includes(sh) || sh.includes(v))) matchCount++
             }
-            if (keywordMatchCount >= 3) {
-              headerRowNum = r
-              console.log('[Export] 策略2: 检测到表头行位于第', r, '行, 匹配关键字', keywordMatchCount, '/', commonDeviceKeywords.length)
+            if (matchCount >= Math.min(3, significantHeaders.length)) {
+              headerRowNum = rowNum
+              console.log('[Export] 策略1: 检测到表头行位于第', rowNum, '行')
               break
             }
           }
-          console.log('[Export] 使用表头行:', headerRowNum)
 
-          // 找到第一个空白列（从当前最后一列+1开始）
-          const lastCol = worksheet.columnCount
-          const priceColIndex = lastCol + 1
-
-          // 在实际表头行添加"维保单价"列标题
-          const headerRow = worksheet.getRow(headerRowNum)
-          const priceHeaderCell = headerRow.getCell(priceColIndex)
-          priceHeaderCell.value = '维保单价'
-          priceHeaderCell.font = { bold: true }
-          priceHeaderCell.fill = {
-            type: 'pattern',
-            pattern: 'solid',
-            fgColor: { argb: 'FFE0E0E0' }
+          let kwCount = 0
+          for (const kw of commonDeviceKeywords) {
+            if (texts.some(v => v.includes(kw))) kwCount++
           }
-          priceHeaderCell.border = {
-            top: { style: 'thin' },
-            left: { style: 'thin' },
-            bottom: { style: 'thin' },
-            right: { style: 'thin' }
+          if (kwCount >= 3) {
+            headerRowNum = rowNum
+            console.log('[Export] 策略2: 检测到表头行位于第', rowNum, '行')
+            break
           }
+        }
+        console.log('[Export] 使用表头行:', headerRowNum)
 
-          // 设置列宽
-          worksheet.getColumn(priceColIndex).width = 15
+        // ---- 添加 sharedStrings 条目（"维保单价"） ----
+        let ssDoc2: Document | null = null
+        let priceHeaderSsIndex = -1
+        if (ssXml) {
+          ssDoc2 = parser.parseFromString(ssXml, 'application/xml')
+          const ssNs2 = ssDoc2.documentElement.namespaceURI || nsResolver
+          const siEls2 = ssDoc2.getElementsByTagNameNS(ssNs2, 'si')
+          priceHeaderSsIndex = siEls2.length
 
-          // 从表头行之后开始写入价格数据
-          const dataStartRowNum = headerRowNum + 1
+          // 创建新的 <si><t>维保单价</t></si>
+          const newSi = ssDoc2.createElementNS(ssNs2, 'si')
+          const newT = ssDoc2.createElementNS(ssNs2, 't')
+          newT.textContent = '维保单价'
+          newSi.appendChild(newT)
+          ssDoc2.documentElement.appendChild(newSi)
 
-          // 构建"型号 → 价格"查找表（用于按型号匹配，避免行删除导致索引错位）
-          const modelPriceMap = new Map<string, number>()
-          tableData.value.forEach((item) => {
-            const basePrice = item.finalPrice || item.suggestedPrice || 0
-            if (basePrice > 0) {
-              const adjustedPrice = Math.round(basePrice * exportPriceMultiplier * 100) / 100
-              // 使用多个可能的型号作为 key
-              const keys = [item.model, item.matchedModel, item.originalModel].filter(Boolean)
-              keys.forEach(k => {
-                const normalized = String(k).trim().toUpperCase()
-                if (normalized && !modelPriceMap.has(normalized)) {
-                  modelPriceMap.set(normalized, adjustedPrice)
-                }
-              })
+          // 更新 count 和 uniqueCount 属性
+          const sstEl = ssDoc2.documentElement
+          const oldCount = parseInt(sstEl.getAttribute('count') || '0')
+          const oldUnique = parseInt(sstEl.getAttribute('uniqueCount') || '0')
+          sstEl.setAttribute('count', String(oldCount + 1))
+          sstEl.setAttribute('uniqueCount', String(oldUnique + 1))
+        }
+
+        // ---- 构建型号→价格查找表 ----
+        const modelPriceMap = new Map<string, number>()
+        tableData.value.forEach((item: any) => {
+          const basePrice = item.finalPrice || item.suggestedPrice || 0
+          if (basePrice > 0) {
+            const adjustedPrice = Math.round(basePrice * exportPriceMultiplier * 100) / 100
+            const keys = [item.model, item.matchedModel, item.originalModel].filter(Boolean)
+            keys.forEach((k: string) => {
+              const normalized = String(k).trim().toUpperCase()
+              if (normalized && !modelPriceMap.has(normalized)) {
+                modelPriceMap.set(normalized, adjustedPrice)
+              }
+            })
+          }
+        })
+
+        // ---- 在 sheet XML 中插入价格列单元格 ----
+        const dataStartRowNum = headerRowNum + 1
+        // 找出实际最大行号
+        let maxRowNum = 0
+        for (let i = 0; i < rows.length; i++) {
+          const rn = parseInt(rows[i].getAttribute('r') || '0')
+          if (rn > maxRowNum) maxRowNum = rn
+        }
+        const excelDataRowCount = maxRowNum - headerRowNum
+        const rowCountMatch = excelDataRowCount === tableData.value.length
+        console.log('[Export] Excel 数据行:', excelDataRowCount, ', tableData 行:', tableData.value.length, ', 行数一致:', rowCountMatch)
+
+        // 查找表头行样式 ID 用于价格表头单元格
+        let headerStyleId = ''
+        for (let i = 0; i < rows.length; i++) {
+          const rn = parseInt(rows[i].getAttribute('r') || '0')
+          if (rn === headerRowNum) {
+            const cells = rows[i].getElementsByTagNameNS(nsResolver, 'c')
+            if (cells.length > 0) {
+              headerStyleId = cells[0].getAttribute('s') || ''
             }
-          })
+            break
+          }
+        }
 
-          // 检测行数是否一致（一致时可用索引映射，否则必须用型号匹配）
-          const excelDataRowCount = worksheet.rowCount - headerRowNum
-          const rowCountMatch = excelDataRowCount === tableData.value.length
-          console.log('[Export] Excel 数据行:', excelDataRowCount, ', tableData 行:', tableData.value.length, ', 行数一致:', rowCountMatch)
+        for (let i = 0; i < rows.length; i++) {
+          const rowNum = parseInt(rows[i].getAttribute('r') || '0')
+          const cellRef = `${priceColLetter}${rowNum}`
 
-          const dataRowCount = Math.max(excelDataRowCount, tableData.value.length)
-          for (let i = 0; i < dataRowCount; i++) {
-            const rowNum = dataStartRowNum + i
-            if (rowNum > worksheet.rowCount) break
-            const row = worksheet.getRow(rowNum)
-            const priceCell = row.getCell(priceColIndex)
+          const newCell = doc.createElementNS(nsResolver, 'c')
+          newCell.setAttribute('r', cellRef)
 
+          if (rowNum === headerRowNum) {
+            // 表头单元格 — 引用 sharedStrings 中的"维保单价"
+            if (priceHeaderSsIndex >= 0) {
+              newCell.setAttribute('t', 's')
+              if (headerStyleId) newCell.setAttribute('s', headerStyleId)
+              const vEl = doc.createElementNS(nsResolver, 'v')
+              vEl.textContent = String(priceHeaderSsIndex)
+              newCell.appendChild(vEl)
+            }
+          } else if (rowNum >= dataStartRowNum) {
+            const dataIndex = rowNum - dataStartRowNum
             let price: number | undefined
 
-            // 策略1：行数一致时，用索引直接映射
             if (rowCountMatch) {
-              price = priceDataMap.get(i)
+              price = priceDataMap.get(dataIndex)
             }
-
-            // 策略2：行数不一致或索引未命中时，扫描该行所有单元格的值，用型号匹配
             if (price === undefined) {
-              row.eachCell({ includeEmpty: false }, (cell: any) => {
-                if (price !== undefined) return  // 已找到则跳过
-                if (cell.value !== null && cell.value !== undefined) {
-                  const cellVal = String(cell.value).trim().toUpperCase()
-                  if (cellVal && modelPriceMap.has(cellVal)) {
-                    price = modelPriceMap.get(cellVal)
-                  }
+              const texts = getRowTexts(rows[i])
+              for (const t of texts) {
+                const normalized = t.trim().toUpperCase()
+                if (normalized && modelPriceMap.has(normalized)) {
+                  price = modelPriceMap.get(normalized)
+                  break
                 }
-              })
+              }
             }
 
             if (price !== undefined && price > 0) {
-              priceCell.value = price
-              priceCell.numFmt = '¥#,##0.00'
-            } else {
-              priceCell.value = ''
-            }
-
-            priceCell.border = {
-              top: { style: 'thin' },
-              left: { style: 'thin' },
-              bottom: { style: 'thin' },
-              right: { style: 'thin' }
+              const vEl = doc.createElementNS(nsResolver, 'v')
+              vEl.textContent = String(price)
+              newCell.appendChild(vEl)
+              // 复用同行其他单元格的样式
+              const cells = rows[i].getElementsByTagNameNS(nsResolver, 'c')
+              if (cells.length > 0) {
+                const sAttr = cells[0].getAttribute('s')
+                if (sAttr) newCell.setAttribute('s', sAttr)
+              }
             }
           }
 
-          console.log('[Export] 已在列', priceColIndex, '添加价格数据, 数据行从第', dataStartRowNum, '行到第', dataStartRowNum + dataRowCount - 1, '行')
-
-          // 添加后台配置的服务条款（在数据行之后）
-          const lastDataRowNum = dataStartRowNum + tableData.value.length - 1
-          const clearStartRow = lastDataRowNum + 1
-
-          // 仅清除数据行之后的多余内容（保留原始格式区域，只清除可能存在的旧条款）
-          const totalRows = worksheet.rowCount
-          for (let rowNum = clearStartRow; rowNum <= totalRows; rowNum++) {
-            const row = worksheet.getRow(rowNum)
-            row.eachCell({ includeEmpty: true }, (cell: any) => {
-              cell.value = null
-              // 不再清除 cell.style，保留原有格式
-            })
-          }
-          console.log('[Export] 已清除第', clearStartRow, '行到第', totalRows, '行的内容（保留样式）')
-
-          // 添加后台配置的服务条款
-          addServiceTermsToWorksheet(worksheet, lastDataRowNum, priceColIndex)
-          console.log('[Export] 已添加后台配置的服务条款')
-
-          // 生成文件名并下载（在 worksheet 块内，确保只在成功处理后下载）
-          const baseName = originalFileName.replace(/\.xlsx?$/i, '')
-          const fileName1 = `报价单-${baseName}.xlsx`
-          const buffer1 = await workbook1.xlsx.writeBuffer()
-          downloadFile(buffer1, fileName1)
-          console.log('[Export] 文件1导出成功:', fileName1)
-        } else {
-          console.warn('[Export] 未能找到工作表，将使用备用方案生成文件1')
+          rows[i].appendChild(newCell)
         }
+
+        // 更新 dimension（如果存在）
+        const dimEl = doc.getElementsByTagNameNS(nsResolver, 'dimension')[0]
+        if (dimEl) {
+          const oldRef = dimEl.getAttribute('ref') || ''
+          // 将终止列更新为新列字母
+          const updatedRef = oldRef.replace(/([A-Z]+)(\d+)$/, `${priceColLetter}$2`)
+          dimEl.setAttribute('ref', updatedRef)
+        }
+
+        // 更新列宽信息（在 <cols> 中添加新列宽度）
+        let colsEl = doc.getElementsByTagNameNS(nsResolver, 'cols')[0]
+        if (colsEl) {
+          const newColEl = doc.createElementNS(nsResolver, 'col')
+          newColEl.setAttribute('min', String(priceColIndex))
+          newColEl.setAttribute('max', String(priceColIndex))
+          newColEl.setAttribute('width', '15')
+          newColEl.setAttribute('customWidth', '1')
+          colsEl.appendChild(newColEl)
+        }
+
+        // ---- 添加服务条款（在数据行之后） ----
+        const termsContent = getServiceTermsContent()
+        if (termsContent) {
+          const lastDataRowNum = dataStartRowNum + tableData.value.length - 1
+          const titleRowNum = lastDataRowNum + 3  // 空一行
+          const termsRowNum = titleRowNum + 1
+          const termsRowEndNum = termsRowNum + 1
+          const mergeCols = Math.max(priceColIndex, 6)
+
+          // 添加"条款与条件"和条款内容到 sharedStrings
+          let titleSsIndex = -1
+          let contentSsIndex = -1
+
+          // 过滤掉编辑器产生的孤立编号行
+          const lines = termsContent.split('\n')
+          const filteredLines = lines.filter((line: string, idx: number) => {
+            if (/^\d+\.\s*$/.test(line) && idx + 1 < lines.length && lines[idx + 1].startsWith(line.trim())) {
+              return false
+            }
+            return true
+          })
+          const cleanedContent = filteredLines.join('\n')
+
+          if (ssDoc2) {
+            const ssNs2 = ssDoc2.documentElement.namespaceURI || nsResolver
+            const siEls = ssDoc2.getElementsByTagNameNS(ssNs2, 'si')
+
+            // "条款与条件" 标题
+            titleSsIndex = siEls.length
+            const titleSi = ssDoc2.createElementNS(ssNs2, 'si')
+            const titleT = ssDoc2.createElementNS(ssNs2, 't')
+            titleT.textContent = '条款与条件'
+            titleSi.appendChild(titleT)
+            ssDoc2.documentElement.appendChild(titleSi)
+
+            // 条款内容（siEls 是 live NodeList，appendChild 后 length 已自动 +1）
+            contentSsIndex = siEls.length
+            const contentSi = ssDoc2.createElementNS(ssNs2, 'si')
+            const contentT = ssDoc2.createElementNS(ssNs2, 't')
+            contentT.textContent = cleanedContent
+            contentSi.appendChild(contentT)
+            ssDoc2.documentElement.appendChild(contentSi)
+
+            // 更新 count/uniqueCount
+            const sstEl = ssDoc2.documentElement
+            const oldCount = parseInt(sstEl.getAttribute('count') || '0')
+            const oldUnique = parseInt(sstEl.getAttribute('uniqueCount') || '0')
+            sstEl.setAttribute('count', String(oldCount + 2))
+            sstEl.setAttribute('uniqueCount', String(oldUnique + 2))
+          }
+
+          // 创建标题行
+          const titleRow = doc.createElementNS(nsResolver, 'row')
+          titleRow.setAttribute('r', String(titleRowNum))
+          titleRow.setAttribute('ht', '22')
+          titleRow.setAttribute('customHeight', '1')
+          const titleCell = doc.createElementNS(nsResolver, 'c')
+          titleCell.setAttribute('r', `A${titleRowNum}`)
+          titleCell.setAttribute('t', 's')
+          const titleV = doc.createElementNS(nsResolver, 'v')
+          titleV.textContent = String(titleSsIndex)
+          titleCell.appendChild(titleV)
+          titleRow.appendChild(titleCell)
+          sheetDataEl.appendChild(titleRow)
+
+          // 创建条款内容行
+          const termsRow = doc.createElementNS(nsResolver, 'row')
+          termsRow.setAttribute('r', String(termsRowNum))
+          termsRow.setAttribute('ht', '230')
+          termsRow.setAttribute('customHeight', '1')
+          const termsCell = doc.createElementNS(nsResolver, 'c')
+          termsCell.setAttribute('r', `A${termsRowNum}`)
+          termsCell.setAttribute('t', 's')
+          const termsV = doc.createElementNS(nsResolver, 'v')
+          termsV.textContent = String(contentSsIndex)
+          termsCell.appendChild(termsV)
+          termsRow.appendChild(termsCell)
+          sheetDataEl.appendChild(termsRow)
+
+          // 第二行（合并区域的下半部分）
+          const termsRow2 = doc.createElementNS(nsResolver, 'row')
+          termsRow2.setAttribute('r', String(termsRowEndNum))
+          termsRow2.setAttribute('ht', '230')
+          termsRow2.setAttribute('customHeight', '1')
+          sheetDataEl.appendChild(termsRow2)
+
+          // 添加合并单元格定义
+          let mergeCellsEl = doc.getElementsByTagNameNS(nsResolver, 'mergeCells')[0]
+          if (!mergeCellsEl) {
+            mergeCellsEl = doc.createElementNS(nsResolver, 'mergeCells')
+            mergeCellsEl.setAttribute('count', '0')
+            // mergeCells 需要在 sheetData 之后插入
+            const sheetDataParent = sheetDataEl.parentNode!
+            const nextSibling = sheetDataEl.nextSibling
+            if (nextSibling) {
+              sheetDataParent.insertBefore(mergeCellsEl, nextSibling)
+            } else {
+              sheetDataParent.appendChild(mergeCellsEl)
+            }
+          }
+
+          const endColLetter = colToLetter(mergeCols)
+
+          // 标题行合并
+          const titleMerge = doc.createElementNS(nsResolver, 'mergeCell')
+          titleMerge.setAttribute('ref', `A${titleRowNum}:${endColLetter}${titleRowNum}`)
+          mergeCellsEl.appendChild(titleMerge)
+
+          // 条款内容行合并
+          const termsMerge = doc.createElementNS(nsResolver, 'mergeCell')
+          termsMerge.setAttribute('ref', `A${termsRowNum}:${endColLetter}${termsRowEndNum}`)
+          mergeCellsEl.appendChild(termsMerge)
+
+          // 更新 mergeCells count
+          const existingCount = parseInt(mergeCellsEl.getAttribute('count') || '0')
+          mergeCellsEl.setAttribute('count', String(existingCount + 2))
+
+          console.log('[Export] 已添加服务条款（JSZip XML 方式）')
+        }
+
+        // 序列化修改后的 XML 写回 ZIP
+        const serializer = new XMLSerializer()
+        const updatedSheetXml = serializer.serializeToString(doc)
+        zip.file(sheetPath, updatedSheetXml)
+
+        if (ssDoc2) {
+          const updatedSsXml = serializer.serializeToString(ssDoc2)
+          zip.file('xl/sharedStrings.xml', updatedSsXml)
+        }
+
+        hasOriginalFile = true
+        const baseName = originalFileName.replace(/\.xlsx?$/i, '')
+        const fileName1 = `报价单-${baseName}.xlsx`
+        const buffer1 = await zip.generateAsync({ type: 'arraybuffer' })
+        downloadFile(buffer1, fileName1)
+        console.log('[Export] 文件1导出成功（JSZip 方式，样式完整保留）:', fileName1)
 
       } catch (loadError) {
         console.error('[Export] 加载原始Excel文件失败:', loadError)

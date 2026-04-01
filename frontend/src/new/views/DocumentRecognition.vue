@@ -374,8 +374,8 @@
                     </button>
                   </div>
                 </div>
-                <div class="table-wrapper original-table-wrapper" ref="originalTableWrapperRef" @mouseup="stopOriginalSelection">
-                  <table class="data-table">
+                <div class="table-wrapper original-table-wrapper" ref="originalTableWrapperRef" @mouseup="stopOriginalSelection" @dragstart.prevent>
+                  <table class="data-table" draggable="false">
                     <thead>
                       <tr>
                         <th v-for="(header, index) in originalHeaders" :key="index" class="resizable-th">
@@ -627,8 +627,8 @@
                     </button>
                   </div>
                 </div>
-                <div class="modal-table-wrapper original-selection-modal-wrapper" ref="modalOriginalTableWrapperRef" @mouseup="stopOriginalSelection">
-                  <table class="modal-data-table">
+                <div class="modal-table-wrapper original-selection-modal-wrapper" ref="modalOriginalTableWrapperRef" @mouseup="stopOriginalSelection" @dragstart.prevent>
+                  <table class="modal-data-table" draggable="false">
                     <thead>
                       <tr>
                         <th v-for="(header, index) in originalHeaders" :key="index">{{ header }}</th>
@@ -673,8 +673,8 @@
                     </button>
                   </div>
                 </div>
-                <div class="modal-table-wrapper" ref="modalOriginalTableWrapperRef" @mouseup="stopOriginalSelection">
-                  <table class="modal-data-table">
+                <div class="modal-table-wrapper" ref="modalOriginalTableWrapperRef" @mouseup="stopOriginalSelection" @dragstart.prevent>
+                  <table class="modal-data-table" draggable="false">
                     <thead>
                       <tr>
                         <th v-for="(header, index) in originalHeaders" :key="index">{{ header }}</th>
@@ -969,6 +969,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', handleKeyDown)
   window.removeEventListener('mouseup', stopOriginalSelection)
   window.removeEventListener('mousemove', handleWindowMouseMove)
+  document.removeEventListener('selectstart', preventSelectStart)
 })
 
 // 全屏模态框状态
@@ -1174,15 +1175,35 @@ function getOriginalCellClass(row: number, col: number) {
 }
 
 function updateOriginalSelectionFromPointer(clientX: number, clientY: number) {
+  // 先尝试直接命中
   const target = document.elementFromPoint(clientX, clientY) as HTMLElement | null
   const cell = target?.closest('[data-original-row][data-original-col]') as HTMLElement | null
-  if (!cell) return
+  if (cell) {
+    const row = Number(cell.dataset.originalRow)
+    const col = Number(cell.dataset.originalCol)
+    if (Number.isFinite(row) && Number.isFinite(col)) {
+      originalSelectionEnd.value = { row, col }
+      return
+    }
+  }
 
-  const row = Number(cell.dataset.originalRow)
-  const col = Number(cell.dataset.originalCol)
-  if (!Number.isFinite(row) || !Number.isFinite(col)) return
+  // 指针在容器外时，通过扫描容器内边缘的单元格来推断行/列
+  if (!originalSelectionContainer.value) return
+  const rect = originalSelectionContainer.value.getBoundingClientRect()
 
-  originalSelectionEnd.value = { row, col }
+  // 将指针坐标钳制到容器可见区域内，再查找最近的单元格
+  const clampedX = Math.max(rect.left + 2, Math.min(rect.right - 2, clientX))
+  const clampedY = Math.max(rect.top + 2, Math.min(rect.bottom - 2, clientY))
+
+  const fallback = document.elementFromPoint(clampedX, clampedY) as HTMLElement | null
+  const fallbackCell = fallback?.closest('[data-original-row][data-original-col]') as HTMLElement | null
+  if (fallbackCell) {
+    const row = Number(fallbackCell.dataset.originalRow)
+    const col = Number(fallbackCell.dataset.originalCol)
+    if (Number.isFinite(row) && Number.isFinite(col)) {
+      originalSelectionEnd.value = { row, col }
+    }
+  }
 }
 
 function stepOriginalAutoScroll() {
@@ -1215,6 +1236,7 @@ function stepOriginalAutoScroll() {
   if (deltaX !== 0 || deltaY !== 0) {
     container.scrollLeft += deltaX
     container.scrollTop += deltaY
+    // 滚动后重新查找——用钳制坐标确保能命中容器内的单元格
     updateOriginalSelectionFromPointer(x, y)
   }
 
@@ -1234,8 +1256,12 @@ function handleWindowMouseMove(event: MouseEvent) {
   ensureOriginalAutoScroll()
 }
 
+function preventSelectStart(e: Event) { e.preventDefault() }
+
 function handleOriginalCellMouseDown(row: number, col: number, event: MouseEvent) {
   event.preventDefault()
+  // 阻止浏览器原生选区和拖拽，确保全屏弹窗中拖拽框选正常
+  document.addEventListener('selectstart', preventSelectStart)
   originalSelectionStart.value = { row, col }
   originalSelectionEnd.value = { row, col }
   isOriginalSelecting.value = true
@@ -1253,6 +1279,7 @@ function handleOriginalCellMouseEnter(row: number, col: number) {
 function stopOriginalSelection() {
   if (!isOriginalSelecting.value) return
   isOriginalSelecting.value = false
+  document.removeEventListener('selectstart', preventSelectStart)
   if (originalAutoScrollFrame !== null) {
     cancelAnimationFrame(originalAutoScrollFrame)
     originalAutoScrollFrame = null
@@ -4832,6 +4859,9 @@ const getTotalAmount = () => {
 .original-cell {
   cursor: crosshair;
   transition: background-color 0.15s, box-shadow 0.15s;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .original-cell.selected {
@@ -5277,6 +5307,13 @@ const getTotalAmount = () => {
   min-height: 0;
 }
 
+.modal-single-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .modal-table-section {
   display: flex;
   flex-direction: column;
@@ -5284,6 +5321,8 @@ const getTotalAmount = () => {
   border-radius: 8px;
   border: 1px solid #2a3447;
   overflow: hidden;
+  flex: 1;
+  min-height: 0;
 }
 
 .modal-table-title {
@@ -5322,6 +5361,9 @@ const getTotalAmount = () => {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.8125rem;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .modal-data-table th {
