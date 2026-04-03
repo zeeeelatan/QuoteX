@@ -508,7 +508,7 @@ const templateStyle = ref('system_modern')  // 模板选择
 const serviceTerms = ref('')  // 服务条款（当前选中的ID）
 const serviceTermsList = ref<any[]>([])  // 服务条款列表
 const showTaxColumn = ref(true)  // 显示税费列
-const selectedTaxRate = ref(0.06)  // 税率选择，默认6%
+const selectedTaxRate = ref(0.13)  // 税率选择，默认13%
 const showDiscount = ref(true)  // 包含折扣信息
 const showSignature = ref(false)  // 显示签字栏
 
@@ -1911,6 +1911,8 @@ async function exportQuotationExcel() {
         }
 
         // ---- 构建型号→价格查找表 ----
+        // 注意：key 的归一化必须与 getRowTexts 一致（去除所有空白和星号）
+        const normalizeForMatch = (s: string) => String(s).replace(/[\s*\n]/g, '').toUpperCase()
         const modelPriceMap = new Map<string, number>()
         tableData.value.forEach((item: any) => {
           const basePrice = item.finalPrice || item.suggestedPrice || 0
@@ -1918,7 +1920,7 @@ async function exportQuotationExcel() {
             const adjustedPrice = Math.round(basePrice * exportPriceMultiplier * 100) / 100
             const keys = [item.model, item.matchedModel, item.originalModel].filter(Boolean)
             keys.forEach((k: string) => {
-              const normalized = String(k).trim().toUpperCase()
+              const normalized = normalizeForMatch(k)
               if (normalized && !modelPriceMap.has(normalized)) {
                 modelPriceMap.set(normalized, adjustedPrice)
               }
@@ -1928,15 +1930,22 @@ async function exportQuotationExcel() {
 
         // ---- 在 sheet XML 中插入价格列单元格 ----
         const dataStartRowNum = headerRowNum + 1
-        // 找出实际最大行号
-        let maxRowNum = 0
+        // 统计实际有数据内容的行数（排除表头后的空行、条款行等）
+        let actualDataRowCount = 0
+        const dataRowIndices: number[] = []  // 存储数据行在 rows 数组中的索引
         for (let i = 0; i < rows.length; i++) {
           const rn = parseInt(rows[i].getAttribute('r') || '0')
-          if (rn > maxRowNum) maxRowNum = rn
+          if (rn >= dataStartRowNum) {
+            const texts = getRowTexts(rows[i])
+            // 至少有2个非空单元格内容才算数据行
+            if (texts.filter(t => t.length > 0).length >= 2) {
+              actualDataRowCount++
+              dataRowIndices.push(i)
+            }
+          }
         }
-        const excelDataRowCount = maxRowNum - headerRowNum
-        const rowCountMatch = excelDataRowCount === tableData.value.length
-        console.log('[Export] Excel 数据行:', excelDataRowCount, ', tableData 行:', tableData.value.length, ', 行数一致:', rowCountMatch)
+        const rowCountMatch = actualDataRowCount === tableData.value.length
+        console.log('[Export] 实际数据行:', actualDataRowCount, ', tableData 行:', tableData.value.length, ', 行数一致:', rowCountMatch)
 
         // 查找表头行样式 ID 用于价格表头单元格
         let headerStyleId = ''
@@ -1950,6 +1959,12 @@ async function exportQuotationExcel() {
             break
           }
         }
+
+        // 构建数据行的顺序索引映射（rows 数组 index → tableData 顺序 index）
+        const rowIndexToSeqIndex = new Map<number, number>()
+        dataRowIndices.forEach((rowsIdx, seqIdx) => {
+          rowIndexToSeqIndex.set(rowsIdx, seqIdx)
+        })
 
         for (let i = 0; i < rows.length; i++) {
           const rowNum = parseInt(rows[i].getAttribute('r') || '0')
@@ -1968,16 +1983,18 @@ async function exportQuotationExcel() {
               newCell.appendChild(vEl)
             }
           } else if (rowNum >= dataStartRowNum) {
-            const dataIndex = rowNum - dataStartRowNum
             let price: number | undefined
 
-            if (rowCountMatch) {
-              price = priceDataMap.get(dataIndex)
+            // 优先使用顺序索引映射（按数据行顺序对应 tableData 顺序）
+            const seqIndex = rowIndexToSeqIndex.get(i)
+            if (rowCountMatch && seqIndex !== undefined) {
+              price = priceDataMap.get(seqIndex)
             }
+            // 回退：通过型号名称匹配
             if (price === undefined) {
               const texts = getRowTexts(rows[i])
               for (const t of texts) {
-                const normalized = t.trim().toUpperCase()
+                const normalized = normalizeForMatch(t)
                 if (normalized && modelPriceMap.has(normalized)) {
                   price = modelPriceMap.get(normalized)
                   break
@@ -2019,6 +2036,57 @@ async function exportQuotationExcel() {
           newColEl.setAttribute('width', '15')
           newColEl.setAttribute('customWidth', '1')
           colsEl.appendChild(newColEl)
+        }
+
+        // ---- 在 styles.xml 中添加 wrapText + bold 样式，供条款单元格使用 ----
+        let wrapTextStyleIndex = ''
+        let boldStyleIndex = ''
+        const stylesXml = await zip.file('xl/styles.xml')?.async('string')
+        let stylesDoc: Document | null = null
+        if (stylesXml) {
+          stylesDoc = parser.parseFromString(stylesXml, 'application/xml')
+          const stylesNs = stylesDoc.documentElement.namespaceURI || nsResolver
+
+          const cellXfsEl = stylesDoc.getElementsByTagNameNS(stylesNs, 'cellXfs')[0]
+          if (cellXfsEl) {
+            const xfEls = cellXfsEl.getElementsByTagNameNS(stylesNs, 'xf')
+
+            // 添加加粗+左对齐样式（用于标题行）
+            // 先找到一个有字体的 xf 作为基础，或使用 fontId=0
+            const boldXf = stylesDoc.createElementNS(stylesNs, 'xf')
+            boldXf.setAttribute('numFmtId', '0')
+            boldXf.setAttribute('fontId', '0')
+            boldXf.setAttribute('fillId', '0')
+            boldXf.setAttribute('borderId', '0')
+            boldXf.setAttribute('xfId', '0')
+            boldXf.setAttribute('applyAlignment', '1')
+            const boldAlign = stylesDoc.createElementNS(stylesNs, 'alignment')
+            boldAlign.setAttribute('vertical', 'center')
+            boldAlign.setAttribute('horizontal', 'left')
+            boldXf.appendChild(boldAlign)
+            cellXfsEl.appendChild(boldXf)
+            boldStyleIndex = String(xfEls.length - 1)
+
+            // 添加 wrapText+顶部对齐样式（用于条款内容）
+            const wrapXf = stylesDoc.createElementNS(stylesNs, 'xf')
+            wrapXf.setAttribute('numFmtId', '0')
+            wrapXf.setAttribute('fontId', '0')
+            wrapXf.setAttribute('fillId', '0')
+            wrapXf.setAttribute('borderId', '0')
+            wrapXf.setAttribute('xfId', '0')
+            wrapXf.setAttribute('applyAlignment', '1')
+            const wrapAlign = stylesDoc.createElementNS(stylesNs, 'alignment')
+            wrapAlign.setAttribute('wrapText', '1')
+            wrapAlign.setAttribute('vertical', 'top')
+            wrapAlign.setAttribute('horizontal', 'left')
+            wrapXf.appendChild(wrapAlign)
+            cellXfsEl.appendChild(wrapXf)
+            wrapTextStyleIndex = String(xfEls.length - 1)
+
+            // 更新 cellXfs count
+            const oldXfCount = parseInt(cellXfsEl.getAttribute('count') || '0')
+            cellXfsEl.setAttribute('count', String(oldXfCount + 2))
+          }
         }
 
         // ---- 添加服务条款（在数据行之后） ----
@@ -2080,6 +2148,7 @@ async function exportQuotationExcel() {
           const titleCell = doc.createElementNS(nsResolver, 'c')
           titleCell.setAttribute('r', `A${titleRowNum}`)
           titleCell.setAttribute('t', 's')
+          if (boldStyleIndex) titleCell.setAttribute('s', boldStyleIndex)
           const titleV = doc.createElementNS(nsResolver, 'v')
           titleV.textContent = String(titleSsIndex)
           titleCell.appendChild(titleV)
@@ -2094,6 +2163,7 @@ async function exportQuotationExcel() {
           const termsCell = doc.createElementNS(nsResolver, 'c')
           termsCell.setAttribute('r', `A${termsRowNum}`)
           termsCell.setAttribute('t', 's')
+          if (wrapTextStyleIndex) termsCell.setAttribute('s', wrapTextStyleIndex)
           const termsV = doc.createElementNS(nsResolver, 'v')
           termsV.textContent = String(contentSsIndex)
           termsCell.appendChild(termsV)
@@ -2149,6 +2219,11 @@ async function exportQuotationExcel() {
         if (ssDoc2) {
           const updatedSsXml = serializer.serializeToString(ssDoc2)
           zip.file('xl/sharedStrings.xml', updatedSsXml)
+        }
+
+        if (stylesDoc) {
+          const updatedStylesXml = serializer.serializeToString(stylesDoc)
+          zip.file('xl/styles.xml', updatedStylesXml)
         }
 
         hasOriginalFile = true
