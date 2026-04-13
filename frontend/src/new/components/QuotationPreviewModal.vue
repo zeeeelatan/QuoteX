@@ -322,7 +322,7 @@
                     <button class="btn-download" @click="downloadQuotation" :disabled="isDownloading">
                       <span v-if="isDownloading" class="material-symbols-outlined spinning">progress_activity</span>
                       <span v-else class="material-symbols-outlined">download</span>
-                      {{ isDownloading ? '生成中...' : '直接下载' }}
+                      {{ isDownloading ? '生成中...' : exportFormat === 'excel' ? '下载 Excel' : '下载 PDF' }}
                     </button>
                     <button class="btn-email" @click="sendEmail">
                       <span class="material-symbols-outlined">send</span>
@@ -344,11 +344,14 @@ import { ref, computed, onMounted, watch } from 'vue'
 import axios from 'axios'
 import html2canvas from 'html2canvas'
 import { jsPDF } from 'jspdf'
+import ExcelJS from 'exceljs'
+import { saveAs } from 'file-saver'
 
 const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5002'
 
 const props = defineProps<{
   isOpen: boolean
+  mode?: 'preview' | 'export'
   data: any
 }>()
 
@@ -495,7 +498,7 @@ watch(() => props.isOpen, (newVal) => {
 
 // UI State
 const zoomLevel = ref(100)
-const sidebarOpen = ref(false)
+const sidebarOpen = ref(true)
 const isMaximized = ref(false)
 const isMinimized = ref(false)
 
@@ -568,6 +571,18 @@ function loadCustomLogo() {
 onMounted(() => {
   loadCustomLogo()
 })
+
+watch(
+  () => [props.isOpen, props.mode] as const,
+  ([isOpen]) => {
+    if (!isOpen) {
+      sidebarOpen.value = false
+      return
+    }
+    sidebarOpen.value = true
+  },
+  { immediate: true }
+)
 
 // 切换公司时，若无手动上传 Logo，则同步切换为所选公司的 Logo
 watch(selectedCompanyId, (newId) => {
@@ -682,13 +697,37 @@ function zoomOut() {
 
 function toggleMaximize() {
   isMaximized.value = !isMaximized.value
-  if (isMaximized.value) {
-    sidebarOpen.value = false
-  }
 }
 
 async function downloadQuotation() {
-  if (!paperRef.value || isDownloading.value) return
+  if (isDownloading.value) return
+
+  if (exportFormat.value === 'word') {
+    alert('Word 导出暂未实现，请先选择 PDF 或 Excel')
+    return
+  }
+
+  if (exportFormat.value === 'excel') {
+    await downloadExcel()
+  } else {
+    await downloadPDF()
+  }
+}
+
+// 生成文件名前缀
+function getFileNameBase(): string {
+  const date = new Date()
+  const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
+  return `驻场服务报价单_${selectedCompanyInfo.value.companyName}_${dateStr}`
+}
+
+// 格式化数字为货币字符串（不带 ¥ 符号，用于 Excel）
+function formatNumber(num: number): number {
+  return Math.round((num || 0) * 100) / 100
+}
+
+async function downloadPDF() {
+  if (!paperRef.value) return
 
   isDownloading.value = true
 
@@ -760,17 +799,266 @@ async function downloadQuotation() {
 
     pdf.addImage(imgData, 'PNG', x, y, finalWidth, finalHeight)
 
-    // 生成文件名
-    const date = new Date()
-    const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
-    const fileName = `驻场服务报价单_${selectedCompanyInfo.value.companyName}_${dateStr}.pdf`
-
-    // 下载 PDF
-    pdf.save(fileName)
+    pdf.save(`${getFileNameBase()}.pdf`)
 
   } catch (error) {
     console.error('PDF 生成失败:', error)
     alert('PDF 生成失败，请重试')
+  } finally {
+    isDownloading.value = false
+  }
+}
+
+async function downloadExcel() {
+  isDownloading.value = true
+
+  try {
+    const wb = new ExcelJS.Workbook()
+    wb.creator = selectedCompanyInfo.value.companyName
+    wb.created = new Date()
+
+    const ws = wb.addWorksheet('驻场服务报价单', {
+      pageSetup: { paperSize: 9, orientation: 'portrait', fitToPage: true }
+    })
+
+    // 列宽设置
+    ws.columns = [
+      { width: 6 },   // A - 序号
+      { width: 22 },  // B - 服务岗位
+      { width: 14 },  // C - 驻场城市
+      { width: 10 },  // D - 人数
+      { width: 12 },  // E - 周期(月)
+      { width: 18 },  // F - 综合单价
+      { width: 18 },  // G - 总价
+    ]
+
+    // 样式定义
+    const titleFont: Partial<ExcelJS.Font> = { name: '微软雅黑', size: 16, bold: true, color: { argb: 'FF1A3A5C' } }
+    const headerFont: Partial<ExcelJS.Font> = { name: '微软雅黑', size: 10, bold: true, color: { argb: 'FFFFFFFF' } }
+    const labelFont: Partial<ExcelJS.Font> = { name: '微软雅黑', size: 9, color: { argb: 'FF666666' } }
+    const valueFont: Partial<ExcelJS.Font> = { name: '微软雅黑', size: 10, bold: true }
+    const normalFont: Partial<ExcelJS.Font> = { name: '微软雅黑', size: 10 }
+    const headerFill: ExcelJS.FillPattern = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1A3A5C' } }
+    const altRowFill: ExcelJS.FillPattern = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF7F9FC' } }
+    const totalBgFill: ExcelJS.FillPattern = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEEF3FA' } }
+    const thinBorder: Partial<ExcelJS.Borders> = {
+      top: { style: 'thin', color: { argb: 'FFD0D5DD' } },
+      bottom: { style: 'thin', color: { argb: 'FFD0D5DD' } },
+      left: { style: 'thin', color: { argb: 'FFD0D5DD' } },
+      right: { style: 'thin', color: { argb: 'FFD0D5DD' } }
+    }
+
+    let rowNum = 1
+
+    // ===== 标题 =====
+    ws.mergeCells(`A${rowNum}:G${rowNum}`)
+    const titleRow = ws.getRow(rowNum)
+    titleRow.height = 36
+    const titleCell = ws.getCell(`A${rowNum}`)
+    titleCell.value = '驻场服务报价单'
+    titleCell.font = titleFont
+    titleCell.alignment = { horizontal: 'center', vertical: 'middle' }
+    rowNum++
+
+    // 编号行
+    ws.mergeCells(`A${rowNum}:G${rowNum}`)
+    const numCell = ws.getCell(`A${rowNum}`)
+    numCell.value = `编号: Q${currentYear}${String(currentMonth).padStart(2, '0')}${String(currentDay).padStart(2, '0')}-XA009`
+    numCell.font = { ...labelFont, size: 9 }
+    numCell.alignment = { horizontal: 'center', vertical: 'middle' }
+    ws.getRow(rowNum).height = 20
+    rowNum++
+
+    // 空行
+    rowNum++
+
+    // ===== 报价信息 =====
+    // 报价公司
+    ws.mergeCells(`A${rowNum}:C${rowNum}`)
+    ws.getCell(`A${rowNum}`).value = '报价公司信息'
+    ws.getCell(`A${rowNum}`).font = labelFont
+    ws.mergeCells(`E${rowNum}:G${rowNum}`)
+    ws.getCell(`E${rowNum}`).value = '客户信息'
+    ws.getCell(`E${rowNum}`).font = labelFont
+    rowNum++
+
+    ws.mergeCells(`A${rowNum}:C${rowNum}`)
+    ws.getCell(`A${rowNum}`).value = selectedCompanyInfo.value.companyName
+    ws.getCell(`A${rowNum}`).font = valueFont
+    ws.mergeCells(`E${rowNum}:G${rowNum}`)
+    ws.getCell(`E${rowNum}`).value = selectedCustomerInfo.value.customerName
+    ws.getCell(`E${rowNum}`).font = valueFont
+    rowNum++
+
+    ws.mergeCells(`A${rowNum}:C${rowNum}`)
+    ws.getCell(`A${rowNum}`).value = `联系人：${selectedCompanyInfo.value.contactName}${selectedCompanyInfo.value.department ? ` (${selectedCompanyInfo.value.department})` : ''}`
+    ws.getCell(`A${rowNum}`).font = normalFont
+    ws.mergeCells(`E${rowNum}:G${rowNum}`)
+    ws.getCell(`E${rowNum}`).value = `地址：${selectedCustomerInfo.value.customerAddress}`
+    ws.getCell(`E${rowNum}`).font = normalFont
+    rowNum++
+
+    ws.mergeCells(`A${rowNum}:C${rowNum}`)
+    ws.getCell(`A${rowNum}`).value = `联系电话：${selectedCompanyInfo.value.contactPhone}`
+    ws.getCell(`A${rowNum}`).font = normalFont
+    ws.mergeCells(`E${rowNum}:G${rowNum}`)
+    ws.getCell(`E${rowNum}`).value = `报价日期：${quotationDate.value}`
+    ws.getCell(`E${rowNum}`).font = normalFont
+    rowNum++
+
+    // 项目信息 & 有效期
+    ws.mergeCells(`A${rowNum}:C${rowNum}`)
+    ws.getCell(`A${rowNum}`).value = `${editableProjectLabel.value}：${editableProjectName.value}`
+    ws.getCell(`A${rowNum}`).font = normalFont
+    ws.mergeCells(`E${rowNum}:G${rowNum}`)
+    ws.getCell(`E${rowNum}`).value = `有效期至：${expiryDate.value}`
+    ws.getCell(`E${rowNum}`).font = normalFont
+    rowNum++
+
+    // 空行
+    rowNum++
+
+    // ===== 服务明细表头 =====
+    const headers = ['序号', '服务岗位', '驻场城市', '人数', '周期(月)', '综合单价(¥/人/月)', '总价(¥)']
+    const headerRow = ws.getRow(rowNum)
+    headerRow.height = 28
+    headers.forEach((h, i) => {
+      const cell = ws.getCell(rowNum, i + 1)
+      cell.value = h
+      cell.font = headerFont
+      cell.fill = headerFill
+      cell.alignment = { horizontal: i >= 3 ? 'right' : 'left', vertical: 'middle' }
+      cell.border = thinBorder
+    })
+    rowNum++
+
+    // ===== 服务明细数据 =====
+    const rows = props.data.positionRows || []
+    rows.forEach((row: any, index: number) => {
+      const months = getServiceMonths(row)
+      const unitPrice = getRowUnitPrice(row)
+      const totalPrice = getRowTotalPrice(row)
+      const dataRow = ws.getRow(rowNum)
+      dataRow.height = 24
+
+      const values = [
+        index + 1,
+        row.position || '服务岗位',
+        row.city || '-',
+        row.personnelCount || 1,
+        months,
+        formatNumber(unitPrice),
+        formatNumber(totalPrice)
+      ]
+
+      values.forEach((v, i) => {
+        const cell = ws.getCell(rowNum, i + 1)
+        cell.value = v
+        cell.font = normalFont
+        cell.alignment = { horizontal: i >= 3 ? 'right' : 'left', vertical: 'middle' }
+        cell.border = thinBorder
+        // 交替行背景
+        if (index % 2 === 1) {
+          cell.fill = altRowFill
+        }
+        // 金额列数字格式
+        if (i >= 5) {
+          cell.numFmt = '#,##0.00'
+        }
+      })
+      rowNum++
+    })
+
+    // 空行
+    rowNum++
+
+    // ===== 汇总区域 =====
+    const laborBeforeVat = getLaborCostBeforeVat()
+    const vatRate = props.data.globalParams?.vatRate || 6
+    const finalAmount = getFinalProjectAmount()
+
+    const summaryItems = [
+      { label: '项目总价（未税）', value: formatNumber(laborBeforeVat) },
+      { label: '增值税率', value: `${vatRate}%` },
+      { label: '项目总价', value: formatNumber(finalAmount) }
+    ]
+
+    summaryItems.forEach((item, index) => {
+      ws.mergeCells(`A${rowNum}:E${rowNum}`)
+      const labelCell = ws.getCell(`A${rowNum}`)
+      labelCell.value = item.label
+      labelCell.alignment = { horizontal: 'right', vertical: 'middle' }
+
+      ws.mergeCells(`F${rowNum}:G${rowNum}`)
+      const valCell = ws.getCell(`F${rowNum}`)
+      valCell.alignment = { horizontal: 'right', vertical: 'middle' }
+
+      if (index === summaryItems.length - 1) {
+        // 合计行加粗加背景
+        labelCell.font = { ...valueFont, size: 12, color: { argb: 'FF1A3A5C' } }
+        valCell.value = item.value as number
+        valCell.font = { ...valueFont, size: 12, color: { argb: 'FF1A3A5C' } }
+        valCell.numFmt = '#,##0.00'
+        // 背景
+        for (let c = 1; c <= 7; c++) {
+          ws.getCell(rowNum, c).fill = totalBgFill
+          ws.getCell(rowNum, c).border = thinBorder
+        }
+        ws.getRow(rowNum).height = 30
+      } else {
+        labelCell.font = normalFont
+        valCell.value = typeof item.value === 'number' ? item.value : item.value
+        valCell.font = normalFont
+        if (typeof item.value === 'number') {
+          valCell.numFmt = '#,##0.00'
+        }
+        ws.getRow(rowNum).height = 24
+      }
+      rowNum++
+    })
+
+    // 空行
+    rowNum++
+    rowNum++
+
+    // ===== 服务条款 =====
+    ws.mergeCells(`A${rowNum}:G${rowNum}`)
+    ws.getCell(`A${rowNum}`).value = '服务条款：'
+    ws.getCell(`A${rowNum}`).font = { ...valueFont, size: 9 }
+    rowNum++
+
+    ws.mergeCells(`A${rowNum}:G${rowNum}`)
+    ws.getCell(`A${rowNum}`).value = '1. 本报价单基于当前市场人力成本测算，有效期内签署有效。'
+    ws.getCell(`A${rowNum}`).font = { ...normalFont, size: 9, color: { argb: 'FF666666' } }
+    rowNum++
+
+    ws.mergeCells(`A${rowNum}:G${rowNum}`)
+    ws.getCell(`A${rowNum}`).value = `2. 最终解释权归${selectedCompanyInfo.value.companyName}所有。`
+    ws.getCell(`A${rowNum}`).font = { ...normalFont, size: 9, color: { argb: 'FF666666' } }
+    rowNum++
+
+    // 空行
+    rowNum++
+
+    // 签章行
+    ws.mergeCells(`E${rowNum}:G${rowNum}`)
+    ws.getCell(`E${rowNum}`).value = selectedCompanyInfo.value.companyName
+    ws.getCell(`E${rowNum}`).font = valueFont
+    ws.getCell(`E${rowNum}`).alignment = { horizontal: 'right' }
+    rowNum++
+
+    ws.mergeCells(`E${rowNum}:G${rowNum}`)
+    ws.getCell(`E${rowNum}`).value = quotationDate.value
+    ws.getCell(`E${rowNum}`).font = normalFont
+    ws.getCell(`E${rowNum}`).alignment = { horizontal: 'right' }
+
+    // 导出
+    const buffer = await wb.xlsx.writeBuffer()
+    saveAs(new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `${getFileNameBase()}.xlsx`)
+
+  } catch (error) {
+    console.error('Excel 生成失败:', error)
+    alert('Excel 生成失败，请重试')
   } finally {
     isDownloading.value = false
   }

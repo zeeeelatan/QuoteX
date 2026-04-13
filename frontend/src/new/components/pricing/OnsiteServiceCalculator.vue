@@ -811,6 +811,7 @@
     <!-- 预览报价单弹窗 -->
     <QuotationPreviewModal
       :is-open="isPreviewModalOpen"
+      :mode="previewModalMode"
       :data="previewData"
       @close="closePreviewModal"
     />
@@ -837,6 +838,7 @@ const router = useRouter()
 
 // Preview Modal State
 const isPreviewModalOpen = ref(false)
+const previewModalMode = ref<'preview' | 'export'>('preview')
 const previewData = ref<any>({
   positionRows: [],
   globalParams: {},
@@ -2900,6 +2902,7 @@ function showCalcDetails() {
 }
 
 async function startCalculation() {
+  previewModalMode.value = 'preview'
   // 计算每个岗位在总成本中的占比，用于分配 finalProjectAmount
   const totalBase = baseSubtotal.value || 1  // 防止除以0
 
@@ -2988,10 +2991,12 @@ async function startCalculation() {
 
 function closePreviewModal() {
   isPreviewModalOpen.value = false
+  previewModalMode.value = 'preview'
 }
 
 function exportQuotation() {
-  ElMessage.info('导出功能开发中...')
+  previewModalMode.value = 'export'
+  startCalculation()
 }
 
 // Close all dropdowns when clicking outside
