@@ -98,6 +98,18 @@
       </div>
 
       <div class="table-container">
+        <div class="sheet-tabs-bar" v-if="sheetNames.length > 1">
+          <button
+            v-for="sheet in sheetNames"
+            :key="sheet"
+            class="sheet-tab-btn"
+            :class="{ active: sheet === activeSheetName }"
+            @click="switchSheet(sheet)"
+          >
+            <span>{{ sheet }}</span>
+            <span class="sheet-tab-count">{{ sheetGroups[sheet]?.length || 0 }}</span>
+          </button>
+        </div>
         <div class="table-header">
           <div class="table-controls-left">
             <div class="filter-select">
@@ -411,6 +423,9 @@ const router = useRouter()
 // State
 // 使用 shallowRef 优化大数据量性能，只追踪数组引用变化而不追踪内部对象
 const tableData = shallowRef<any[]>([])
+const sheetGroups = ref<Record<string, any[]>>({})
+const activeSheetName = ref('')
+const sheetNames = computed(() => Object.keys(sheetGroups.value))
 const allSelected = ref(false)
 const isSavingDraft = ref(false)
 const isLoadingData = ref(false)
@@ -482,6 +497,7 @@ function confirmBatchAdjust() {
     adjustedCount++
   })
 
+  syncActiveSheetGroup()
   triggerRef(tableData)
   closeBatchAdjustDialog()
   ElMessage.success(`已${direction === 'up' ? '上调' : '下调'} ${adjustedCount} 条数据的最终报价 ${percent}%`)
@@ -496,6 +512,73 @@ const openProductDatabaseModal = () => {
 
 const closeProductDatabaseModal = () => {
   isProductDatabaseModalOpen.value = false
+}
+
+function resolveBasePrice(item: any): number {
+  return Number(item.basePrice ?? item.price ?? item.originalPrice ?? 0) || 0
+}
+
+function flattenSheetGroups() {
+  syncActiveSheetGroup()
+  return sheetNames.value.flatMap(sheetName => sheetGroups.value[sheetName] || [])
+}
+
+function setSheetGroupsFromRows(rows: any[]) {
+  const previousActiveSheet = activeSheetName.value
+  const groups: Record<string, any[]> = {}
+  rows.forEach((row) => {
+    const sheetName = row.sheetName || row._sheetName || '默认工作表'
+    if (!groups[sheetName]) groups[sheetName] = []
+    groups[sheetName].push({
+      ...row,
+      sheetName,
+      sourceRowIndex: Number.isFinite(Number(row.sourceRowIndex ?? row._sheetRowIndex))
+        ? Number(row.sourceRowIndex ?? row._sheetRowIndex)
+        : groups[sheetName].length
+    })
+  })
+  sheetGroups.value = groups
+  activeSheetName.value = previousActiveSheet && groups[previousActiveSheet]
+    ? previousActiveSheet
+    : Object.keys(groups)[0] || ''
+  tableData.value = activeSheetName.value ? (groups[activeSheetName.value] || []) : []
+}
+
+function setSheetGroupsFromSavedGroups(groups: Record<string, any[]>) {
+  const previousActiveSheet = activeSheetName.value
+  sheetGroups.value = Object.fromEntries(
+    Object.entries(groups || {}).map(([sheetName, rows]) => [
+      sheetName,
+      (rows || []).map((row: any, index: number) => ({
+        ...row,
+        sheetName: row.sheetName || row._sheetName || sheetName,
+        sourceRowIndex: Number.isFinite(Number(row.sourceRowIndex ?? row._sheetRowIndex))
+          ? Number(row.sourceRowIndex ?? row._sheetRowIndex)
+          : index
+      }))
+    ])
+  )
+  activeSheetName.value = previousActiveSheet && sheetGroups.value[previousActiveSheet]
+    ? previousActiveSheet
+    : Object.keys(sheetGroups.value)[0] || ''
+  tableData.value = activeSheetName.value ? (sheetGroups.value[activeSheetName.value] || []) : []
+}
+
+function syncActiveSheetGroup() {
+  if (!activeSheetName.value) return
+  sheetGroups.value = {
+    ...sheetGroups.value,
+    [activeSheetName.value]: tableData.value
+  }
+}
+
+function switchSheet(sheetName: string) {
+  if (sheetName === activeSheetName.value) return
+  syncActiveSheetGroup()
+  activeSheetName.value = sheetName
+  tableData.value = sheetGroups.value[sheetName] || []
+  allSelected.value = false
+  periodUnitDropdownVisible.value = false
 }
 
 // Computed: Stats
@@ -537,8 +620,10 @@ const lowProfitCount = computed(() => {
 // Get current state for saving
 function getCurrentState(): PriceAdjustmentState {
   return {
-    tableData: tableData.value,
-    hasData: tableData.value.length > 0
+    tableData: flattenSheetGroups(),
+    sheetGroups: sheetGroups.value,
+    activeSheetName: activeSheetName.value,
+    hasData: flattenSheetGroups().length > 0
   }
 }
 
@@ -558,8 +643,10 @@ onBeforeRouteLeave((to, from, next) => {
 
     // 同时保存流程数据（供下一步使用）
     try {
-    saveFlowData(FLOW_DATA_KEYS.ADJUSTED_DATA, tableData.value)
-      console.log('PriceAdjustment flow data saved:', tableData.value.length, 'items')
+    const allRows = flattenSheetGroups()
+    saveFlowData(FLOW_DATA_KEYS.ADJUSTED_DATA, allRows)
+    saveFlowData(FLOW_DATA_KEYS.ADJUSTED_SHEET_GROUPS, sheetGroups.value)
+      console.log('PriceAdjustment flow data saved:', allRows.length, 'items')
     } catch (error) {
       console.error('Failed to save PriceAdjustment flow data:', error)
       // 如果保存失败，可能是 sessionStorage 容量不足
@@ -567,8 +654,10 @@ onBeforeRouteLeave((to, from, next) => {
       try {
         // 清除 CONVERTED_DATA（已经不需要）
         clearFlowData(FLOW_DATA_KEYS.CONVERTED_DATA)
-        saveFlowData(FLOW_DATA_KEYS.ADJUSTED_DATA, tableData.value)
-        console.log('PriceAdjustment flow data saved after cleanup:', tableData.value.length, 'items')
+        const allRows = flattenSheetGroups()
+        saveFlowData(FLOW_DATA_KEYS.ADJUSTED_DATA, allRows)
+        saveFlowData(FLOW_DATA_KEYS.ADJUSTED_SHEET_GROUPS, sheetGroups.value)
+        console.log('PriceAdjustment flow data saved after cleanup:', allRows.length, 'items')
       } catch (retryError) {
         console.error('Failed to save flow data even after cleanup:', retryError)
       }
@@ -620,7 +709,8 @@ const goToQuotationGeneration = () => {
 
   // 尝试保存流程数据供下一页面使用
   try {
-  saveFlowData(FLOW_DATA_KEYS.ADJUSTED_DATA, tableData.value)
+  saveFlowData(FLOW_DATA_KEYS.ADJUSTED_DATA, flattenSheetGroups())
+  saveFlowData(FLOW_DATA_KEYS.ADJUSTED_SHEET_GROUPS, sheetGroups.value)
     console.log('PriceAdjustment flow data saved successfully')
   } catch (error) {
     console.error('Failed to save flow data:', error)
@@ -632,7 +722,7 @@ const goToQuotationGeneration = () => {
 
 // 存为草稿
 async function saveAsDraft() {
-  if (tableData.value.length === 0) {
+  if (flattenSheetGroups().length === 0) {
     ElMessage.warning('请先完成价格调整后再保存草稿')
     return
   }
@@ -641,7 +731,8 @@ async function saveAsDraft() {
   try {
     // 保存当前状态
     savePageState(PAGE_STATE_KEYS.PRICE_ADJUSTMENT, getCurrentState())
-    saveFlowData(FLOW_DATA_KEYS.ADJUSTED_DATA, tableData.value)
+    saveFlowData(FLOW_DATA_KEYS.ADJUSTED_DATA, flattenSheetGroups())
+    saveFlowData(FLOW_DATA_KEYS.ADJUSTED_SHEET_GROUPS, sheetGroups.value)
 
     // 获取当前草稿ID（如果有）
     const existingDraftId = getCurrentDraftId()
@@ -673,6 +764,7 @@ function toggleSelectAll() {
     item.selected = allSelected.value
   })
   // 使用 shallowRef 时需要手动触发更新
+  syncActiveSheetGroup()
   triggerRef(tableData)
 }
 
@@ -695,6 +787,7 @@ function updateFinalPrice(index: number, event: Event) {
     item.profitMargin = undefined
   }
   // 使用 shallowRef 时需要手动触发更新
+  syncActiveSheetGroup()
   triggerRef(tableData)
 }
 
@@ -705,6 +798,7 @@ function resetToSuggested(index: number) {
   // 重置为建议售价时，比率为 0%
   item.profitMargin = 0
   // 使用 shallowRef 时需要手动触发更新
+  syncActiveSheetGroup()
   triggerRef(tableData)
 }
 
@@ -715,6 +809,7 @@ function resetAllPrices() {
     item.profitMargin = 0
   })
   // 使用 shallowRef 时需要手动触发更新
+  syncActiveSheetGroup()
   triggerRef(tableData)
 }
 
@@ -741,7 +836,7 @@ function closePeriodUnitDropdown() {
 function batchUpdateServicePeriodUnit(unit: string) {
   tableData.value.forEach(item => {
     item.servicePeriodUnit = unit
-    const basePrice = item.basePrice || item.price || 0
+    const basePrice = resolveBasePrice(item)
     let referenceCost = basePrice
 
     if (unit === '月') {
@@ -756,6 +851,7 @@ function batchUpdateServicePeriodUnit(unit: string) {
     item.profitMargin = 0
   })
   // 使用 shallowRef 时需要手动触发更新
+  syncActiveSheetGroup()
   triggerRef(tableData)
   closePeriodUnitDropdown()
 }
@@ -764,7 +860,7 @@ function batchUpdateServicePeriodUnit(unit: string) {
 function onPeriodUnitChange(index: number) {
   // 服务周期单位改变时，重新计算该行的参考成本和建议售价
   const item = tableData.value[index]
-  const basePrice = item.basePrice || item.price || 0
+  const basePrice = resolveBasePrice(item)
   let referenceCost = basePrice
 
   if (item.servicePeriodUnit === '月') {
@@ -810,11 +906,12 @@ function formatManufacturer(manufacturer: string | undefined): string {
 }
 
 // Calculate all data prices (优化：分批处理大数据量)
-function calculatePrices() {
+function calculatePrices(): Promise<void> {
   const items = tableData.value
   const batchSize = 500 // 每批处理 500 条数据
   let currentIndex = 0
 
+  return new Promise((resolve) => {
   function processBatch() {
     const endIndex = Math.min(currentIndex + batchSize, items.length)
     
@@ -824,7 +921,7 @@ function calculatePrices() {
     // - "年": 不做调整，使用原始价格
     // - "月": 原始价格 / 12
     // - "天": 原始价格 / 365
-    const basePrice = item.basePrice || item.price || 0
+    const basePrice = resolveBasePrice(item)
     let referenceCost = basePrice
 
     if (item.servicePeriodUnit === '月') {
@@ -864,13 +961,18 @@ function calculatePrices() {
       } else {
         setTimeout(processBatch, 0)
       }
+    } else {
+      resolve()
     }
   }
 
   // 开始处理第一批
   if (items.length > 0) {
     processBatch()
+  } else {
+    resolve()
   }
+  })
 }
 
 // Load data on mount (优化：分批处理大数据量)
@@ -885,8 +987,17 @@ onMounted(async () => {
 
   if (navigationMode === 'flow') {
     // 流程推进模式：重新加载流程数据（来自智能匹配的最新数据）
+    const flowSheetGroups = getFlowData<Record<string, any[]>>(FLOW_DATA_KEYS.MATCHED_SHEET_GROUPS)
     const flowData = getFlowData<any[]>(FLOW_DATA_KEYS.MATCHED_DATA)
-    if (flowData && flowData.length > 0) {
+    if (flowSheetGroups && Object.keys(flowSheetGroups).length > 0) {
+      console.log('Loading fresh grouped flow data from SmartMatching:', Object.keys(flowSheetGroups))
+      setSheetGroupsFromSavedGroups(flowSheetGroups)
+      tableData.value = flattenSheetGroups()
+      await calculatePrices()
+      setSheetGroupsFromRows(tableData.value)
+      clearPageState(PAGE_STATE_KEYS.PRICE_ADJUSTMENT)
+      ElMessage.success(`成功加载 ${Object.keys(flowSheetGroups).length} 个工作表`)
+    } else if (flowData && flowData.length > 0) {
       console.log('Loading fresh flow data from SmartMatching:', flowData.length, 'items')
         
         // 使用分批处理来转换数据，避免阻塞 UI
@@ -903,7 +1014,7 @@ onMounted(async () => {
           const batchProcessed = batch.map(item => ({
         ...item,
         selected: false,
-        basePrice: item.price || 0,  // 保存原始价格，用于根据服务周期单位计算参考成本
+        basePrice: resolveBasePrice(item),  // 优先使用调整后单价，缺失时回退到原始单价
         suggestedPrice: null,
         finalPrice: null,  // 初始化为 null，让 calculatePrices() 根据 servicePeriodUnit 计算正确的值
         profitMargin: undefined,
@@ -924,7 +1035,9 @@ onMounted(async () => {
         }
 
         // 所有数据转换完成后，计算价格
-      calculatePrices()
+      await calculatePrices()
+      syncActiveSheetGroup()
+      setSheetGroupsFromRows(processedData)
         
       // 清除旧的页面状态，确保下次加载时使用最新数据
       clearPageState(PAGE_STATE_KEYS.PRICE_ADJUSTMENT)
@@ -940,12 +1053,36 @@ onMounted(async () => {
     const savedState = restorePageState<PriceAdjustmentState>(PAGE_STATE_KEYS.PRICE_ADJUSTMENT)
     if (savedState && savedState.hasData && savedState.tableData && savedState.tableData.length > 0) {
       console.log('Restoring saved page state:', savedState.tableData.length, 'items')
-      tableData.value = savedState.tableData
+      if (savedState.sheetGroups && Object.keys(savedState.sheetGroups).length > 0) {
+        setSheetGroupsFromSavedGroups(savedState.sheetGroups)
+        const needsRecalc = Object.values(sheetGroups.value).some((rows: any) =>
+          (rows as any[]).some(item =>
+            resolveBasePrice(item) > 0 &&
+            (item.referenceCost === undefined || item.suggestedPrice === undefined || item.finalPrice === undefined || item.finalPrice === null)
+          )
+        )
+        if (needsRecalc) {
+          tableData.value = flattenSheetGroups()
+          await calculatePrices()
+          setSheetGroupsFromRows(tableData.value)
+        }
+      } else {
+        setSheetGroupsFromRows(savedState.tableData)
+        await calculatePrices()
+      }
         ElMessage.success(`已恢复 ${savedState.tableData.length} 条数据`)
     } else {
       // 如果没有保存的状态，尝试从流程数据加载
+      const flowSheetGroups = getFlowData<Record<string, any[]>>(FLOW_DATA_KEYS.MATCHED_SHEET_GROUPS)
       const flowData = getFlowData<any[]>(FLOW_DATA_KEYS.MATCHED_DATA)
-      if (flowData && flowData.length > 0) {
+      if (flowSheetGroups && Object.keys(flowSheetGroups).length > 0) {
+        console.log('No saved state, loading grouped flow data:', Object.keys(flowSheetGroups))
+        setSheetGroupsFromSavedGroups(flowSheetGroups)
+        tableData.value = flattenSheetGroups()
+        await calculatePrices()
+        setSheetGroupsFromRows(tableData.value)
+        ElMessage.success(`成功加载 ${Object.keys(flowSheetGroups).length} 个工作表`)
+      } else if (flowData && flowData.length > 0) {
         console.log('No saved state, loading flow data:', flowData.length, 'items')
           
           // 分批处理
@@ -961,7 +1098,7 @@ onMounted(async () => {
             const batchProcessed = batch.map(item => ({
           ...item,
           selected: false,
-              basePrice: item.price || 0,
+              basePrice: resolveBasePrice(item),
           suggestedPrice: null,
               finalPrice: null,
           profitMargin: undefined,
@@ -977,7 +1114,9 @@ onMounted(async () => {
             }
           }
           
-        calculatePrices()
+        await calculatePrices()
+        syncActiveSheetGroup()
+        setSheetGroupsFromRows(processedData)
           ElMessage.success(`成功加载 ${flowData.length} 条数据`)
       }
     }
@@ -1001,8 +1140,11 @@ onUnmounted(() => {
 // 监听 tableData 变化，实时保存状态（用于面包屑跳转恢复）
 watch(tableData, (newData) => {
   if (newData && newData.length > 0) {
+    syncActiveSheetGroup()
     savePageState(PAGE_STATE_KEYS.PRICE_ADJUSTMENT, {
-      tableData: newData,
+      tableData: flattenSheetGroups(),
+      sheetGroups: sheetGroups.value,
+      activeSheetName: activeSheetName.value,
       hasData: true
     })
   }
@@ -1469,6 +1611,41 @@ h1, h2, h3, h4, h5, h6 {
   border-radius: 0.75rem;
   box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
   overflow: hidden;
+}
+
+.sheet-tabs-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem 0;
+}
+
+.sheet-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: 32px;
+  padding: 0 0.75rem;
+  border: 1px solid #334155;
+  border-radius: 0.375rem;
+  background: rgba(15, 23, 42, 0.7);
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 0.8125rem;
+}
+
+.sheet-tab-btn.active {
+  border-color: #135bec;
+  background: #135bec;
+  color: #fff;
+}
+
+.sheet-tab-count {
+  min-width: 20px;
+  padding: 0 0.375rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 0.7rem;
 }
 
 .table-header {

@@ -116,6 +116,18 @@
 
       <!-- Data Table -->
       <div class="table-container" v-if="tableData.length > 0">
+        <div class="sheet-tabs-bar" v-if="sheetNames.length > 1">
+          <button
+            v-for="sheet in sheetNames"
+            :key="sheet"
+            class="sheet-tab-btn"
+            :class="{ active: sheet === activeSheetName }"
+            @click="switchSheet(sheet)"
+          >
+            <span>{{ sheet }}</span>
+            <span class="sheet-tab-count">{{ sheetGroups[sheet]?.length || 0 }}</span>
+          </button>
+        </div>
         <div class="table-header">
           <div class="table-controls-left">
             <div class="filter-select">
@@ -543,6 +555,9 @@ const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5002'
 // State
 // 使用 shallowRef 优化大数据量性能，只追踪数组引用变化而不追踪内部对象
 const tableData = shallowRef<any[]>([])
+const sheetGroups = ref<Record<string, any[]>>({})
+const activeSheetName = ref('')
+const sheetNames = computed(() => Object.keys(sheetGroups.value))
 const loading = ref(false)
 const isSavingDraft = ref(false)
 const isNavigating = ref(false)
@@ -620,6 +635,94 @@ const lowConfidenceCount = computed(() =>
 const unmatchedCount = computed(() =>
   tableData.value.filter(item => !item.matchedModel || item.matchRate === 0).length
 )
+
+function flattenSheetGroups() {
+  syncActiveSheetGroup()
+  return sheetNames.value.flatMap(sheetName => sheetGroups.value[sheetName] || [])
+}
+
+function setSheetGroupsFromRows(rows: any[]) {
+  const previousActiveSheet = activeSheetName.value
+  const groups: Record<string, any[]> = {}
+  rows.forEach((row) => {
+    const sheetName = row.sheetName || row._sheetName || '默认工作表'
+    if (!groups[sheetName]) groups[sheetName] = []
+    groups[sheetName].push({
+      ...row,
+      sheetName,
+      sourceRowIndex: Number.isFinite(Number(row.sourceRowIndex ?? row._sheetRowIndex))
+        ? Number(row.sourceRowIndex ?? row._sheetRowIndex)
+        : groups[sheetName].length
+    })
+  })
+  sheetGroups.value = groups
+  activeSheetName.value = previousActiveSheet && groups[previousActiveSheet]
+    ? previousActiveSheet
+    : Object.keys(groups)[0] || ''
+  tableData.value = activeSheetName.value ? (groups[activeSheetName.value] || []) : []
+}
+
+function syncActiveSheetGroup() {
+  if (!activeSheetName.value) return
+  sheetGroups.value = {
+    ...sheetGroups.value,
+    [activeSheetName.value]: tableData.value
+  }
+}
+
+function switchSheet(sheetName: string) {
+  if (sheetName === activeSheetName.value) return
+  syncActiveSheetGroup()
+  activeSheetName.value = sheetName
+  tableData.value = sheetGroups.value[sheetName] || []
+  selectedRows.value = new Set()
+  filterStatus.value = 'all'
+}
+
+function createMatchingRow(row: any, index: number, sheetName = row.sheetName || row._sheetName || '') {
+  return {
+    manufacturer: row['厂商'] || '',
+    model: row['设备/软件型号'] || '',
+    originalBrandModel: `${row['厂商'] || ''}-${row['设备/软件型号'] || ''}`,
+    originalManufacturer: row['厂商'] || '',
+    category: row['设备/软件分类'] || '',
+    deviceCategory: '',
+    serviceLevel: row['服务级别'] || '7*24*NCR',
+    city: row['城市'] || '',
+    quantity: parseInt(row['设备数量']) || 1,
+    servicePeriod: row['服务周期'] || '1',
+    servicePeriodUnit: normalizeServicePeriodUnit(row['服务周期单位']),
+    sheetName,
+    sourceRowIndex: Number.isFinite(Number(row._sheetRowIndex ?? row.sourceRowIndex))
+      ? Number(row._sheetRowIndex ?? row.sourceRowIndex)
+      : index,
+    matchedModel: '',
+    matchRate: 0,
+    matchedManufacturer: '',
+    matchedSeries: '',
+    originalPrice: null as number | null,
+    price: null as number | null,
+    serviceLevelCoefficient: 1,
+    matchedServiceLevel: null,
+    confirmed: false,
+    primary_category: '',
+    secondary_category: '',
+    tertiary_category: '',
+    device_price: null as number | null,
+    rate: 0
+  }
+}
+
+function setSheetGroupsFromConvertedSheets(sheetTables: Array<{ sheetName: string; data: any[] }>) {
+  const groups: Record<string, any[]> = {}
+  sheetTables.forEach((sheet) => {
+    const sheetName = sheet.sheetName || '默认工作表'
+    groups[sheetName] = (sheet.data || []).map((row, index) => createMatchingRow(row, index, sheetName))
+  })
+  sheetGroups.value = groups
+  activeSheetName.value = Object.keys(groups)[0] || ''
+  tableData.value = activeSheetName.value ? (groups[activeSheetName.value] || []) : []
+}
 
 // Filtered table data
 const filteredTableData = computed(() => {
@@ -699,6 +802,7 @@ function deleteSelectedRows() {
     // Create new array without deleted items
     const newData = tableData.value.filter((_, index) => !selectedRows.value.has(index))
     tableData.value = newData
+    syncActiveSheetGroup()
 
     // Clear selection
     selectedRows.value = new Set()
@@ -737,7 +841,8 @@ const goToPriceAdjustment = async () => {
   }
 
   isNavigating.value = true
-  ElMessage.info(`正在处理 ${tableData.value.length} 条数据，请稍候...`)
+  const allRows = flattenSheetGroups()
+  ElMessage.info(`正在处理 ${allRows.length} 条数据，请稍候...`)
 
   try {
   // 发送手动调整数据到后端
@@ -775,8 +880,9 @@ const goToPriceAdjustment = async () => {
       // 使用 setTimeout 将数据保存操作放到下一个事件循环，避免阻塞 UI
       setTimeout(() => {
         try {
-  saveFlowData(FLOW_DATA_KEYS.MATCHED_DATA, tableData.value)
-          console.log(`Flow data saved successfully: ${tableData.value.length} items`)
+  saveFlowData(FLOW_DATA_KEYS.MATCHED_DATA, allRows)
+  saveFlowData(FLOW_DATA_KEYS.MATCHED_SHEET_GROUPS, sheetGroups.value)
+          console.log(`Flow data saved successfully: ${allRows.length} items`)
           resolve()
         } catch (error) {
           console.error('Failed to save flow data:', error)
@@ -804,7 +910,7 @@ const goToPriceAdjustment = async () => {
 
 // 存为草稿
 async function saveAsDraft() {
-  if (tableData.value.length === 0) {
+  if (flattenSheetGroups().length === 0) {
     ElMessage.warning('请先完成数据匹配后再保存草稿')
     return
   }
@@ -813,7 +919,8 @@ async function saveAsDraft() {
   try {
     // 保存当前状态
     savePageState(PAGE_STATE_KEYS.SMART_MATCHING, getCurrentState())
-    saveFlowData(FLOW_DATA_KEYS.MATCHED_DATA, tableData.value)
+    saveFlowData(FLOW_DATA_KEYS.MATCHED_DATA, flattenSheetGroups())
+    saveFlowData(FLOW_DATA_KEYS.MATCHED_SHEET_GROUPS, sheetGroups.value)
 
     // 获取当前草稿ID（如果有）
     const existingDraftId = getCurrentDraftId()
@@ -842,7 +949,9 @@ function handleKeyDown(event: KeyboardEvent) {
 // Get current state for saving
 function getCurrentState(): SmartMatchingState {
   return {
-    tableData: tableData.value,
+    tableData: flattenSheetGroups(),
+    sheetGroups: sheetGroups.value,
+    activeSheetName: activeSheetName.value,
     dataSource: dataSource.value,
     filterStatus: filterStatus.value,
     hasData: tableData.value.length > 0
@@ -868,7 +977,13 @@ onMounted(async () => {
   const savedState = restorePageState<SmartMatchingState>(PAGE_STATE_KEYS.SMART_MATCHING)
   if (savedState && savedState.hasData) {
     // Restore page state - do NOT trigger matching
-    tableData.value = savedState.tableData || []
+    if (savedState.sheetGroups && Object.keys(savedState.sheetGroups).length > 0) {
+      sheetGroups.value = savedState.sheetGroups
+      activeSheetName.value = savedState.activeSheetName || Object.keys(savedState.sheetGroups)[0]
+      tableData.value = sheetGroups.value[activeSheetName.value] || []
+    } else {
+      setSheetGroupsFromRows(savedState.tableData || [])
+    }
     dataSource.value = savedState.dataSource || 'datacenter'
     filterStatus.value = savedState.filterStatus || 'all'
     console.log('Restored saved state:', tableData.value.length, 'items')
@@ -879,7 +994,7 @@ onMounted(async () => {
     const matchedData = getFlowData<any[]>(FLOW_DATA_KEYS.MATCHED_DATA)
     if (matchedData && matchedData.length > 0) {
       // Restore matched data without triggering matching
-      tableData.value = matchedData
+      setSheetGroupsFromRows(matchedData)
     console.log('Restored matched data:', tableData.value.length, 'items')
     return  // 已有数据，不继续检查
   }
@@ -906,7 +1021,13 @@ onBeforeRouteUpdate((to, from, next) => {
     const savedState = restorePageState<SmartMatchingState>(PAGE_STATE_KEYS.SMART_MATCHING)
     if (savedState && savedState.hasData && savedState.tableData && savedState.tableData.length > 0) {
       // 恢复页面状态 - 不触发匹配
-      tableData.value = savedState.tableData
+      if (savedState.sheetGroups && Object.keys(savedState.sheetGroups).length > 0) {
+        sheetGroups.value = savedState.sheetGroups
+        activeSheetName.value = savedState.activeSheetName || Object.keys(savedState.sheetGroups)[0]
+        tableData.value = sheetGroups.value[activeSheetName.value] || []
+      } else {
+        setSheetGroupsFromRows(savedState.tableData)
+      }
       dataSource.value = savedState.dataSource || 'datacenter'
       filterStatus.value = savedState.filterStatus || 'all'
       console.log('Breadcrumb navigation: restored SmartMatching state with', tableData.value.length, 'items')
@@ -917,7 +1038,7 @@ onBeforeRouteUpdate((to, from, next) => {
     // 如果没有保存的页面状态，尝试从流程数据加载
       const matchedData = getFlowData<any[]>(FLOW_DATA_KEYS.MATCHED_DATA)
       if (matchedData && matchedData.length > 0) {
-        tableData.value = matchedData
+        setSheetGroupsFromRows(matchedData)
       console.log('Breadcrumb navigation: restored flow data with', tableData.value.length, 'items')
       next()
       return
@@ -944,8 +1065,10 @@ onBeforeRouteLeave((to, from, next) => {
 
     // 同时保存流程数据（供下一步使用）
     try {
-    saveFlowData(FLOW_DATA_KEYS.MATCHED_DATA, tableData.value)
-      console.log('SmartMatching flow data saved:', tableData.value.length, 'items')
+    const allRows = flattenSheetGroups()
+    saveFlowData(FLOW_DATA_KEYS.MATCHED_DATA, allRows)
+    saveFlowData(FLOW_DATA_KEYS.MATCHED_SHEET_GROUPS, sheetGroups.value)
+      console.log('SmartMatching flow data saved:', allRows.length, 'items')
     } catch (error) {
       console.error('Failed to save SmartMatching flow data:', error)
       // 如果保存失败，可能是 sessionStorage 容量不足
@@ -953,8 +1076,10 @@ onBeforeRouteLeave((to, from, next) => {
       try {
         // 清除 CONVERTED_DATA（已经匹配完成，不再需要原始数据）
         clearFlowData(FLOW_DATA_KEYS.CONVERTED_DATA)
-        saveFlowData(FLOW_DATA_KEYS.MATCHED_DATA, tableData.value)
-        console.log('SmartMatching flow data saved after cleanup:', tableData.value.length, 'items')
+        const allRows = flattenSheetGroups()
+        saveFlowData(FLOW_DATA_KEYS.MATCHED_DATA, allRows)
+        saveFlowData(FLOW_DATA_KEYS.MATCHED_SHEET_GROUPS, sheetGroups.value)
+        console.log('SmartMatching flow data saved after cleanup:', allRows.length, 'items')
       } catch (retryError) {
         console.error('Failed to save flow data even after cleanup:', retryError)
       }
@@ -965,38 +1090,24 @@ onBeforeRouteLeave((to, from, next) => {
 
 async function loadData(triggerMatching: boolean = false) {
   try {
+    const storedSheets = getFlowData<Array<{ sheetName: string; data: any[] }>>(FLOW_DATA_KEYS.CONVERTED_SHEET_TABLES)
+    if (storedSheets && storedSheets.length > 0) {
+      setSheetGroupsFromConvertedSheets(storedSheets)
+      console.log('Loaded converted sheet groups:', storedSheets.map(sheet => `${sheet.sheetName}:${sheet.data?.length || 0}`).join(', '))
+
+      if (triggerMatching) {
+        nextTick(() => {
+          startMatching()
+        })
+      }
+      return
+    }
+
     const stored = getFlowData<any[]>(FLOW_DATA_KEYS.CONVERTED_DATA)
     if (stored && stored.length > 0) {
       // Initialize table data from converted data
-      tableData.value = stored.map(row => ({
-        manufacturer: row['厂商'] || '',
-        model: row['设备/软件型号'] || '',
-        originalBrandModel: `${row['厂商'] || ''}-${row['设备/软件型号'] || ''}`,  // 原始品牌型号 = 厂商-型号
-        originalManufacturer: row['厂商'] || '',  // 保存原始厂商（来自Excel，永不修改）
-        category: row['设备/软件分类'] || '',
-        deviceCategory: '',
-        serviceLevel: row['服务级别'] || '7*24*NCR',
-        // 保留来自智能识别模块的字段，供价格调整使用
-        city: row['城市'] || '',
-        quantity: parseInt(row['设备数量']) || 1,
-        servicePeriod: row['服务周期'] || '1',
-        servicePeriodUnit: normalizeServicePeriodUnit(row['服务周期单位']),
-        // 匹配相关字段
-        matchedModel: '',
-        matchRate: 0,
-        matchedManufacturer: '',  // 匹配到的厂商
-        matchedSeries: '',        // 匹配到的设备系列
-        originalPrice: null as number | null,
-        price: null as number | null,
-        serviceLevelCoefficient: 1,
-        matchedServiceLevel: null,
-        confirmed: false,
-        primary_category: '',
-        secondary_category: '',
-        tertiary_category: '',
-        device_price: null as number | null,
-        rate: 0
-      }))
+      const rows = stored.map((row, index) => createMatchingRow(row, index))
+      setSheetGroupsFromRows(rows)
 
       // Only auto start matching if explicitly requested (e.g., from "下一步" button)
       if (triggerMatching) {
@@ -1012,10 +1123,11 @@ async function loadData(triggerMatching: boolean = false) {
 
 // Start matching
 async function startMatching() {
-  if (matchingInProgress.value || tableData.value.length === 0) return
+  if (matchingInProgress.value || flattenSheetGroups().length === 0) return
+  syncActiveSheetGroup()
 
   matchingInProgress.value = true
-  matchingTotal.value = tableData.value.length
+  matchingTotal.value = flattenSheetGroups().length
   matchingCompleted.value = 0
   shouldStop.value = false
   abortController.value = new AbortController()
@@ -1054,12 +1166,13 @@ async function startMatching() {
 async function individualMatching() {
   const concurrency = 10  // 增加并发数到10
   let current = 0
-  const total = tableData.value.length
+  const matchItems = flattenSheetGroups()
+  const total = matchItems.length
 
   async function worker() {
     while (current < total && !shouldStop.value) {
       const index = current++
-      const item = tableData.value[index]
+      const item = matchItems[index]
 
       try {
         const response = await axios.post(`${API_URL}/match/`, {
@@ -1072,33 +1185,33 @@ async function individualMatching() {
         })
 
         if (response.data) {
-          tableData.value[index].matchedModel = response.data.matched_model || ''
-          tableData.value[index].matchRate = response.data.match_rate || 0
+          matchItems[index].matchedModel = response.data.matched_model || ''
+          matchItems[index].matchRate = response.data.match_rate || 0
           // 原始单价 = 设备价格 × 费率（未含税）
-          tableData.value[index].originalPrice = (response.data.device_price || 0) * (response.data.rate || 0)
-          tableData.value[index].deviceCategory = response.data.device_category || response.data.category || ''
-          tableData.value[index].device_price = response.data.device_price || null
-          tableData.value[index].primary_category = response.data.primary_category || ''
-          tableData.value[index].secondary_category = response.data.secondary_category || ''
-          tableData.value[index].tertiary_category = response.data.tertiary_category || ''
-          tableData.value[index].rate = response.data.rate || 0
+          matchItems[index].originalPrice = (response.data.device_price || 0) * (response.data.rate || 0)
+          matchItems[index].deviceCategory = response.data.device_category || response.data.category || ''
+          matchItems[index].device_price = response.data.device_price || null
+          matchItems[index].primary_category = response.data.primary_category || ''
+          matchItems[index].secondary_category = response.data.secondary_category || ''
+          matchItems[index].tertiary_category = response.data.tertiary_category || ''
+          matchItems[index].rate = response.data.rate || 0
           // 保存匹配到的厂商和系列信息，供价格调整模块使用
-          tableData.value[index].matchedManufacturer = response.data.manufacturer || ''
-          tableData.value[index].matchedSeries = response.data.device_series || ''
+          matchItems[index].matchedManufacturer = response.data.manufacturer || ''
+          matchItems[index].matchedSeries = response.data.device_series || ''
           // 更新显示的厂商为匹配到的厂商（与手动匹配逻辑一致）
           // 如果后端返回了厂商，则用后端返回的；否则保留原始值
           if (response.data.manufacturer) {
-            tableData.value[index].manufacturer = response.data.manufacturer
+            matchItems[index].manufacturer = response.data.manufacturer
           }
 
-          if (tableData.value[index].originalPrice && item.serviceLevel) {
+          if (matchItems[index].originalPrice && item.serviceLevel) {
             const priceInfo = await calculateServiceLevelPrice(
-              tableData.value[index].originalPrice!,
+              matchItems[index].originalPrice!,
               item.serviceLevel
             )
-            tableData.value[index].price = priceInfo.adjustedPrice
-            tableData.value[index].serviceLevelCoefficient = priceInfo.coefficient
-            tableData.value[index].matchedServiceLevel = priceInfo.matchedLevel
+            matchItems[index].price = priceInfo.adjustedPrice
+            matchItems[index].serviceLevelCoefficient = priceInfo.coefficient
+            matchItems[index].matchedServiceLevel = priceInfo.matchedLevel
           }
         }
       } catch (error: any) {
@@ -1109,12 +1222,14 @@ async function individualMatching() {
         }
         console.error('Match failed for item:', item.model, error)
         // 失败时也要设置默认值
-        tableData.value[index].matchedModel = ''
-        tableData.value[index].matchRate = 0
+        matchItems[index].matchedModel = ''
+        matchItems[index].matchRate = 0
       } finally {
         // 每完成一条立即更新进度
         matchingCompleted.value++
         // 使用 shallowRef 时需要手动触发更新
+        setSheetGroupsFromRows(matchItems)
+        if (activeSheetName.value) tableData.value = sheetGroups.value[activeSheetName.value] || []
         triggerRef(tableData)
       }
     }
@@ -1444,6 +1559,7 @@ async function selectSearchResult(result: any) {
   }
 
   // 使用 shallowRef 时需要手动触发更新
+  syncActiveSheetGroup()
   triggerRef(tableData)
   closeSearchDialog()
 }
@@ -2138,6 +2254,41 @@ async function exportData() {
   border-radius: 0.75rem;
   overflow: hidden;
   box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2);
+}
+
+.sheet-tabs-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem 0;
+}
+
+.sheet-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: 32px;
+  padding: 0 0.75rem;
+  border: 1px solid #334155;
+  border-radius: 0.375rem;
+  background: rgba(15, 23, 42, 0.7);
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 0.8125rem;
+}
+
+.sheet-tab-btn.active {
+  border-color: #135bec;
+  background: #135bec;
+  color: #fff;
+}
+
+.sheet-tab-count {
+  min-width: 20px;
+  padding: 0 0.375rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 0.7rem;
 }
 
 .table-header {

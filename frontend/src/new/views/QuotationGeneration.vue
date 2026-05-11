@@ -472,6 +472,7 @@ import {
   clearAllQuotationStates,
   type QuotationGenerationState,
   type TableDataWithHeaders,
+  type SheetTableDataWithHeaders,
   type DocumentRecognitionState
 } from '../stores/quotationStore'
 
@@ -611,16 +612,17 @@ async function loadCompanyAndCustomers() {
 // 原始表格和转换后表格数据（用于预览和导出）
 const originalTableData = ref<TableDataWithHeaders | null>(null)
 const convertedTableData = ref<TableDataWithHeaders | null>(null)
+const originalSheetTables = ref<SheetTableDataWithHeaders[]>([])
+const convertedSheetTables = ref<SheetTableDataWithHeaders[]>([])
 
-// 预览数据：原始表格 + 维保单价列
-const previewOriginalData = computed(() => {
-  if (!originalTableData.value || !tableData.value.length) return []
-
-  const { headers, data } = originalTableData.value
-
+function buildOriginalPreviewForSheet(headers: string[], data: any[], sheetName?: string) {
   // 构建型号→价格映射（扫描所有可能的型号标识）
   const priceByModel = new Map<string, number>()
-  tableData.value.forEach(item => {
+  const scopedTableData = sheetName
+    ? tableData.value.filter(item => !item.sheetName || item.sheetName === sheetName)
+    : tableData.value
+
+  scopedTableData.forEach(item => {
     const keys = [item.model, item.matchedModel, item.originalModel].filter(Boolean)
     const price = item.finalPrice || item.suggestedPrice || 0
     keys.forEach(k => {
@@ -630,7 +632,7 @@ const previewOriginalData = computed(() => {
   })
 
   // 判断原始表和匹配表行数是否一致（一致则可安全使用行索引映射）
-  const rowCountMatch = data.length === tableData.value.length
+  const rowCountMatch = data.length === scopedTableData.length
 
   // 根据布局选择确定价格乘数和表头名称
   let priceMultiplier = 1
@@ -663,8 +665,8 @@ const previewOriginalData = computed(() => {
       }
 
       // 兜底：行数一致时按行索引获取价格
-      if (basePrice === 0 && rowCountMatch && rowIndex < tableData.value.length) {
-        const item = tableData.value[rowIndex]
+      if (basePrice === 0 && rowCountMatch && rowIndex < scopedTableData.length) {
+        const item = scopedTableData[rowIndex]
         basePrice = item.finalPrice || item.suggestedPrice || 0
       }
 
@@ -673,6 +675,14 @@ const previewOriginalData = computed(() => {
       return newRow
     })
   }
+}
+
+// 预览数据：原始表格 + 维保单价列
+const previewOriginalData = computed(() => {
+  if (!originalTableData.value || !tableData.value.length) return []
+
+  const { headers, data } = originalTableData.value
+  return buildOriginalPreviewForSheet(headers, data)
 })
 
 // 预览数据：转换后表格 + 更新单价为建议售价
@@ -1042,6 +1052,8 @@ onMounted(() => {
   // 加载原始表格和转换后表格数据（用于导出预览）
   originalTableData.value = getFlowData<TableDataWithHeaders>(FLOW_DATA_KEYS.ORIGINAL_TABLE_DATA)
   convertedTableData.value = getFlowData<TableDataWithHeaders>(FLOW_DATA_KEYS.CONVERTED_TABLE_DATA)
+  originalSheetTables.value = getFlowData<SheetTableDataWithHeaders[]>(FLOW_DATA_KEYS.ORIGINAL_SHEET_TABLES) || []
+  convertedSheetTables.value = getFlowData<SheetTableDataWithHeaders[]>(FLOW_DATA_KEYS.CONVERTED_SHEET_TABLES) || []
 
   // 获取源文件名（来自智能识别模块导入的文件）
   const docRecognitionState = restorePageState<DocumentRecognitionState>(PAGE_STATE_KEYS.DOC_RECOGNITION)
@@ -1615,9 +1627,11 @@ async function exportQuotationExcel() {
     // 尝试获取原始Excel文件数据
     const originalExcelBase64 = getFlowData<string>(FLOW_DATA_KEYS.ORIGINAL_EXCEL_FILE)
     const selectedSheetName = getFlowData<string>(FLOW_DATA_KEYS.SELECTED_SHEET_NAME)
+    const selectedSheetNames = getFlowData<string[]>(FLOW_DATA_KEYS.SELECTED_SHEET_NAMES) || (selectedSheetName ? [selectedSheetName] : [])
     const originalFileName = getFlowData<string>(FLOW_DATA_KEYS.ORIGINAL_FILE_NAME) || ''
     console.log('[Export] originalExcelBase64:', originalExcelBase64 ? `存在(${originalExcelBase64.length}字符)` : '不存在')
     console.log('[Export] selectedSheetName:', selectedSheetName)
+    console.log('[Export] selectedSheetNames:', selectedSheetNames)
     console.log('[Export] originalFileName:', originalFileName)
     console.log('[Export] tableData行数:', tableData.value.length)
     console.log('[Export] originalTableData:', originalTableData.value ? `headers=${originalTableData.value.headers?.length}, data=${originalTableData.value.data?.length}` : '不存在')
@@ -1711,14 +1725,23 @@ async function exportQuotationExcel() {
       exportPriceMultiplier = 1.13
     }
 
-    const priceDataMap = new Map<number, number>()
-    tableData.value.forEach((item, index) => {
-      const basePrice = item.finalPrice || item.suggestedPrice || 0
-      if (basePrice > 0) {
-        const adjustedPrice = Math.round(basePrice * exportPriceMultiplier * 100) / 100
-        priceDataMap.set(index, adjustedPrice)
-      }
-    })
+    const buildPriceDataMap = (items: any[]) => {
+      const map = new Map<number, number>()
+      items.forEach((item, index) => {
+        const basePrice = item.finalPrice || item.suggestedPrice || 0
+        if (basePrice > 0) {
+          const adjustedPrice = Math.round(basePrice * exportPriceMultiplier * 100) / 100
+          map.set(index, adjustedPrice)
+        }
+      })
+      return map
+    }
+
+    const priceDataMap = buildPriceDataMap(tableData.value)
+    const primarySheetItems = selectedSheetName
+      ? tableData.value.filter((item: any) => item.sheetName === selectedSheetName)
+      : tableData.value
+    const primaryPriceDataMap = buildPriceDataMap(primarySheetItems.length > 0 ? primarySheetItems : tableData.value)
     console.log('[Export] priceDataMap 共', priceDataMap.size, '条, tableData 共', tableData.value.length, '条')
 
     // ===== 文件1：保留原始格式的报价表（仅在空白列添加价格） =====
@@ -1813,6 +1836,10 @@ async function exportQuotationExcel() {
         const priceColIndex = maxCol + 1
         const priceColLetter = colToLetter(priceColIndex)
 
+        const getSheetWorksheetSelection = (sheetName: string) => {
+          return originalSheetTables.value.find((sheet) => sheet.sheetName === sheetName)?.worksheetSelection || null
+        }
+
         // ---- 智能检测表头行位置 ----
         const knownHeaders = originalTableData.value?.headers || []
         const significantHeaders = knownHeaders
@@ -1856,32 +1883,37 @@ async function exportQuotationExcel() {
           return texts
         }
 
-        let headerRowNum = 1
-        for (let i = 0; i < Math.min(rows.length, 30); i++) {
-          const rowNum = parseInt(rows[i].getAttribute('r') || String(i + 1))
-          const texts = getRowTexts(rows[i])
-          if (texts.length < 3) continue
+        const primarySheetSelection = selectedSheetName ? getSheetWorksheetSelection(selectedSheetName) : null
+        let headerRowNum = primarySheetSelection?.headerRowNumber || 1
+        if (primarySheetSelection) {
+          console.log('[Export] 使用手动选区表头行:', headerRowNum, 'sheet:', selectedSheetName)
+        } else {
+          for (let i = 0; i < Math.min(rows.length, 30); i++) {
+            const rowNum = parseInt(rows[i].getAttribute('r') || String(i + 1))
+            const texts = getRowTexts(rows[i])
+            if (texts.length < 3) continue
 
-          if (significantHeaders.length >= 3) {
-            let matchCount = 0
-            for (const sh of significantHeaders) {
-              if (texts.some(v => v.includes(sh) || sh.includes(v))) matchCount++
+            if (significantHeaders.length >= 3) {
+              let matchCount = 0
+              for (const sh of significantHeaders) {
+                if (texts.some(v => v.includes(sh) || sh.includes(v))) matchCount++
+              }
+              if (matchCount >= Math.min(3, significantHeaders.length)) {
+                headerRowNum = rowNum
+                console.log('[Export] 策略1: 检测到表头行位于第', rowNum, '行')
+                break
+              }
             }
-            if (matchCount >= Math.min(3, significantHeaders.length)) {
+
+            let kwCount = 0
+            for (const kw of commonDeviceKeywords) {
+              if (texts.some(v => v.includes(kw))) kwCount++
+            }
+            if (kwCount >= 3) {
               headerRowNum = rowNum
-              console.log('[Export] 策略1: 检测到表头行位于第', rowNum, '行')
+              console.log('[Export] 策略2: 检测到表头行位于第', rowNum, '行')
               break
             }
-          }
-
-          let kwCount = 0
-          for (const kw of commonDeviceKeywords) {
-            if (texts.some(v => v.includes(kw))) kwCount++
-          }
-          if (kwCount >= 3) {
-            headerRowNum = rowNum
-            console.log('[Export] 策略2: 检测到表头行位于第', rowNum, '行')
-            break
           }
         }
         console.log('[Export] 使用表头行:', headerRowNum)
@@ -1933,18 +1965,36 @@ async function exportQuotationExcel() {
         // 统计实际有数据内容的行数（排除表头后的空行、条款行等）
         let actualDataRowCount = 0
         const dataRowIndices: number[] = []  // 存储数据行在 rows 数组中的索引
-        for (let i = 0; i < rows.length; i++) {
-          const rn = parseInt(rows[i].getAttribute('r') || '0')
-          if (rn >= dataStartRowNum) {
-            const texts = getRowTexts(rows[i])
-            // 至少有2个非空单元格内容才算数据行
-            if (texts.filter(t => t.length > 0).length >= 2) {
+        const worksheetRowToSeqIndex = new Map<number, number>()
+
+        if (primarySheetSelection?.dataRowNumbers?.length) {
+          primarySheetSelection.dataRowNumbers.forEach((rowNumber, seqIdx) => {
+            worksheetRowToSeqIndex.set(rowNumber, seqIdx)
+          })
+          for (let i = 0; i < rows.length; i++) {
+            const rn = parseInt(rows[i].getAttribute('r') || '0')
+            if (worksheetRowToSeqIndex.has(rn)) {
               actualDataRowCount++
               dataRowIndices.push(i)
             }
           }
+        } else {
+          for (let i = 0; i < rows.length; i++) {
+            const rn = parseInt(rows[i].getAttribute('r') || '0')
+            if (rn >= dataStartRowNum) {
+              const texts = getRowTexts(rows[i])
+              // 至少有2个非空单元格内容才算数据行
+              if (texts.filter(t => t.length > 0).length >= 2) {
+                actualDataRowCount++
+                dataRowIndices.push(i)
+              }
+            }
+          }
         }
-        const rowCountMatch = actualDataRowCount === tableData.value.length
+        const expectedPrimaryCount = selectedSheetName
+          ? tableData.value.filter((item: any) => item.sheetName === selectedSheetName).length || tableData.value.length
+          : tableData.value.length
+        const rowCountMatch = actualDataRowCount === expectedPrimaryCount
         console.log('[Export] 实际数据行:', actualDataRowCount, ', tableData 行:', tableData.value.length, ', 行数一致:', rowCountMatch)
 
         // 查找表头行样式 ID 用于价格表头单元格
@@ -1986,9 +2036,11 @@ async function exportQuotationExcel() {
             let price: number | undefined
 
             // 优先使用顺序索引映射（按数据行顺序对应 tableData 顺序）
-            const seqIndex = rowIndexToSeqIndex.get(i)
+            const seqIndex = primarySheetSelection?.dataRowNumbers?.length
+              ? worksheetRowToSeqIndex.get(rowNum)
+              : rowIndexToSeqIndex.get(i)
             if (rowCountMatch && seqIndex !== undefined) {
-              price = priceDataMap.get(seqIndex)
+              price = primaryPriceDataMap.get(seqIndex)
             }
             // 回退：通过型号名称匹配
             if (price === undefined) {
@@ -2226,6 +2278,152 @@ async function exportQuotationExcel() {
           zip.file('xl/styles.xml', updatedStylesXml)
         }
 
+        const extraSheetNames = selectedSheetNames.filter(name => name && name !== selectedSheetName)
+        for (const extraSheetName of extraSheetNames) {
+          const extraItems = tableData.value.filter((item: any) => item.sheetName === extraSheetName)
+          if (extraItems.length === 0) continue
+
+          let extraRId = ''
+          for (const m of sheetMatches) {
+            if (m[1] === extraSheetName) { extraRId = m[2]; break }
+          }
+          if (!extraRId) continue
+
+          const extraRelMatch = relsXml.match(new RegExp(`<Relationship[^>]*Id="${extraRId}"[^>]*Target="([^"]*)"[^>]*/>`))
+          let extraSheetPath = extraRelMatch ? `xl/${extraRelMatch[1]}` : ''
+          extraSheetPath = extraSheetPath.replace('xl/xl/', 'xl/')
+          if (!extraSheetPath) continue
+
+          const extraSheetXml = await zip.file(extraSheetPath)?.async('string')
+          if (!extraSheetXml) continue
+
+          const extraDoc = parser.parseFromString(extraSheetXml, 'application/xml')
+          const extraNs = extraDoc.documentElement.namespaceURI || nsResolver
+          const extraSheetDataEl = extraDoc.getElementsByTagNameNS(extraNs, 'sheetData')[0]
+          if (!extraSheetDataEl) continue
+          const extraRows = extraSheetDataEl.getElementsByTagNameNS(extraNs, 'row')
+
+          let extraMaxCol = 0
+          for (let i = 0; i < extraRows.length; i++) {
+            const cells = extraRows[i].getElementsByTagNameNS(extraNs, 'c')
+            for (let j = 0; j < cells.length; j++) {
+              const ref = cells[j].getAttribute('r') || ''
+              const { col } = parseRef(ref)
+              if (col > extraMaxCol) extraMaxCol = col
+            }
+          }
+          const extraPriceColIndex = extraMaxCol + 1
+          const extraPriceColLetter = colToLetter(extraPriceColIndex)
+
+          const getExtraRowTexts = (rowEl: Element): string[] => {
+            const texts: string[] = []
+            const cells = rowEl.getElementsByTagNameNS(extraNs, 'c')
+            for (let j = 0; j < cells.length; j++) {
+              const vEl = cells[j].getElementsByTagNameNS(extraNs, 'v')[0]
+              const cellType = cells[j].getAttribute('t')
+              if (vEl && vEl.textContent) {
+                if (cellType === 's') {
+                  const idx = parseInt(vEl.textContent)
+                  texts.push((sharedStrings[idx] || '').replace(/[\s*\n]/g, ''))
+                } else {
+                  texts.push(vEl.textContent.replace(/[\s*\n]/g, ''))
+                }
+              }
+            }
+            return texts
+          }
+
+          const extraSheetSelection = getSheetWorksheetSelection(extraSheetName)
+          let extraHeaderRowNum = extraSheetSelection?.headerRowNumber || 1
+          if (!extraSheetSelection) {
+            for (let i = 0; i < Math.min(extraRows.length, 30); i++) {
+              const rowNum = parseInt(extraRows[i].getAttribute('r') || String(i + 1))
+              const texts = getExtraRowTexts(extraRows[i])
+              if (texts.length < 3) continue
+              let kwCount = 0
+              for (const kw of commonDeviceKeywords) {
+                if (texts.some(v => v.includes(kw))) kwCount++
+              }
+              if (kwCount >= 3) {
+                extraHeaderRowNum = rowNum
+                break
+              }
+            }
+          }
+
+          const extraDataRowIndices: number[] = []
+          const extraWorksheetRowToSeqIndex = new Map<number, number>()
+          if (extraSheetSelection?.dataRowNumbers?.length) {
+            extraSheetSelection.dataRowNumbers.forEach((rowNumber, seqIdx) => {
+              extraWorksheetRowToSeqIndex.set(rowNumber, seqIdx)
+            })
+            for (let i = 0; i < extraRows.length; i++) {
+              const rn = parseInt(extraRows[i].getAttribute('r') || '0')
+              if (extraWorksheetRowToSeqIndex.has(rn)) {
+                extraDataRowIndices.push(i)
+              }
+            }
+          } else {
+            for (let i = 0; i < extraRows.length; i++) {
+              const rn = parseInt(extraRows[i].getAttribute('r') || '0')
+              if (rn > extraHeaderRowNum && getExtraRowTexts(extraRows[i]).filter(t => t.length > 0).length >= 2) {
+                extraDataRowIndices.push(i)
+              }
+            }
+          }
+
+          let extraHeaderStyleId = ''
+          for (let i = 0; i < extraRows.length; i++) {
+            const rn = parseInt(extraRows[i].getAttribute('r') || '0')
+            if (rn === extraHeaderRowNum) {
+              const cells = extraRows[i].getElementsByTagNameNS(extraNs, 'c')
+              extraHeaderStyleId = cells[0]?.getAttribute('s') || ''
+              break
+            }
+          }
+
+          for (let i = 0; i < extraRows.length; i++) {
+            const rowNum = parseInt(extraRows[i].getAttribute('r') || '0')
+            const cellRef = `${extraPriceColLetter}${rowNum}`
+            const newCell = extraDoc.createElementNS(extraNs, 'c')
+            newCell.setAttribute('r', cellRef)
+
+            if (rowNum === extraHeaderRowNum && priceHeaderSsIndex >= 0) {
+              newCell.setAttribute('t', 's')
+              if (extraHeaderStyleId) newCell.setAttribute('s', extraHeaderStyleId)
+              const vEl = extraDoc.createElementNS(extraNs, 'v')
+              vEl.textContent = String(priceHeaderSsIndex)
+              newCell.appendChild(vEl)
+            } else {
+              const seqIndex = extraSheetSelection?.dataRowNumbers?.length
+                ? extraWorksheetRowToSeqIndex.get(rowNum) ?? -1
+                : extraDataRowIndices.indexOf(i)
+              const item = seqIndex >= 0 ? extraItems[seqIndex] : null
+              const basePrice = item?.finalPrice || item?.suggestedPrice || 0
+              if (basePrice > 0) {
+                const vEl = extraDoc.createElementNS(extraNs, 'v')
+                vEl.textContent = String(Math.round(basePrice * exportPriceMultiplier * 100) / 100)
+                newCell.appendChild(vEl)
+                const cells = extraRows[i].getElementsByTagNameNS(extraNs, 'c')
+                const sAttr = cells[0]?.getAttribute('s')
+                if (sAttr) newCell.setAttribute('s', sAttr)
+              }
+            }
+
+            extraRows[i].appendChild(newCell)
+          }
+
+          const extraDimEl = extraDoc.getElementsByTagNameNS(extraNs, 'dimension')[0]
+          if (extraDimEl) {
+            const oldRef = extraDimEl.getAttribute('ref') || ''
+            extraDimEl.setAttribute('ref', oldRef.replace(/([A-Z]+)(\d+)$/, `${extraPriceColLetter}$2`))
+          }
+
+          const extraUpdatedSheetXml = serializer.serializeToString(extraDoc)
+          zip.file(extraSheetPath, extraUpdatedSheetXml)
+          console.log('[Export] 已为原格式工作表追加价格列:', extraSheetName)
+        }
+
         hasOriginalFile = true
         const baseName = originalFileName.replace(/\.xlsx?$/i, '')
         const fileName1 = `报价单-${baseName}.xlsx`
@@ -2247,34 +2445,49 @@ async function exportQuotationExcel() {
       workbook1.creator = 'AI报价系统'
       workbook1.created = new Date()
 
-      const originalHeaders = previewOriginalData.value.headers
-      const originalData = previewOriginalData.value.data
+      const safeSheetName = (name: string, index: number) => {
+        const cleaned = (name || `工作表${index + 1}`).replace(/[\\/?*[\]:]/g, ' ').trim()
+        return (cleaned || `工作表${index + 1}`).slice(0, 31)
+      }
+      const sourceSheets = originalSheetTables.value.length > 0
+        ? originalSheetTables.value.map((sheet) => {
+            const sheetPreview = buildOriginalPreviewForSheet(sheet.headers, sheet.data, sheet.sheetName)
+            return {
+              sheetName: sheet.sheetName,
+              headers: sheetPreview.headers,
+              data: sheetPreview.data
+            }
+          })
+        : [{ sheetName: '报价表', headers: previewOriginalData.value.headers, data: previewOriginalData.value.data }]
 
-      const worksheet = workbook1.addWorksheet('报价表')
+      sourceSheets.forEach((sheetSource, sheetIndex) => {
+        const originalHeaders = sheetSource.headers
+        const originalData = sheetSource.data
+        const worksheet = workbook1.addWorksheet(safeSheetName(sheetSource.sheetName, sheetIndex))
 
-      const headerRow = worksheet.addRow(originalHeaders)
-      headerRow.font = { bold: true }
-      headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } }
-      worksheet.columns = originalHeaders.map(() => ({ width: 18 }))
+        const headerRow = worksheet.addRow(originalHeaders)
+        headerRow.font = { bold: true }
+        headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } }
+        worksheet.columns = originalHeaders.map(() => ({ width: 18 }))
 
-      originalData.forEach(row => {
-        const values = originalHeaders.map(header => {
-          const val = row[header]
-          if (isPriceColumn(header) && val !== '' && val !== null && val !== undefined) {
-            return Number(val)
-          }
-          return val ?? ''
+        originalData.forEach(row => {
+          const values = originalHeaders.map(header => {
+            const val = row[header]
+            if (isPriceColumn(header) && val !== '' && val !== null && val !== undefined) {
+              return Number(val)
+            }
+            return val ?? ''
+          })
+          const dataRow = worksheet.addRow(values)
+          originalHeaders.forEach((header, colIndex) => {
+            if (isPriceColumn(header)) {
+              dataRow.getCell(colIndex + 1).numFmt = '¥#,##0.00'
+            }
+          })
         })
-        const dataRow = worksheet.addRow(values)
-        originalHeaders.forEach((header, colIndex) => {
-          if (isPriceColumn(header)) {
-            dataRow.getCell(colIndex + 1).numFmt = '¥#,##0.00'
-          }
-        })
+
+        addServiceTermsToWorksheet(worksheet, originalData.length + 1, originalHeaders.length)
       })
-
-      // 添加后台配置的服务条款
-      addServiceTermsToWorksheet(worksheet, originalData.length + 1, originalHeaders.length)
 
       const fallbackBaseName = originalFileName ? originalFileName.replace(/\.xlsx?$/i, '') : (projectName.value || '设备报价单')
       const fileName1 = `报价单-${fallbackBaseName}.xlsx`
@@ -2291,59 +2504,93 @@ async function exportQuotationExcel() {
       workbook2.creator = 'AI报价系统'
       workbook2.created = new Date()
 
-      const convertedHeaders = previewConvertedData.value.headers
-      const convertedData = previewConvertedData.value.data
+      const safeSheetName = (name: string, index: number) => {
+        const cleaned = (name || `工作表${index + 1}`).replace(/[\\/?*[\]:]/g, ' ').trim()
+        return (cleaned || `工作表${index + 1}`).slice(0, 31)
+      }
 
-      const worksheet = workbook2.addWorksheet('标准报价表')
+      const previewHeaders = previewConvertedData.value.headers
+      const sheetSources = convertedSheetTables.value.length > 0
+        ? convertedSheetTables.value
+        : [{ sheetName: '标准报价表', headers: previewHeaders, data: previewConvertedData.value.data }]
 
-      // 添加表头
-      const headerRow = worksheet.addRow(convertedHeaders)
-      headerRow.font = { bold: true }
-      headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } }
-
-      // 设置列宽
-      worksheet.columns = convertedHeaders.map((header) => ({
-        width: isPriceColumn(header) ? 15 : 18
-      }))
-
-      // 添加数据行
-      convertedData.forEach(row => {
-        const values = convertedHeaders.map(header => {
-          const val = row[header]
-          if (isPriceColumn(header) && val !== '' && val !== null && val !== undefined) {
-            return Number(val)
-          }
-          return val ?? ''
+      const getSheetPrice = (row: any, rowIndex: number, sheetName: string) => {
+        const matchedBySheet = tableData.value.find((item, itemIndex) => {
+          if (item.sheetName && item.sheetName !== sheetName) return false
+          if (Number.isFinite(Number(item.sourceRowIndex)) && Number(item.sourceRowIndex) === rowIndex) return true
+          if (!item.sheetName && itemIndex === rowIndex) return true
+          return false
         })
-        const dataRow = worksheet.addRow(values)
+        let basePrice = matchedBySheet?.finalPrice || matchedBySheet?.suggestedPrice || 0
 
-        // 设置价格列格式和边框
-        convertedHeaders.forEach((header, colIndex) => {
-          const cell = dataRow.getCell(colIndex + 1)
-          if (isPriceColumn(header)) {
-            cell.numFmt = '¥#,##0.00'
-          }
-          cell.border = {
+        if (!basePrice) {
+          const modelValue = String(row['设备/软件型号'] || '').trim().toUpperCase()
+          const matchedByModel = tableData.value.find(item => {
+            if (item.sheetName && item.sheetName !== sheetName) return false
+            return [item.model, item.matchedModel, item.originalModel]
+              .filter(Boolean)
+              .some((key: string) => String(key).trim().toUpperCase() === modelValue)
+          })
+          basePrice = matchedByModel?.finalPrice || matchedByModel?.suggestedPrice || 0
+        }
+
+        return Math.round(Number(basePrice || row['单价'] || 0) * exportPriceMultiplier * 100) / 100
+      }
+
+      sheetSources.forEach((sheetSource, sheetIndex) => {
+        const convertedHeaders = (sheetSource.headers || previewHeaders).map(h => h === '单价'
+          ? (priceLayout.value === 'layout3' ? '单价(含税6%)' : priceLayout.value === 'layout4' ? '单价(含税13%)' : h)
+          : h
+        )
+        const rawHeaders = sheetSource.headers || previewHeaders
+        const worksheet = workbook2.addWorksheet(safeSheetName(sheetSource.sheetName, sheetIndex))
+
+        const headerRow = worksheet.addRow(convertedHeaders)
+        headerRow.font = { bold: true }
+        headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } }
+        worksheet.columns = convertedHeaders.map((header) => ({
+          width: isPriceColumn(header) ? 15 : 18
+        }))
+
+        sheetSource.data.forEach((row, rowIndex) => {
+          const values = rawHeaders.map((rawHeader, headerIndex) => {
+            const exportHeader = convertedHeaders[headerIndex]
+            if (rawHeader === '单价') {
+              return getSheetPrice(row, rowIndex, sheetSource.sheetName)
+            }
+            const val = row[rawHeader]
+            if (isPriceColumn(exportHeader) && val !== '' && val !== null && val !== undefined) {
+              return Number(val)
+            }
+            return val ?? ''
+          })
+          const dataRow = worksheet.addRow(values)
+
+          convertedHeaders.forEach((header, colIndex) => {
+            const cell = dataRow.getCell(colIndex + 1)
+            if (isPriceColumn(header)) {
+              cell.numFmt = '¥#,##0.00'
+            }
+            cell.border = {
+              top: { style: 'thin' },
+              left: { style: 'thin' },
+              bottom: { style: 'thin' },
+              right: { style: 'thin' }
+            }
+          })
+        })
+
+        convertedHeaders.forEach((_, colIndex) => {
+          headerRow.getCell(colIndex + 1).border = {
             top: { style: 'thin' },
             left: { style: 'thin' },
             bottom: { style: 'thin' },
             right: { style: 'thin' }
           }
         })
-      })
 
-      // 设置表头边框
-      convertedHeaders.forEach((_, colIndex) => {
-        headerRow.getCell(colIndex + 1).border = {
-          top: { style: 'thin' },
-          left: { style: 'thin' },
-          bottom: { style: 'thin' },
-          right: { style: 'thin' }
-        }
+        addServiceTermsToWorksheet(worksheet, sheetSource.data.length + 1, convertedHeaders.length)
       })
-
-      // 添加后台配置的服务条款
-      addServiceTermsToWorksheet(worksheet, convertedData.length + 1, convertedHeaders.length)
 
       // 生成文件名并下载
       const stdBaseName = originalFileName ? originalFileName.replace(/\.xlsx?$/i, '') : (projectName.value || '设备报价单')

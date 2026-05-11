@@ -94,18 +94,35 @@
                   <span class="material-symbols-outlined">tab</span>
                   工作表 ({{ sheetNames.length }})
                 </h4>
+                <div class="sheet-actions">
+                  <button class="sheet-action-btn" @click="selectAllSheets" :disabled="selectedSheetNames.length === sheetNames.length">
+                    全选
+                  </button>
+                  <button class="sheet-action-btn" @click="selectCurrentSheetOnly">
+                    仅当前
+                  </button>
+                  <span class="sheet-selected-count">已选 {{ selectedSheetNames.length }} 个</span>
+                </div>
                 <div class="sheet-tabs">
-                  <button
+                  <div
                     v-for="sheet in sheetNames"
                     :key="sheet"
                     class="sheet-tab"
-                    :class="{ active: sheet === currentSheetName }"
-                    @click="switchSheet(sheet)"
+                    :class="{ active: sheet === currentSheetName, checked: isSheetSelected(sheet) }"
                     :title="sheet"
                   >
-                    <span class="sheet-tab-name">{{ sheet }}</span>
-                    <span class="sheet-tab-rows" v-if="sheet === currentSheetName">{{ originalTableData.length }} 行</span>
-                  </button>
+                    <input
+                      class="sheet-checkbox"
+                      type="checkbox"
+                      :checked="isSheetSelected(sheet)"
+                      @change.stop="toggleSheetSelection(sheet)"
+                      @click.stop
+                    />
+                    <button class="sheet-open-btn" @click="switchSheet(sheet)">
+                      <span class="sheet-tab-name">{{ sheet }}</span>
+                      <span class="sheet-tab-rows">{{ getSheetRowCount(sheet) }} 行</span>
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1011,6 +1028,26 @@ let originalAutoScrollFrame: number | null = null
 const workbookRef = ref<any>(null)  // Store the workbook object
 const sheetNames = ref<string[]>([])  // All sheet names
 const currentSheetName = ref<string>('')  // Currently selected sheet
+const selectedSheetNames = ref<string[]>([])
+interface ParsedExcelSheetData {
+  headers: string[]
+  data: Record<string, any>[]
+  rowNumbers: number[]
+  columnNumbers: number[]
+}
+
+const excelSheetDataCache = ref<Record<string, ParsedExcelSheetData>>({})
+
+interface SheetRecognitionCache {
+  sheetName: string
+  headers: string[]
+  data: any[]
+  convertedData: any[]
+  columnMappings: Record<string, string>
+  sourceSelectionRange: OriginalSelectionRange | null
+}
+
+const sheetRecognitionCache = ref<Record<string, SheetRecognitionCache>>({})
 
 // 非 Excel 文件解析结果缓存（用于多表格切换）
 const parsedDocumentSheets = ref<Record<string, { headers: string[]; data: Record<string, any>[] }>>({})
@@ -1152,6 +1189,133 @@ const originalSelectionSummary = computed(() => {
   const modeLabel = appliedOriginalSelection.value ? '已应用选区' : '当前选区'
   return `${modeLabel}: ${rowCount} 行 × ${colCount} 列`
 })
+
+function syncCurrentSheetRecognition() {
+  if (!currentSheetName.value) return
+  sheetRecognitionCache.value[currentSheetName.value] = {
+    sheetName: currentSheetName.value,
+    headers: [...originalHeaders.value],
+    data: originalTableData.value.map(row => ({ ...row })),
+    convertedData: convertedTableData.value.map(row => ({ ...row })),
+    columnMappings: { ...columnMappings.value },
+    sourceSelectionRange: appliedOriginalSelection.value ? { ...appliedOriginalSelection.value } : null
+  }
+}
+
+function restoreSheetRecognition(sheetName: string) {
+  const cached = sheetRecognitionCache.value[sheetName]
+  if (!cached) return false
+  originalHeaders.value = [...cached.headers]
+  originalTableData.value = cached.data.map(row => ({ ...row }))
+  convertedTableData.value = cached.convertedData.map(row => ({ ...row }))
+  columnMappings.value = { ...cached.columnMappings }
+  appliedOriginalSelection.value = cached.sourceSelectionRange ? { ...cached.sourceSelectionRange } : null
+  clearOriginalSelectionVisual()
+  saveInitialState()
+  return true
+}
+
+function isSheetSelected(sheetName: string) {
+  return selectedSheetNames.value.includes(sheetName)
+}
+
+function toggleSheetSelection(sheetName: string) {
+  if (isSheetSelected(sheetName)) {
+    selectedSheetNames.value = selectedSheetNames.value.filter(name => name !== sheetName)
+  } else {
+    selectedSheetNames.value = [...selectedSheetNames.value, sheetName]
+  }
+}
+
+function selectAllSheets() {
+  selectedSheetNames.value = [...sheetNames.value]
+}
+
+function selectCurrentSheetOnly() {
+  if (!currentSheetName.value) return
+  selectedSheetNames.value = [currentSheetName.value]
+}
+
+function getSheetRowCount(sheetName: string) {
+  if (sheetName === currentSheetName.value) return originalTableData.value.length
+  const cached = sheetRecognitionCache.value[sheetName]
+  if (cached) return cached.data.length
+  const excelCached = excelSheetDataCache.value[sheetName]
+  if (excelCached) return excelCached.data.length
+  const parsed = parsedDocumentSheets.value[sheetName]
+  if (parsed) return parsed.data.length
+  const worksheet = workbookRef.value?.Sheets?.[sheetName]
+  if (!worksheet?.['!ref']) return 0
+  const range = XLSX.utils.decode_range(worksheet['!ref'])
+  return Math.max(0, range.e.r - range.s.r)
+}
+
+function getSelectedSheetCaches() {
+  const activeSheetName = currentSheetName.value
+  syncCurrentSheetRecognition()
+  selectedSheetNames.value.forEach(sheetName => {
+    if (sheetRecognitionCache.value[sheetName]) return
+    currentSheetName.value = sheetName
+    if (parsedDocumentSheets.value[sheetName]) {
+      loadParsedSheetData(sheetName)
+    } else {
+      loadSheetData(sheetName)
+    }
+    syncCurrentSheetRecognition()
+  })
+  if (activeSheetName && currentSheetName.value !== activeSheetName) {
+    currentSheetName.value = activeSheetName
+    restoreSheetRecognition(activeSheetName)
+  }
+  return selectedSheetNames.value
+    .map(sheetName => sheetRecognitionCache.value[sheetName])
+    .filter((sheet): sheet is SheetRecognitionCache => !!sheet && sheet.convertedData.length > 0)
+}
+
+function parseExcelSheet(workbook: any, sheetName: string): ParsedExcelSheetData {
+  const worksheet = workbook?.Sheets?.[sheetName]
+  if (!worksheet || !worksheet['!ref']) {
+    return { headers: [], data: [] as Record<string, any>[], rowNumbers: [], columnNumbers: [] }
+  }
+
+  const range = XLSX.utils.decode_range(worksheet['!ref'])
+  const headers: string[] = []
+  const columnNumbers: number[] = []
+  for (let c = range.s.c; c <= range.e.c; c++) {
+    const cellAddress = XLSX.utils.encode_cell({ r: range.s.r, c })
+    const cell = worksheet[cellAddress]
+    let headerName = `列${c + 1}`
+    if (cell && cell.v !== undefined && cell.v !== null) {
+      headerName = String(cell.v)
+    }
+    headers.push(headerName)
+    columnNumbers.push(c + 1)
+  }
+
+  const data: Record<string, any>[] = []
+  const rowNumbers: number[] = []
+  for (let r = range.s.r + 1; r <= range.e.r; r++) {
+    const row: Record<string, any> = {}
+    let hasData = false
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cellAddress = XLSX.utils.encode_cell({ r, c })
+      const cell = worksheet[cellAddress]
+      const headerName = headers[c - range.s.c]
+      let cellValue = ''
+      if (cell && cell.v !== undefined && cell.v !== null) {
+        cellValue = String(cell.v)
+        hasData = true
+      }
+      row[headerName] = cellValue
+    }
+    if (hasData) {
+      data.push(row)
+      rowNumbers.push(r + 1)
+    }
+  }
+
+  return { headers, data, rowNumbers, columnNumbers }
+}
 
 function isOriginalCellSelected(row: number, col: number) {
   const range = getCurrentOriginalSelectionRange()
@@ -1334,6 +1498,10 @@ function restorePageStateOnMount() {
     // 恢复列映射状态
     columnMappings.value = savedState.columnMappings || {}
     appliedOriginalSelection.value = savedState.sourceSelectionRange || null
+    sheetNames.value = savedState.sheetNames || []
+    currentSheetName.value = savedState.currentSheetName || ''
+    selectedSheetNames.value = savedState.selectedSheetNames || (currentSheetName.value ? [currentSheetName.value] : [])
+    sheetRecognitionCache.value = savedState.sheetRecognitionCache || {}
     // 恢复报价类型选择
     selectedQuotationType.value = savedState.selectedQuotationType || ''
   }
@@ -1351,6 +1519,10 @@ function getCurrentState(): DocumentRecognitionState {
     isUploadSectionCollapsed: isUploadSectionCollapsed.value,
     columnMappings: columnMappings.value,
     sourceSelectionRange: appliedOriginalSelection.value,
+    sheetNames: sheetNames.value,
+    currentSheetName: currentSheetName.value,
+    selectedSheetNames: selectedSheetNames.value,
+    sheetRecognitionCache: sheetRecognitionCache.value,
     selectedQuotationType: selectedQuotationType.value,
     hasData: convertedTableData.value.length > 0
   }
@@ -1457,6 +1629,12 @@ async function loadRecentUpload(record: UploadRecord) {
     sheetNames.value = workbook.SheetNames
     currentFileName.value = record.fileName
     currentFileBase64.value = record.fileData  // 保存当前文件的base64数据
+    selectedSheetNames.value = workbook.SheetNames.length ? [workbook.SheetNames[0]] : []
+    sheetRecognitionCache.value = {}
+    excelSheetDataCache.value = {}
+    workbook.SheetNames.forEach((sheetName: string) => {
+      excelSheetDataCache.value[sheetName] = parseExcelSheet(workbook, sheetName)
+    })
 
     // Load the first sheet by default
     const firstSheet = workbook.SheetNames[0]
@@ -2042,30 +2220,98 @@ const goToSmartMatching = () => {
     return
   }
 
+  const selectedSheets = getSelectedSheetCaches()
+  if (selectedSheets.length === 0) {
+    ElMessage.warning('请至少勾选一个需要识别并报价的工作表')
+    return
+  }
+
+  const combinedConvertedData = selectedSheets.flatMap((sheet) => (
+    sheet.convertedData.map((row, rowIndex) => ({
+      ...row,
+      序号: '',
+      _sheetName: sheet.sheetName,
+      _sheetRowIndex: rowIndex
+    }))
+  )).map((row, index) => ({
+    ...row,
+    序号: String(index + 1)
+  }))
+
+  const originalSheetTables = selectedSheets.map(sheet => {
+    const parsedSheet = excelSheetDataCache.value[sheet.sheetName]
+    let worksheetSelection: {
+      headerRowNumber: number
+      dataRowNumbers: number[]
+      startColumnIndex: number
+      endColumnIndex: number
+    } | undefined
+
+    if (parsedSheet && sheet.sourceSelectionRange) {
+      const { startRow, endRow, startCol, endCol } = sheet.sourceSelectionRange
+      const headerRowNumber = parsedSheet.rowNumbers[startRow]
+      const dataRowNumbers = parsedSheet.rowNumbers.slice(startRow + 1, endRow + 1)
+      const startColumnIndex = parsedSheet.columnNumbers[startCol]
+      const endColumnIndex = parsedSheet.columnNumbers[endCol]
+
+      if (
+        Number.isFinite(headerRowNumber) &&
+        dataRowNumbers.length > 0 &&
+        Number.isFinite(startColumnIndex) &&
+        Number.isFinite(endColumnIndex)
+      ) {
+        worksheetSelection = {
+          headerRowNumber,
+          dataRowNumbers,
+          startColumnIndex,
+          endColumnIndex
+        }
+      }
+    }
+
+    return {
+      sheetName: sheet.sheetName,
+      headers: sheet.headers,
+      data: sheet.data,
+      worksheetSelection
+    }
+  })
+
+  const convertedSheetTables = selectedSheets.map(sheet => ({
+    sheetName: sheet.sheetName,
+    headers: visibleColumns.value,
+    data: sheet.convertedData.map((row, rowIndex) => ({
+      ...row,
+      _sheetName: sheet.sheetName,
+      _sheetRowIndex: rowIndex
+    }))
+  }))
+
   // 保存当前页面状态
   savePageState(PAGE_STATE_KEYS.DOC_RECOGNITION, getCurrentState())
   // 保存流程数据供下一页面使用
-  if (convertedTableData.value.length > 0) {
-    saveFlowData(FLOW_DATA_KEYS.CONVERTED_DATA, convertedTableData.value)
-  }
+  saveFlowData(FLOW_DATA_KEYS.CONVERTED_DATA, combinedConvertedData)
   // 保存原始表格数据（用于导出Excel）- 包含表头和数据
-  if (originalTableData.value.length > 0) {
+  if (selectedSheets.length > 0) {
     saveFlowData(FLOW_DATA_KEYS.ORIGINAL_TABLE_DATA, {
-      headers: originalHeaders.value,
-      data: originalTableData.value
+      headers: selectedSheets[0].headers,
+      data: selectedSheets[0].data
     })
+    saveFlowData(FLOW_DATA_KEYS.ORIGINAL_SHEET_TABLES, originalSheetTables)
   }
   // 保存转换后表格数据（用于导出Excel）- 包含表头和数据
-  if (convertedTableData.value.length > 0) {
+  if (combinedConvertedData.length > 0) {
     saveFlowData(FLOW_DATA_KEYS.CONVERTED_TABLE_DATA, {
       headers: visibleColumns.value,
-      data: convertedTableData.value
+      data: combinedConvertedData
     })
+    saveFlowData(FLOW_DATA_KEYS.CONVERTED_SHEET_TABLES, convertedSheetTables)
   }
   // 保存原始Excel文件数据（用于导出时保留原格式）
   if (currentFileBase64.value) {
     saveFlowData(FLOW_DATA_KEYS.ORIGINAL_EXCEL_FILE, currentFileBase64.value)
-    saveFlowData(FLOW_DATA_KEYS.SELECTED_SHEET_NAME, currentSheetName.value)
+    saveFlowData(FLOW_DATA_KEYS.SELECTED_SHEET_NAME, selectedSheets[0].sheetName)
+    saveFlowData(FLOW_DATA_KEYS.SELECTED_SHEET_NAMES, selectedSheets.map(sheet => sheet.sheetName))
     saveFlowData(FLOW_DATA_KEYS.ORIGINAL_FILE_NAME, currentFileName.value)
   }
   // 设置触发匹配标志，并清除SmartMatching的页面状态
@@ -2153,6 +2399,10 @@ function handleFileChange(event: Event) {
   workbookRef.value = null
   sheetNames.value = []
   currentSheetName.value = ''
+  selectedSheetNames.value = []
+  sheetRecognitionCache.value = {}
+  excelSheetDataCache.value = {}
+  parsedDocumentSheets.value = {}
 
   // 根据文件类型选择不同的解析路径
   if (file.name.match(EXCEL_PATTERN)) {
@@ -2179,6 +2429,11 @@ function handleExcelFile(file: File) {
       // Store workbook and sheet names for multi-sheet support
       workbookRef.value = workbook
       sheetNames.value = workbook.SheetNames
+      excelSheetDataCache.value = {}
+      workbook.SheetNames.forEach((sheetName: string) => {
+        excelSheetDataCache.value[sheetName] = parseExcelSheet(workbook, sheetName)
+      })
+      selectedSheetNames.value = workbook.SheetNames.length ? [workbook.SheetNames[0]] : []
 
       // Load the first sheet by default
       const firstSheet = workbook.SheetNames[0]
@@ -2233,6 +2488,8 @@ async function handleNonExcelFile(file: File) {
     // 设置 sheet 名称列表（多表格时允许切换）
     sheetNames.value = sheets.map(s => s.name)
     currentSheetName.value = sheets[0].name
+    selectedSheetNames.value = sheets.length ? [sheets[0].name] : []
+    sheetRecognitionCache.value = {}
 
     // 将解析结果存储到一个临时 Map 中，供 switchSheet 使用
     parsedDocumentSheets.value = {}
@@ -2294,67 +2551,30 @@ async function tryLLMStandardize(sheetName: string, headers: string[], data: Rec
 
 // Load data from a specific sheet
 function loadSheetData(sheetName: string) {
-  if (!workbookRef.value) return
+  if (restoreSheetRecognition(sheetName)) return
 
-  const worksheet = workbookRef.value.Sheets[sheetName]
-
-  if (!worksheet || !worksheet['!ref']) {
+  const parsedSheet = excelSheetDataCache.value[sheetName] || (workbookRef.value ? parseExcelSheet(workbookRef.value, sheetName) : null)
+  if (!parsedSheet || parsedSheet.headers.length === 0) {
     originalHeaders.value = []
     originalTableData.value = []
     convertedTableData.value = []
     return
   }
 
-  const range = XLSX.utils.decode_range(worksheet['!ref'])
-
-  // Get headers
-  const headers: string[] = []
-  for (let c = range.s.c; c <= range.e.c; c++) {
-    const cellAddress = XLSX.utils.encode_cell({ r: range.s.r, c })
-    const cell = worksheet[cellAddress]
-    let headerName = `列${c + 1}`
-    if (cell && cell.v !== undefined && cell.v !== null) {
-      headerName = String(cell.v)
-    }
-    headers.push(headerName)
-  }
-
-  // Parse data
-  const jsonData: any[] = []
-  for (let r = range.s.r + 1; r <= range.e.r; r++) {
-    const row: any = {}
-    let hasData = false
-
-    for (let c = range.s.c; c <= range.e.c; c++) {
-      const cellAddress = XLSX.utils.encode_cell({ r, c })
-      const cell = worksheet[cellAddress]
-      const headerName = headers[c - range.s.c]
-      let cellValue = ''
-
-      if (cell && cell.v !== undefined && cell.v !== null) {
-        cellValue = String(cell.v)
-        hasData = true
-      }
-
-      row[headerName] = cellValue
-    }
-
-    if (hasData) {
-      jsonData.push(row)
-    }
-  }
-
-  originalHeaders.value = headers
-  originalTableData.value = jsonData
+  originalHeaders.value = [...parsedSheet.headers]
+  originalTableData.value = parsedSheet.data.map(row => ({ ...row }))
   appliedOriginalSelection.value = null
   clearOriginalSelectionVisual()
 
   // Convert data
-  convertData(jsonData, headers)
+  convertData(originalTableData.value, originalHeaders.value)
+  syncCurrentSheetRecognition()
 }
 
 // 加载从后端解析的文档表格数据（Word / PDF / 图片）
 function loadParsedSheetData(sheetName: string) {
+  if (restoreSheetRecognition(sheetName)) return
+
   const sheet = parsedDocumentSheets.value[sheetName]
   if (!sheet) {
     originalHeaders.value = []
@@ -2370,11 +2590,13 @@ function loadParsedSheetData(sheetName: string) {
 
   // 复用已有的字段转换逻辑
   convertData(sheet.data, sheet.headers)
+  syncCurrentSheetRecognition()
 }
 
 // Switch to a different sheet
 function switchSheet(sheetName: string) {
   if (sheetName === currentSheetName.value) return
+  syncCurrentSheetRecognition()
   currentSheetName.value = sheetName
 
   // 判断是 Excel 工作表还是后端解析的文档表格
@@ -3271,6 +3493,9 @@ const resetData = () => {
     workbookRef.value = null
     sheetNames.value = []
     currentSheetName.value = ''
+    selectedSheetNames.value = []
+    sheetRecognitionCache.value = {}
+    excelSheetDataCache.value = {}
   }
 }
 
@@ -3883,7 +4108,9 @@ const getTotalAmount = () => {
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
 }
 
 .collapse-btn {
@@ -4043,13 +4270,46 @@ const getTotalAmount = () => {
   display: flex;
   flex-wrap: wrap;
   gap: 0.375rem;
+  max-height: 220px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+}
+
+.sheet-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.625rem;
+}
+
+.sheet-action-btn {
+  height: 24px;
+  padding: 0 0.5rem;
+  border: 1px solid rgba(51, 65, 85, 0.7);
+  border-radius: 0.25rem;
+  background: rgba(15, 23, 42, 0.65);
+  color: #cbd5e1;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+.sheet-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.sheet-selected-count {
+  margin-left: auto;
+  color: #7f8da8;
+  font-size: 0.7rem;
 }
 
 .sheet-tab {
   display: flex;
   align-items: center;
   gap: 0.375rem;
-  padding: 0.375rem 0.625rem;
+  padding: 0.25rem 0.5rem;
   background: rgba(30, 41, 59, 0.6);
   border: 1px solid rgba(51, 65, 85, 0.5);
   border-radius: 0.375rem;
@@ -4057,13 +4317,41 @@ const getTotalAmount = () => {
   font-size: 0.75rem;
   cursor: pointer;
   transition: all 0.2s;
-  max-width: 140px;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
+
+.sheet-checkbox {
+  width: 14px;
+  height: 14px;
+  accent-color: #135bec;
+  cursor: pointer;
+}
+
+.sheet-open-btn {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.375rem;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  width: 100%;
 }
 
 .sheet-tab:hover {
   background: rgba(30, 41, 59, 0.8);
   border-color: rgba(51, 65, 85, 0.8);
   color: #e2e8f0;
+}
+
+.sheet-tab.checked {
+  border-color: rgba(19, 91, 236, 0.65);
 }
 
 .sheet-tab.active {
@@ -4076,7 +4364,9 @@ const getTotalAmount = () => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 80px;
+  flex: 1;
+  min-width: 0;
+  max-width: none;
 }
 
 .sheet-tab-rows {

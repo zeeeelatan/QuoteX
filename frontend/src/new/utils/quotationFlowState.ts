@@ -7,16 +7,21 @@
 export const FLOW_DATA_KEYS = {
   CONVERTED_DATA: 'quotation_convertedData',        // 智能识别后的数据 → 智能匹配
   MATCHED_DATA: 'quotation_matchedData',            // 智能匹配后的数据 → 价格调整
+  MATCHED_SHEET_GROUPS: 'quotation_matchedSheetGroups',
   ADJUSTED_DATA: 'quotation_adjustedData',          // 价格调整后的数据 → 生成报价
+  ADJUSTED_SHEET_GROUPS: 'quotation_adjustedSheetGroups',
   FINAL_DATA: 'quotation_finalData',                // 最终报价数据
   TRIGGER_MATCHING: 'quotation_triggerMatching',    // 标志：是否需要触发新的智能匹配
   NAVIGATION_MODE: 'quotation_navigationMode',      // 导航模式：'flow'（流程推进）或 'jump'（面包屑跳转）
   // 新增：用于导出Excel的原始表格数据
   ORIGINAL_TABLE_DATA: 'quotation_originalTableData',      // 原始表格数据（包含表头和数据行）
   CONVERTED_TABLE_DATA: 'quotation_convertedTableData',    // 转换后表格数据（包含表头和数据行）
+  ORIGINAL_SHEET_TABLES: 'quotation_originalSheetTables',   // 多工作表原始数据
+  CONVERTED_SHEET_TABLES: 'quotation_convertedSheetTables', // 多工作表转换后数据
   // 新增：用于保留原始Excel文件格式
   ORIGINAL_EXCEL_FILE: 'quotation_originalExcelFile',      // 原始Excel文件的base64数据
   SELECTED_SHEET_NAME: 'quotation_selectedSheetName',      // 识别时选择的工作表名称
+  SELECTED_SHEET_NAMES: 'quotation_selectedSheetNames',    // 识别时选择的多个工作表名称
   ORIGINAL_FILE_NAME: 'quotation_originalFileName'         // 原始文件名
 }
 
@@ -38,11 +43,17 @@ export interface DocumentRecognitionState {
   visibleColumns: string[]
   isUploadSectionCollapsed: boolean
   columnMappings?: Record<string, string>  // 列映射关系：转换后表头 -> 原始表头
+  sheetNames?: string[]
+  currentSheetName?: string
+  selectedSheetNames?: string[]
+  sheetRecognitionCache?: Record<string, any>
   hasData: boolean
 }
 
 export interface SmartMatchingState {
   tableData: any[]
+  sheetGroups?: Record<string, any[]>
+  activeSheetName?: string
   dataSource: 'datacenter' | 'office' | 'hybrid'
   filterStatus: 'all' | 'low' | 'unmatched' | 'matched'
   hasData: boolean
@@ -50,6 +61,8 @@ export interface SmartMatchingState {
 
 export interface PriceAdjustmentState {
   tableData: any[]
+  sheetGroups?: Record<string, any[]>
+  activeSheetName?: string
   hasData: boolean
 }
 
@@ -123,6 +136,16 @@ export function clearAllQuotationStates(): void {
 export interface TableDataWithHeaders {
   headers: string[]
   data: any[]
+}
+
+export interface SheetTableDataWithHeaders extends TableDataWithHeaders {
+  sheetName: string
+  worksheetSelection?: {
+    headerRowNumber: number
+    dataRowNumbers: number[]
+    startColumnIndex: number
+    endColumnIndex: number
+  }
 }
 
 /**

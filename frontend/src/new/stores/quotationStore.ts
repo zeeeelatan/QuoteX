@@ -11,15 +11,20 @@ import { reactive, shallowRef } from 'vue'
 export const FlowDataKeys = {
   CONVERTED_DATA: 'quotation_convertedData',
   MATCHED_DATA: 'quotation_matchedData',
+  MATCHED_SHEET_GROUPS: 'quotation_matchedSheetGroups',
   ADJUSTED_DATA: 'quotation_adjustedData',
+  ADJUSTED_SHEET_GROUPS: 'quotation_adjustedSheetGroups',
   FINAL_DATA: 'quotation_finalData',
   TRIGGER_MATCHING: 'quotation_triggerMatching',
   NAVIGATION_MODE: 'quotation_navigationMode',
   ORIGINAL_TABLE_DATA: 'quotation_originalTableData',
   CONVERTED_TABLE_DATA: 'quotation_convertedTableData',
+  ORIGINAL_SHEET_TABLES: 'quotation_originalSheetTables',
+  CONVERTED_SHEET_TABLES: 'quotation_convertedSheetTables',
   // 新增：用于保留原始Excel文件格式
   ORIGINAL_EXCEL_FILE: 'quotation_originalExcelFile',
   SELECTED_SHEET_NAME: 'quotation_selectedSheetName',
+  SELECTED_SHEET_NAMES: 'quotation_selectedSheetNames',
   ORIGINAL_FILE_NAME: 'quotation_originalFileName',
 } as const
 
@@ -52,12 +57,18 @@ export interface DocumentRecognitionState {
     startCol: number
     endCol: number
   } | null
+  sheetNames?: string[]
+  currentSheetName?: string
+  selectedSheetNames?: string[]
+  sheetRecognitionCache?: Record<string, any>
   selectedQuotationType?: string
   hasData: boolean
 }
 
 export interface SmartMatchingState {
   tableData: any[]
+  sheetGroups?: Record<string, any[]>
+  activeSheetName?: string
   dataSource: 'datacenter' | 'office' | 'hybrid'
   filterStatus: 'all' | 'low' | 'unmatched' | 'matched'
   hasData: boolean
@@ -65,6 +76,8 @@ export interface SmartMatchingState {
 
 export interface PriceAdjustmentState {
   tableData: any[]
+  sheetGroups?: Record<string, any[]>
+  activeSheetName?: string
   hasData: boolean
 }
 
@@ -83,21 +96,36 @@ export interface TableDataWithHeaders {
   data: any[]
 }
 
+export interface SheetTableDataWithHeaders extends TableDataWithHeaders {
+  sheetName: string
+  worksheetSelection?: {
+    headerRowNumber: number
+    dataRowNumbers: number[]
+    startColumnIndex: number
+    endColumnIndex: number
+  }
+}
+
 // ========== 全局状态 Store ==========
 
 // 流程数据（使用 shallowRef 优化大数据量性能）
 const flowData: Record<string, any> = reactive({
   [FlowDataKeys.CONVERTED_DATA]: shallowRef<any[]>([]),
   [FlowDataKeys.MATCHED_DATA]: shallowRef<any[]>([]),
+  [FlowDataKeys.MATCHED_SHEET_GROUPS]: shallowRef<Record<string, any[]>>({}),
   [FlowDataKeys.ADJUSTED_DATA]: shallowRef<any[]>([]),
+  [FlowDataKeys.ADJUSTED_SHEET_GROUPS]: shallowRef<Record<string, any[]>>({}),
   [FlowDataKeys.FINAL_DATA]: shallowRef<any[]>([]),
   [FlowDataKeys.TRIGGER_MATCHING]: false,
   [FlowDataKeys.NAVIGATION_MODE]: 'jump' as 'flow' | 'jump',
   [FlowDataKeys.ORIGINAL_TABLE_DATA]: shallowRef<TableDataWithHeaders | null>(null),
   [FlowDataKeys.CONVERTED_TABLE_DATA]: shallowRef<TableDataWithHeaders | null>(null),
+  [FlowDataKeys.ORIGINAL_SHEET_TABLES]: shallowRef<SheetTableDataWithHeaders[]>([]),
+  [FlowDataKeys.CONVERTED_SHEET_TABLES]: shallowRef<SheetTableDataWithHeaders[]>([]),
   // 新增：用于保留原始Excel文件格式
   [FlowDataKeys.ORIGINAL_EXCEL_FILE]: shallowRef<string | null>(null),
   [FlowDataKeys.SELECTED_SHEET_NAME]: shallowRef<string | null>(null),
+  [FlowDataKeys.SELECTED_SHEET_NAMES]: shallowRef<string[]>([]),
   [FlowDataKeys.ORIGINAL_FILE_NAME]: shallowRef<string | null>(null),
 })
 
