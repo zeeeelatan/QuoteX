@@ -276,43 +276,47 @@
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-for="(row, rowIndex) in convertedTableData" :key="'row-' + rowIndex">
-                        <td v-for="(header, colIndex) in visibleColumns"
-                            :key="'cell-' + rowIndex + '-' + header"
-                            :class="getCellClass(rowIndex, colIndex)"
-                            :data-row="rowIndex"
-                            :data-col="colIndex"
-                            @mousedown.stop="handleCellMouseDown(rowIndex, colIndex, $event)"
-                            @mouseenter="handleCellMouseEnter(rowIndex, colIndex)"
-                            @dblclick="startCellEdit(rowIndex, colIndex)">
-                          <!-- 序号列只读 -->
-                          <span v-if="header === '序号'" class="table-cell-text">{{ rowIndex + 1 }}</span>
-                          <!-- 编辑状态 -->
-                          <input
-                            v-else-if="isEditing(rowIndex, colIndex)"
-                            type="text"
-                            v-model="row[header]"
-                            class="table-input editing"
-                            @mousedown.stop
-                            @click.stop
-                            @blur="endCellEdit"
-                            @keydown.enter="endCellEdit"
-                            @keydown.tab.prevent="moveToNextCell"
-                            @keydown.esc="endCellEdit"
-                            ref="editInputRef"
-                            autofocus
-                          />
-                          <!-- 普通显示状态 -->
-                          <span v-else class="table-cell-text" :class="{ placeholder: !row[header] }">
-                            {{ row[header] || getPlaceholderText(header) }}
-                          </span>
-                        </td>
+                      <tr v-if="convertedTopPadding > 0" :style="{ height: convertedTopPadding + 'px' }" class="virtual-spacer"><td></td></tr>
+                      <tr v-for="(row, i) in convertedVisibleItems"
+                          :key="'row-' + (convertedStartIndex + i)"
+                          :style="{ height: CONVERTED_ROW_HEIGHT + 'px' }">
+                        <template v-for="(header, colIndex) in visibleColumns" :key="'cell-' + (convertedStartIndex + i) + '-' + header">
+                          <td :class="getCellClass(convertedStartIndex + i, colIndex)"
+                              :data-row="convertedStartIndex + i"
+                              :data-col="colIndex"
+                              @mousedown.stop="handleCellMouseDown(convertedStartIndex + i, colIndex, $event)"
+                              @mouseenter="handleCellMouseEnter(convertedStartIndex + i, colIndex)"
+                              @dblclick="startCellEdit(convertedStartIndex + i, colIndex)">
+                            <!-- 序号列只读 -->
+                            <span v-if="header === '序号'" class="table-cell-text">{{ convertedStartIndex + i + 1 }}</span>
+                            <!-- 编辑状态 -->
+                            <input
+                              v-else-if="isEditing(convertedStartIndex + i, colIndex)"
+                              type="text"
+                              v-model="row[header]"
+                              class="table-input editing"
+                              @mousedown.stop
+                              @click.stop
+                              @blur="endCellEdit"
+                              @keydown.enter="endCellEdit"
+                              @keydown.tab.prevent="moveToNextCell"
+                              @keydown.esc="endCellEdit"
+                              ref="editInputRef"
+                              autofocus
+                            />
+                            <!-- 普通显示状态 -->
+                            <span v-else class="table-cell-text" :class="{ placeholder: !row[header] }">
+                              {{ row[header] || getPlaceholderText(header) }}
+                            </span>
+                          </td>
+                        </template>
                         <td class="actions-cell">
-                          <button class="delete-row-btn" @click="deleteRow(rowIndex)" title="删除此行">
+                          <button class="delete-row-btn" @click="deleteRow(convertedStartIndex + i)" title="删除此行">
                             <span class="material-symbols-outlined">delete</span>
                           </button>
                         </td>
                       </tr>
+                      <tr v-if="convertedBottomPadding > 0" :style="{ height: convertedBottomPadding + 'px' }" class="virtual-spacer"><td></td></tr>
                     </tbody>
                   </table>
                 </div>
@@ -378,6 +382,16 @@
                     <p class="selection-summary">{{ originalSelectionSummary }}</p>
                   </div>
                   <div class="original-selection-actions">
+                    <button
+                      class="toolbar-btn no-header-toggle"
+                      :class="{ active: noHeaderMode }"
+                      @click="toggleNoHeaderMode"
+                      :disabled="originalHeaders.length === 0"
+                      :title="noHeaderMode ? '切回：首行作为表头' : '切换：无表头模式（所有行均为数据，列以 列N 代替表头）'"
+                    >
+                      <span class="material-symbols-outlined">{{ noHeaderMode ? 'check_box' : 'check_box_outline_blank' }}</span>
+                      无表头
+                    </button>
                     <button class="toolbar-btn" @click="openFullscreenModal('original-selection')" title="全屏框选原始表格">
                       <span class="material-symbols-outlined">open_in_full</span>
                     </button>
@@ -401,19 +415,21 @@
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-for="(row, rowIndex) in originalTableData" :key="rowIndex">
+                      <tr v-if="originalTopPadding > 0" :style="{ height: originalTopPadding + 'px' }" class="virtual-spacer"><td></td></tr>
+                      <tr v-for="(row, i) in originalVisibleItems" :key="originalStartIndex + i" :style="{ height: ORIGINAL_ROW_HEIGHT + 'px' }">
                         <td
                           v-for="(header, colIndex) in originalHeaders"
                           :key="colIndex"
-                          :class="getOriginalCellClass(rowIndex, colIndex)"
-                          :data-original-row="rowIndex"
+                          :class="getOriginalCellClass(originalStartIndex + i, colIndex)"
+                          :data-original-row="originalStartIndex + i"
                           :data-original-col="colIndex"
-                          @mousedown.stop="handleOriginalCellMouseDown(rowIndex, colIndex, $event)"
-                          @mouseenter="handleOriginalCellMouseEnter(rowIndex, colIndex)"
+                          @mousedown.stop="handleOriginalCellMouseDown(originalStartIndex + i, colIndex, $event)"
+                          @mouseenter="handleOriginalCellMouseEnter(originalStartIndex + i, colIndex)"
                         >
                           {{ row[header] || '' }}
                         </td>
                       </tr>
+                      <tr v-if="originalBottomPadding > 0" :style="{ height: originalBottomPadding + 'px' }" class="virtual-spacer"><td></td></tr>
                     </tbody>
                   </table>
                 </div>
@@ -513,47 +529,51 @@
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-for="(row, rowIndex) in convertedTableData" :key="'row-' + rowIndex">
-                        <td v-for="(header, colIndex) in visibleColumns" 
-                            :key="'cell-' + rowIndex + '-' + header"
-                            :class="getCellClass(rowIndex, colIndex)"
-                            :data-row="rowIndex"
-                            :data-col="colIndex"
-                            @mousedown.stop="handleCellMouseDown(rowIndex, colIndex, $event)"
-                            @mouseenter="handleCellMouseEnter(rowIndex, colIndex)"
-                            @dblclick="startCellEdit(rowIndex, colIndex)">
-                          <!-- 序号列只读 -->
-                          <span v-if="header === '序号'" class="table-cell-text">{{ rowIndex + 1 }}</span>
-                          <!-- 编辑状态 -->
-                          <input
-                            v-else-if="isEditing(rowIndex, colIndex)"
-                            type="text"
-                            v-model="row[header]"
-                            class="table-input editing"
-                            @mousedown.stop
-                            @click.stop
-                            @blur="endCellEdit"
-                            @keydown.enter="endCellEdit"
-                            @keydown.tab.prevent="moveToNextCell"
-                            @keydown.esc="endCellEdit"
-                            ref="editInputRef"
-                            autofocus
-                          />
-                          <!-- 普通显示状态 -->
-                          <span v-else class="cell-content">{{ row[header] || '' }}</span>
-                          <!-- 填充手柄 -->
-                          <div 
-                            v-if="isFillHandleCell(rowIndex, colIndex)" 
-                            class="fill-handle"
-                            @mousedown.stop="startFillDrag(rowIndex, colIndex, $event)">
-                          </div>
-                        </td>
+                      <tr v-if="convertedTopPadding > 0" :style="{ height: convertedTopPadding + 'px' }" class="virtual-spacer"><td></td></tr>
+                      <tr v-for="(row, i) in convertedVisibleItems"
+                          :key="'row-' + (convertedStartIndex + i)"
+                          :style="{ height: CONVERTED_ROW_HEIGHT + 'px' }">
+                        <template v-for="(header, colIndex) in visibleColumns" :key="'cell-' + (convertedStartIndex + i) + '-' + header">
+                          <td :class="getCellClass(convertedStartIndex + i, colIndex)"
+                              :data-row="convertedStartIndex + i"
+                              :data-col="colIndex"
+                              @mousedown.stop="handleCellMouseDown(convertedStartIndex + i, colIndex, $event)"
+                              @mouseenter="handleCellMouseEnter(convertedStartIndex + i, colIndex)"
+                              @dblclick="startCellEdit(convertedStartIndex + i, colIndex)">
+                            <!-- 序号列只读 -->
+                            <span v-if="header === '序号'" class="table-cell-text">{{ convertedStartIndex + i + 1 }}</span>
+                            <!-- 编辑状态 -->
+                            <input
+                              v-else-if="isEditing(convertedStartIndex + i, colIndex)"
+                              type="text"
+                              v-model="row[header]"
+                              class="table-input editing"
+                              @mousedown.stop
+                              @click.stop
+                              @blur="endCellEdit"
+                              @keydown.enter="endCellEdit"
+                              @keydown.tab.prevent="moveToNextCell"
+                              @keydown.esc="endCellEdit"
+                              ref="editInputRef"
+                              autofocus
+                            />
+                            <!-- 普通显示状态 -->
+                            <span v-else class="cell-content">{{ row[header] || '' }}</span>
+                            <!-- 填充手柄 -->
+                            <div
+                              v-if="isFillHandleCell(convertedStartIndex + i, colIndex)"
+                              class="fill-handle"
+                              @mousedown.stop="startFillDrag(convertedStartIndex + i, colIndex, $event)">
+                            </div>
+                          </td>
+                        </template>
                         <td class="actions-cell">
-                          <button class="action-btn delete" @click="deleteRow(rowIndex)" title="删除">
+                          <button class="action-btn delete" @click="deleteRow(convertedStartIndex + i)" title="删除">
                             <span class="material-symbols-outlined">delete</span>
                           </button>
                         </td>
                       </tr>
+                      <tr v-if="convertedBottomPadding > 0" :style="{ height: convertedBottomPadding + 'px' }" class="virtual-spacer"><td></td></tr>
                     </tbody>
                   </table>
                   <!-- 选择框覆盖层 -->
@@ -652,19 +672,21 @@
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-for="(row, rowIndex) in originalTableData" :key="`original-only-${rowIndex}`">
+                      <tr v-if="modalOriginalTopPadding > 0" :style="{ height: modalOriginalTopPadding + 'px' }" class="virtual-spacer"><td></td></tr>
+                      <tr v-for="(row, i) in modalOriginalVisibleItems" :key="`original-only-${modalOriginalStartIndex + i}`" :style="{ height: ORIGINAL_ROW_HEIGHT + 'px' }">
                         <td
                           v-for="(header, colIndex) in originalHeaders"
-                          :key="`${rowIndex}-${colIndex}`"
-                          :class="getOriginalCellClass(rowIndex, colIndex)"
-                          :data-original-row="rowIndex"
+                          :key="`${modalOriginalStartIndex + i}-${colIndex}`"
+                          :class="getOriginalCellClass(modalOriginalStartIndex + i, colIndex)"
+                          :data-original-row="modalOriginalStartIndex + i"
                           :data-original-col="colIndex"
-                          @mousedown.stop="handleOriginalCellMouseDown(rowIndex, colIndex, $event)"
-                          @mouseenter="handleOriginalCellMouseEnter(rowIndex, colIndex)"
+                          @mousedown.stop="handleOriginalCellMouseDown(modalOriginalStartIndex + i, colIndex, $event)"
+                          @mouseenter="handleOriginalCellMouseEnter(modalOriginalStartIndex + i, colIndex)"
                         >
                           {{ row[header] || '' }}
                         </td>
                       </tr>
+                      <tr v-if="modalOriginalBottomPadding > 0" :style="{ height: modalOriginalBottomPadding + 'px' }" class="virtual-spacer"><td></td></tr>
                     </tbody>
                   </table>
                 </div>
@@ -698,24 +720,26 @@
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-for="(row, rowIndex) in originalTableData" :key="rowIndex">
+                      <tr v-if="modalOriginalTopPadding > 0" :style="{ height: modalOriginalTopPadding + 'px' }" class="virtual-spacer"><td></td></tr>
+                      <tr v-for="(row, i) in modalOriginalVisibleItems" :key="modalOriginalStartIndex + i" :style="{ height: ORIGINAL_ROW_HEIGHT + 'px' }">
                         <td
                           v-for="(header, colIndex) in originalHeaders"
                           :key="colIndex"
-                          :class="getOriginalCellClass(rowIndex, colIndex)"
-                          :data-original-row="rowIndex"
+                          :class="getOriginalCellClass(modalOriginalStartIndex + i, colIndex)"
+                          :data-original-row="modalOriginalStartIndex + i"
                           :data-original-col="colIndex"
-                          @mousedown.stop="handleOriginalCellMouseDown(rowIndex, colIndex, $event)"
-                          @mouseenter="handleOriginalCellMouseEnter(rowIndex, colIndex)"
+                          @mousedown.stop="handleOriginalCellMouseDown(modalOriginalStartIndex + i, colIndex, $event)"
+                          @mouseenter="handleOriginalCellMouseEnter(modalOriginalStartIndex + i, colIndex)"
                         >
                           {{ row[header] || '' }}
                         </td>
                       </tr>
+                      <tr v-if="modalOriginalBottomPadding > 0" :style="{ height: modalOriginalBottomPadding + 'px' }" class="virtual-spacer"><td></td></tr>
                     </tbody>
                   </table>
                 </div>
               </div>
-              
+
               <!-- 转换后表格 with Excel features -->
               <div class="modal-table-section converted modal-excel-section">
                 <div class="modal-section-header">
@@ -810,46 +834,50 @@
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-for="(row, rowIndex) in convertedTableData" :key="'modal-row-' + rowIndex">
-                        <td v-for="(header, colIndex) in visibleColumns" 
-                            :key="'modal-cell-' + rowIndex + '-' + header" 
-                            :class="getModalCellClass(rowIndex, colIndex)"
-                            :data-row="rowIndex"
-                            :data-col="colIndex"
-                            @mousedown.stop="handleCellMouseDown(rowIndex, colIndex, $event)"
-                            @mouseenter="handleCellMouseEnter(rowIndex, colIndex)"
-                            @dblclick="startCellEdit(rowIndex, colIndex)">
-                          <!-- 序号列只读 -->
-                          <span v-if="header === '序号'" class="modal-cell-text">{{ rowIndex + 1 }}</span>
-                          <!-- 编辑状态 -->
-                          <input
-                            v-else-if="isEditing(rowIndex, colIndex)"
-                            type="text"
-                            v-model="row[header]"
-                            class="modal-table-input modal-editing"
-                            @mousedown.stop
-                            @click.stop
-                            @blur="endCellEdit"
-                            @keydown.enter="endCellEdit"
-                            @keydown.tab.prevent="moveToNextCell"
-                            @keydown.esc="endCellEdit"
-                            autofocus
-                          />
-                          <!-- 普通显示状态 -->
-                          <span v-else class="modal-cell-content">{{ row[header] || '' }}</span>
-                          <!-- 填充手柄 -->
-                          <div 
-                            v-if="isFillHandleCell(rowIndex, colIndex)" 
-                            class="modal-fill-handle"
-                            @mousedown.stop="startFillDrag(rowIndex, colIndex, $event)">
-                          </div>
-                        </td>
+                      <tr v-if="modalConvertedTopPadding > 0" :style="{ height: modalConvertedTopPadding + 'px' }" class="virtual-spacer"><td></td></tr>
+                      <tr v-for="(row, i) in modalConvertedVisibleItems"
+                          :key="'modal-row-' + (modalConvertedStartIndex + i)"
+                          :style="{ height: CONVERTED_ROW_HEIGHT + 'px' }">
+                        <template v-for="(header, colIndex) in visibleColumns" :key="'modal-cell-' + (modalConvertedStartIndex + i) + '-' + header">
+                          <td :class="getModalCellClass(modalConvertedStartIndex + i, colIndex)"
+                              :data-row="modalConvertedStartIndex + i"
+                              :data-col="colIndex"
+                              @mousedown.stop="handleCellMouseDown(modalConvertedStartIndex + i, colIndex, $event)"
+                              @mouseenter="handleCellMouseEnter(modalConvertedStartIndex + i, colIndex)"
+                              @dblclick="startCellEdit(modalConvertedStartIndex + i, colIndex)">
+                            <!-- 序号列只读 -->
+                            <span v-if="header === '序号'" class="modal-cell-text">{{ modalConvertedStartIndex + i + 1 }}</span>
+                            <!-- 编辑状态 -->
+                            <input
+                              v-else-if="isEditing(modalConvertedStartIndex + i, colIndex)"
+                              type="text"
+                              v-model="row[header]"
+                              class="modal-table-input modal-editing"
+                              @mousedown.stop
+                              @click.stop
+                              @blur="endCellEdit"
+                              @keydown.enter="endCellEdit"
+                              @keydown.tab.prevent="moveToNextCell"
+                              @keydown.esc="endCellEdit"
+                              autofocus
+                            />
+                            <!-- 普通显示状态 -->
+                            <span v-else class="modal-cell-content">{{ row[header] || '' }}</span>
+                            <!-- 填充手柄 -->
+                            <div
+                              v-if="isFillHandleCell(modalConvertedStartIndex + i, colIndex)"
+                              class="modal-fill-handle"
+                              @mousedown.stop="startFillDrag(modalConvertedStartIndex + i, colIndex, $event)">
+                            </div>
+                          </td>
+                        </template>
                         <td class="modal-actions-cell">
-                          <button class="modal-action-btn delete" @click="deleteRow(rowIndex)" title="删除">
+                          <button class="modal-action-btn delete" @click="deleteRow(modalConvertedStartIndex + i)" title="删除">
                             <span class="material-symbols-outlined">delete</span>
                           </button>
                         </td>
                       </tr>
+                      <tr v-if="modalConvertedBottomPadding > 0" :style="{ height: modalConvertedBottomPadding + 'px' }" class="virtual-spacer"><td></td></tr>
                     </tbody>
                   </table>
                 </div>
@@ -938,6 +966,7 @@ import {
 } from '../utils/draftUtils'
 import { useProductCategories, type ProductCategory } from '../stores/productCategoryStore'
 import { getStorageKeyPrefix } from '../stores/authStore'
+import { useVirtualList } from '../composables/useVirtualList'
 
 const router = useRouter()
 
@@ -1007,6 +1036,10 @@ const originalTableData = shallowRef<any[]>([])
 const originalHeaders = ref<string[]>([])
 const convertedTableData = shallowRef<any[]>([])
 
+// ============ 虚拟滚动行高 ============
+const ORIGINAL_ROW_HEIGHT = 36   // 原始表格固定行高（CSS 同步）
+const CONVERTED_ROW_HEIGHT = 56  // 转换后表格固定行高（CSS 同步）
+
 interface OriginalSelectionRange {
   startRow: number
   endRow: number
@@ -1054,12 +1087,105 @@ const parsedDocumentSheets = ref<Record<string, { headers: string[]; data: Recor
 
 // Column mapping state
 const columnMappings = ref<Record<string, string>>({})  // 转换后表头 -> 原始表头的映射
+
+// 无表头模式：原始数据首行不是表头，所有行都是数据；列名变成 列1/列2/...
+const noHeaderMode = ref(false)
+
+/** 切换无表头模式：在"原始表头是首行"和"原始头并入数据 + 用 列N 占位"两种形态间相互转换 */
+function toggleNoHeaderMode() {
+  const target = !noHeaderMode.value
+  const headers = [...originalHeaders.value]
+  if (headers.length === 0) {
+    noHeaderMode.value = target
+    return
+  }
+
+  if (target) {
+    // 开启无表头：把当前 headers 视作"第 0 行数据"，列名重命名为 列1/列2/...
+    const newHeaders = headers.map((_, i) => `列${i + 1}`)
+    const headerRow: Record<string, string> = {}
+    headers.forEach((h, i) => { headerRow[newHeaders[i]] = String(h ?? '') })
+
+    const remappedData = originalTableData.value.map((row) => {
+      const newRow: Record<string, string> = {}
+      headers.forEach((h, i) => { newRow[newHeaders[i]] = String(row?.[h] ?? '') })
+      return newRow
+    })
+
+    originalHeaders.value = newHeaders
+    originalTableData.value = [headerRow, ...remappedData]
+  } else {
+    // 关闭无表头：把当前第 0 行还原成 headers
+    if (originalTableData.value.length === 0) {
+      noHeaderMode.value = target
+      return
+    }
+    const first = originalTableData.value[0] || {}
+    const restoredHeaders = headers.map(h => String(first[h] ?? ''))
+    // 表头里若有空 / 重复，自动补名避免后续 row[h] 取值冲突
+    const seen: Record<string, number> = {}
+    const safeHeaders = restoredHeaders.map((raw) => {
+      const base = raw.trim() || '空列'
+      const n = (seen[base] = (seen[base] || 0) + 1)
+      return n === 1 ? base : `${base}_${n}`
+    })
+
+    const remappedData = originalTableData.value.slice(1).map((row) => {
+      const newRow: Record<string, string> = {}
+      headers.forEach((h, i) => { newRow[safeHeaders[i]] = String(row?.[h] ?? '') })
+      return newRow
+    })
+
+    originalHeaders.value = safeHeaders
+    originalTableData.value = remappedData
+  }
+
+  noHeaderMode.value = target
+  // 切换后映射不再适用，清空让用户重新映射；并触发转换后表格重生成
+  columnMappings.value = {}
+  if (originalTableData.value.length > 0 && originalHeaders.value.length > 0) {
+    convertData(originalTableData.value, originalHeaders.value)
+  }
+}
 const activeDropdownForColumn = ref<string | null>(null)  // 当前打开下拉框的列名
 
 // Excel-like table state
 const excelTableRef = ref<HTMLElement | null>(null)
 const modalExcelTableRef = ref<HTMLElement | null>(null)
 const editInputRef = ref<HTMLInputElement | null>(null)
+
+// ============ 虚拟滚动初始化 ============
+const originalTableDataRef = computed(() => originalTableData.value)
+const convertedTableDataRef = computed(() => convertedTableData.value)
+
+const {
+  visibleItems: originalVisibleItems,
+  topPadding: originalTopPadding,
+  bottomPadding: originalBottomPadding,
+  startIndex: originalStartIndex,
+} = useVirtualList(originalTableDataRef, ORIGINAL_ROW_HEIGHT, originalTableWrapperRef)
+
+const {
+  visibleItems: convertedVisibleItems,
+  topPadding: convertedTopPadding,
+  bottomPadding: convertedBottomPadding,
+  startIndex: convertedStartIndex,
+} = useVirtualList(convertedTableDataRef, CONVERTED_ROW_HEIGHT, excelTableRef)
+
+// 全屏弹窗虚拟化
+const {
+  visibleItems: modalOriginalVisibleItems,
+  topPadding: modalOriginalTopPadding,
+  bottomPadding: modalOriginalBottomPadding,
+  startIndex: modalOriginalStartIndex,
+} = useVirtualList(originalTableDataRef, ORIGINAL_ROW_HEIGHT, modalOriginalTableWrapperRef)
+
+const {
+  visibleItems: modalConvertedVisibleItems,
+  topPadding: modalConvertedTopPadding,
+  bottomPadding: modalConvertedBottomPadding,
+  startIndex: modalConvertedStartIndex,
+} = useVirtualList(convertedTableDataRef, CONVERTED_ROW_HEIGHT, modalExcelTableRef)
 const selectedCells = ref<Set<string>>(new Set())  // 格式: "rowIndex-colIndex"
 const selectionStart = ref<{ row: number; col: number } | null>(null)
 const selectionEnd = ref<{ row: number; col: number } | null>(null)
@@ -1704,7 +1830,7 @@ const QUOTATION_TYPE_COLUMNS: Record<string, QuotationTypeColumnConfig> = {
       '易损件类型': ['易损件', '易损件类型', '易损件种类', 'consumable type'],
       '耗材包数量': ['耗材数量', '耗材包数量', '耗材包', 'consumable count'],
     },
-    defaults: { '设备数量': '1', '服务周期': '1', '服务周期单位': '年', '服务范围': '维保服务', '服务级别': '7*24*NCR' },
+    defaults: { '设备数量': '1', '服务周期': '1', '服务周期单位': '年', '服务范围': '维保服务', '服务级别': '7*24*NCD' },
   },
   'IT服务支持报价（单价框架 / 据实结算）': {
     targetHeaders: [
@@ -2403,6 +2529,7 @@ function handleFileChange(event: Event) {
   sheetRecognitionCache.value = {}
   excelSheetDataCache.value = {}
   parsedDocumentSheets.value = {}
+  noHeaderMode.value = false
 
   // 根据文件类型选择不同的解析路径
   if (file.name.match(EXCEL_PATTERN)) {
@@ -2726,7 +2853,8 @@ function remapDataUsingMappings(changedColumn?: string) {
         } else if (changedColumn === '服务范围') {
           row[changedColumn] = row[changedColumn] || '维保服务'
         } else if (changedColumn === '服务级别') {
-          row[changedColumn] = row[changedColumn] || '7*24*NCR'
+          // 与 QUOTATION_TYPE_COLUMNS['维保服务报价'].defaults['服务级别'] 保持一致
+          row[changedColumn] = row[changedColumn] || getColumnConfig().defaults['服务级别'] || '7*24*NCD'
         } else if (changedColumn !== '序号') {
           row[changedColumn] = ''
         }
@@ -4743,17 +4871,37 @@ const getTotalAmount = () => {
 /* Table Wrapper */
 .table-wrapper {
   flex: 1;
-  overflow: hidden;
+  /* 虚拟滚动需要持续可用的滚动容器（scrollTop 计算） */
+  overflow: auto;
   border: 1px solid #2a3447;
   border-radius: 0.5rem;
   background-color: #151a23;
   min-height: 0;
 }
 
-/* Enable scroll on hover for tables */
-.table-wrapper:hover {
-  overflow-y: auto;
-  overflow-x: auto;
+/* 虚拟列表 spacer 行：透明、无 padding、不影响行高 */
+.data-table tbody tr.virtual-spacer,
+.modal-data-table tbody tr.virtual-spacer {
+  background: transparent !important;
+  border: none !important;
+  transition: none;
+  pointer-events: none;
+}
+.data-table tbody tr.virtual-spacer td,
+.modal-data-table tbody tr.virtual-spacer td {
+  padding: 0;
+  border: none;
+}
+
+/* 固定行高：与 useVirtualList 的 ORIGINAL_ROW_HEIGHT / CONVERTED_ROW_HEIGHT 保持一致 */
+.data-table tbody tr:not(.virtual-spacer) {
+  height: 36px;
+}
+.excel-data-table tbody tr:not(.virtual-spacer) {
+  height: 56px;
+}
+.modal-data-table tbody tr:not(.virtual-spacer) {
+  height: 36px;
 }
 
 .data-table {
@@ -5093,6 +5241,26 @@ const getTotalAmount = () => {
 .toolbar-btn.reset-btn:hover:not(:disabled) {
   background: rgba(239, 68, 68, 0.2);
   color: #ef4444;
+}
+
+/* 无表头切换按钮 */
+.toolbar-btn.no-header-toggle {
+  width: auto;
+  gap: 0.375rem;
+  padding: 0 0.625rem;
+  white-space: nowrap;
+  border: 1px solid rgba(75, 97, 137, 0.4);
+}
+
+.toolbar-btn.no-header-toggle.active {
+  background: rgba(168, 85, 247, 0.16);
+  border-color: rgba(168, 85, 247, 0.55);
+  color: #c084fc;
+}
+
+.toolbar-btn.no-header-toggle.active:hover:not(:disabled) {
+  background: rgba(168, 85, 247, 0.22);
+  color: #d8b4fe;
 }
 
 .toolbar-divider {

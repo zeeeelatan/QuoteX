@@ -143,7 +143,7 @@
           </div>
         </div>
 
-        <div class="table-wrapper">
+        <div class="table-wrapper" ref="tableWrapperRef">
           <table class="data-table">
             <thead>
               <tr>
@@ -167,16 +167,18 @@
               </tr>
             </thead>
             <tbody v-if="tableData.length > 0">
+              <tr v-if="topPadding > 0" :style="{ height: topPadding + 'px' }" class="virtual-spacer"><td></td></tr>
               <tr
-                v-for="(item, index) in tableData"
-                :key="index"
+                v-for="(item, i) in visibleItems"
+                :key="i + startIndex"
                 class="table-row"
+                :style="{ height: ROW_HEIGHT + 'px' }"
                 :class="{
                   'warning-row': item.profitMargin !== undefined && item.profitMargin < 10
                 }"
               >
                 <td><input type="checkbox" v-model="item.selected" /></td>
-                <td class="col-index">{{ index + 1 }}</td>
+                <td class="col-index">{{ startIndex + i + 1 }}</td>
                 <td class="col-model">
                   <div class="product-info">
                     <div class="product-image"></div>
@@ -196,7 +198,7 @@
                   <select
                     class="period-unit-select"
                     v-model="item.servicePeriodUnit"
-                    @change="onPeriodUnitChange(index)"
+                    @change="onPeriodUnitChange(item)"
                   >
                     <option value="年">年</option>
                     <option value="月">月</option>
@@ -216,7 +218,7 @@
                       type="text"
                       class="price-input"
                       :value="item.finalPrice ? item.finalPrice.toFixed(2) : ''"
-                      @input="updateFinalPrice(index, $event)"
+                      @input="updateFinalPrice(item, $event)"
                     />
                   </div>
                   <div
@@ -245,11 +247,12 @@
                   </span>
                 </td>
                 <td class="text-center">
-                  <button class="action-btn" title="重置为建议价" @click="resetToSuggested(index)">
+                  <button class="action-btn" title="重置为建议价" @click="resetToSuggested(item)">
                     <span class="material-symbols-outlined">restart_alt</span>
                   </button>
                 </td>
               </tr>
+              <tr v-if="bottomPadding > 0" :style="{ height: bottomPadding + 'px' }" class="virtual-spacer"><td></td></tr>
             </tbody>
             <tbody v-else>
               <tr>
@@ -417,6 +420,7 @@ import {
   saveDraft,
   getCurrentDraftId
 } from '../utils/draftUtils'
+import { useVirtualList } from '../composables/useVirtualList'
 
 const router = useRouter()
 
@@ -431,6 +435,13 @@ const isSavingDraft = ref(false)
 const isLoadingData = ref(false)
 const periodUnitDropdownVisible = ref(false)
 const periodDropdownPosition = ref({ top: '0px', left: '0px' })
+
+// 虚拟滚动
+const tableWrapperRef = ref<HTMLElement | null>(null)
+const ROW_HEIGHT = 72
+const tableDataRef = computed(() => tableData.value)
+const { visibleItems, topPadding, bottomPadding, startIndex } =
+  useVirtualList(tableDataRef, ROW_HEIGHT, tableWrapperRef)
 
 // 批量调价弹窗
 const batchAdjustDialogVisible = ref(false)
@@ -769,11 +780,11 @@ function toggleSelectAll() {
 }
 
 // Update final price
-function updateFinalPrice(index: number, event: Event) {
+function updateFinalPrice(item: any, event: Event) {
+  if (!item) return
   const input = event.target as HTMLInputElement
   const value = parseFloat(input.value.replace(/[^0-9.]/g, ''))
 
-  const item = tableData.value[index]
   if (!isNaN(value)) {
     item.finalPrice = value
     // 重新计算价格调整比率（相较于建议售价的上调/下调比率）
@@ -792,8 +803,8 @@ function updateFinalPrice(index: number, event: Event) {
 }
 
 // Reset to suggested price
-function resetToSuggested(index: number) {
-  const item = tableData.value[index]
+function resetToSuggested(item: any) {
+  if (!item) return
   item.finalPrice = item.suggestedPrice
   // 重置为建议售价时，比率为 0%
   item.profitMargin = 0
@@ -857,9 +868,9 @@ function batchUpdateServicePeriodUnit(unit: string) {
 }
 
 // Handle service period unit change
-function onPeriodUnitChange(index: number) {
+function onPeriodUnitChange(item: any) {
+  if (!item) return
   // 服务周期单位改变时，重新计算该行的参考成本和建议售价
-  const item = tableData.value[index]
   const basePrice = resolveBasePrice(item)
   let referenceCost = basePrice
 
@@ -1763,6 +1774,21 @@ h1, h2, h3, h4, h5, h6 {
   flex: 1;
   overflow: auto;
   position: relative;
+  min-height: 400px;
+  /* 虚拟滚动需要可计算的容器高度（clientHeight） */
+  height: calc(100vh - 360px);
+  max-height: calc(100vh - 360px);
+}
+
+/* 虚拟列表 spacer 行 */
+.data-table tbody tr.virtual-spacer {
+  background: transparent !important;
+  border: none !important;
+  transition: none;
+}
+.data-table tbody tr.virtual-spacer td {
+  padding: 0;
+  border: none;
 }
 
 .data-table {

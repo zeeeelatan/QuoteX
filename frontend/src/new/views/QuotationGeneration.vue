@@ -117,41 +117,45 @@
               </div>
 
               <!-- Items Table -->
-              <div class="items-table">
-                <table class="quote-table">
-                  <thead>
-                    <tr>
-                      <th class="col-no">序号</th>
-                      <th class="col-desc">项目描述</th>
-                      <th class="col-qty">数量</th>
-                      <th class="col-period">服务周期</th>
-                      <th class="col-price">单价</th>
-                      <th class="col-total">总价</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-if="tableData.length === 0">
-                      <td colspan="6" style="text-align: center; padding: 3rem; color: #94a3b8;">
-                        暂无数据，请先完成价格调整
-                      </td>
-                    </tr>
-                    <tr v-for="(item, index) in tableData" :key="index" class="item-row">
-                      <td class="text-center col-no">{{ index + 1 }}</td>
-                      <td class="item-desc">
-                        <p class="item-name">{{ item.model || item.matchedModel || '未命名产品' }}</p>
-                        <p class="item-detail">
-                          厂商: {{ formatManufacturer(item.matchedManufacturer || item.manufacturer) || '-' }}
-                          <span v-if="item.matchedSeries"> | 系列: {{ item.matchedSeries }}</span>
-                          <span v-if="item.serviceLevel"> | 服务级别: {{ item.serviceLevel }}</span>
-                        </p>
-                      </td>
-                      <td class="text-center">{{ item.quantity || 1 }}</td>
-                      <td class="text-center">{{ formatServicePeriodDisplay(item) }}</td>
-                      <td class="text-right">¥{{ getItemUnitPrice(item).toFixed(2) }}</td>
-                      <td class="text-right item-total">¥{{ getItemTotalPrice(item).toFixed(2) }}</td>
-                    </tr>
-                  </tbody>
-                </table>
+              <div class="items-table" :class="{ 'is-scrolling': !isGeneratingPDF }">
+                <div class="items-table-scroll" ref="itemsWrapperRef">
+                  <table class="quote-table">
+                    <thead>
+                      <tr>
+                        <th class="col-no">序号</th>
+                        <th class="col-desc">项目描述</th>
+                        <th class="col-qty">数量</th>
+                        <th class="col-period">服务周期</th>
+                        <th class="col-price">单价</th>
+                        <th class="col-total">总价</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-if="tableData.length === 0">
+                        <td colspan="6" style="text-align: center; padding: 3rem; color: #94a3b8;">
+                          暂无数据，请先完成价格调整
+                        </td>
+                      </tr>
+                      <tr v-if="qTopPadding > 0" :style="{ height: qTopPadding + 'px' }" class="virtual-spacer"><td></td></tr>
+                      <tr v-for="(item, i) in qVisibleItems" :key="qStartIndex + i" class="item-row" :style="{ height: QUOTE_ROW_HEIGHT + 'px' }">
+                        <td class="text-center col-no">{{ qStartIndex + i + 1 }}</td>
+                        <td class="item-desc">
+                          <p class="item-name">{{ item.model || item.matchedModel || '未命名产品' }}</p>
+                          <p class="item-detail">
+                            厂商: {{ formatManufacturer(item.matchedManufacturer || item.manufacturer) || '-' }}
+                            <span v-if="item.matchedSeries"> | 系列: {{ item.matchedSeries }}</span>
+                            <span v-if="item.serviceLevel"> | 服务级别: {{ item.serviceLevel }}</span>
+                          </p>
+                        </td>
+                        <td class="text-center">{{ item.quantity || 1 }}</td>
+                        <td class="text-center">{{ formatServicePeriodDisplay(item) }}</td>
+                        <td class="text-right">¥{{ getItemUnitPrice(item).toFixed(2) }}</td>
+                        <td class="text-right item-total">¥{{ getItemTotalPrice(item).toFixed(2) }}</td>
+                      </tr>
+                      <tr v-if="qBottomPadding > 0" :style="{ height: qBottomPadding + 'px' }" class="virtual-spacer"><td></td></tr>
+                    </tbody>
+                  </table>
+                </div>
               </div>
 
               <!-- Summary -->
@@ -451,13 +455,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, computed, watch, nextTick } from 'vue'
 import { useRouter, onBeforeRouteLeave } from 'vue-router'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import api from '../../api/index'
 import BranchPageHeader from '../components/BranchPageHeader.vue'
 import ProductDatabaseModal from '../components/ProductDatabaseModal.vue'
 import { getStorageKeyPrefix } from '../stores/authStore'
+import { useVirtualList } from '../composables/useVirtualList'
 import {
   PAGE_STATE_KEYS,
   FLOW_DATA_KEYS,
@@ -488,6 +493,20 @@ const isExporting = ref(false)
 const sourceFileName = ref('')  // 源文件名（来自智能识别模块导入的文件）
 const isGeneratingPDF = ref(false)  // PDF生成状态
 const quotationDocRef = ref<HTMLElement | null>(null)  // 报价单预览区域引用
+
+// ============ 虚拟滚动（仅在预览态生效，PDF 导出时关闭以让 html2canvas 抓全量 DOM）============
+const itemsWrapperRef = ref<HTMLElement | null>(null)
+const QUOTE_ROW_HEIGHT = 56
+const quoteVirtualItems = computed(() => {
+  // PDF 生成时返回完整列表，使虚拟化退化为全量渲染
+  return isGeneratingPDF.value ? [] : tableData.value
+})
+const { visibleItems: qVisibleItemsRaw, topPadding: qTopPaddingRaw, bottomPadding: qBottomPaddingRaw, startIndex: qStartIndexRaw } =
+  useVirtualList(quoteVirtualItems, QUOTE_ROW_HEIGHT, itemsWrapperRef)
+const qVisibleItems = computed(() => isGeneratingPDF.value ? tableData.value : qVisibleItemsRaw.value)
+const qTopPadding = computed(() => isGeneratingPDF.value ? 0 : qTopPaddingRaw.value)
+const qBottomPadding = computed(() => isGeneratingPDF.value ? 0 : qBottomPaddingRaw.value)
+const qStartIndex = computed(() => isGeneratingPDF.value ? 0 : qStartIndexRaw.value)
 
 // Logo 上传相关
 const logoInputRef = ref<HTMLInputElement | null>(null)
@@ -1383,6 +1402,9 @@ async function downloadPDF() {
   const savedScrollX = window.scrollX
   const savedScrollY = window.scrollY
 
+  // 等待虚拟化退化为全量渲染（isGeneratingPDF 让 qVisibleItems 返回 tableData.value）
+  await nextTick()
+
   try {
     const html2canvas = (await import('html2canvas')).default
     const { default: jsPDF } = await import('jspdf')
@@ -1744,6 +1766,52 @@ async function exportQuotationExcel() {
     const primaryPriceDataMap = buildPriceDataMap(primarySheetItems.length > 0 ? primarySheetItems : tableData.value)
     console.log('[Export] priceDataMap 共', priceDataMap.size, '条, tableData 共', tableData.value.length, '条')
 
+    // ===== 联想框架价格 =====
+    // 只要 tableData 里任意一行存在 lenovo_unit_price>0，就在最末加"联想框架单价"列；
+    // 没跑过联想报价时，行里没有这个字段，导出和现有完全一致，不追加。
+    const LENOVO_HEADER = '联想框架单价(含税13%)'
+    const buildLenovoPriceMap = (items: any[]) => {
+      const map = new Map<number, number>()
+      items.forEach((item, index) => {
+        const p = Number(item?.lenovo_unit_price)
+        if (Number.isFinite(p) && p > 0) {
+          // 联想价格表里本就含税 13%，不再应用 exportPriceMultiplier
+          map.set(index, Math.round(p * 100) / 100)
+        }
+      })
+      return map
+    }
+    const lenovoPriceDataMap = buildLenovoPriceMap(tableData.value)
+    const primaryLenovoPriceDataMap = buildLenovoPriceMap(
+      primarySheetItems.length > 0 ? primarySheetItems : tableData.value
+    )
+    const hasLenovoData = lenovoPriceDataMap.size > 0
+    console.log('[Export] hasLenovoData=', hasLenovoData, ' 联想价数=', lenovoPriceDataMap.size)
+
+    /** 给定输出表的一行 / 行号 / sheetName，找它在 tableData 中对应的联想单价 */
+    const matchLenovoPrice = (row: any, rowIndex: number, sheetName?: string): number | null => {
+      const matched = tableData.value.find((item: any, itemIndex: number) => {
+        if (sheetName && item.sheetName && item.sheetName !== sheetName) return false
+        if (Number.isFinite(Number(item.sourceRowIndex)) && Number(item.sourceRowIndex) === rowIndex) return true
+        if (!item.sheetName && itemIndex === rowIndex) return true
+        return false
+      })
+      let p = Number(matched?.lenovo_unit_price)
+      if (!Number.isFinite(p) || p <= 0) {
+        const modelValue = String(row?.['设备/软件型号'] || row?.['设备型号'] || '').trim().toUpperCase()
+        if (modelValue) {
+          const byModel = tableData.value.find((item: any) => {
+            if (sheetName && item.sheetName && item.sheetName !== sheetName) return false
+            return [item.model, item.matchedModel, item.originalModel]
+              .filter(Boolean)
+              .some((key: string) => String(key).trim().toUpperCase() === modelValue)
+          })
+          p = Number(byModel?.lenovo_unit_price)
+        }
+      }
+      return Number.isFinite(p) && p > 0 ? Math.round(p * 100) / 100 : null
+    }
+
     // ===== 文件1：保留原始格式的报价表（仅在空白列添加价格） =====
     // 使用 JSZip 直接操作 xlsx 内部 XML，避免 ExcelJS load→save 丢失主题色/样式
     let hasOriginalFile = false
@@ -1835,6 +1903,12 @@ async function exportQuotationExcel() {
         }
         const priceColIndex = maxCol + 1
         const priceColLetter = colToLetter(priceColIndex)
+        // 联想框架单价列（仅在 hasLenovoData 时使用）
+        const lenovoColIndex = hasLenovoData ? priceColIndex + 1 : priceColIndex
+        const lenovoColLetter = hasLenovoData ? colToLetter(lenovoColIndex) : priceColLetter
+        // 终列：表头条款、dimension、cols 都按这个最右列计算
+        const lastColIndex = hasLenovoData ? lenovoColIndex : priceColIndex
+        const lastColLetter = hasLenovoData ? lenovoColLetter : priceColLetter
 
         const getSheetWorksheetSelection = (sheetName: string) => {
           return originalSheetTables.value.find((sheet) => sheet.sheetName === sheetName)?.worksheetSelection || null
@@ -1918,34 +1992,44 @@ async function exportQuotationExcel() {
         }
         console.log('[Export] 使用表头行:', headerRowNum)
 
-        // ---- 添加 sharedStrings 条目（"维保单价"） ----
+        // ---- 添加 sharedStrings 条目（"维保单价" + 可选"联想框架单价"） ----
         let ssDoc2: Document | null = null
         let priceHeaderSsIndex = -1
+        let lenovoHeaderSsIndex = -1
         if (ssXml) {
           ssDoc2 = parser.parseFromString(ssXml, 'application/xml')
           const ssNs2 = ssDoc2.documentElement.namespaceURI || nsResolver
           const siEls2 = ssDoc2.getElementsByTagNameNS(ssNs2, 'si')
           priceHeaderSsIndex = siEls2.length
 
-          // 创建新的 <si><t>维保单价</t></si>
-          const newSi = ssDoc2.createElementNS(ssNs2, 'si')
-          const newT = ssDoc2.createElementNS(ssNs2, 't')
-          newT.textContent = '维保单价'
-          newSi.appendChild(newT)
-          ssDoc2.documentElement.appendChild(newSi)
+          const appendSharedString = (text: string) => {
+            const newSi = ssDoc2!.createElementNS(ssNs2, 'si')
+            const newT = ssDoc2!.createElementNS(ssNs2, 't')
+            newT.textContent = text
+            newSi.appendChild(newT)
+            ssDoc2!.documentElement.appendChild(newSi)
+          }
+          appendSharedString('维保单价')
+          let addedCount = 1
+          if (hasLenovoData) {
+            lenovoHeaderSsIndex = priceHeaderSsIndex + 1
+            appendSharedString(LENOVO_HEADER)
+            addedCount = 2
+          }
 
           // 更新 count 和 uniqueCount 属性
           const sstEl = ssDoc2.documentElement
           const oldCount = parseInt(sstEl.getAttribute('count') || '0')
           const oldUnique = parseInt(sstEl.getAttribute('uniqueCount') || '0')
-          sstEl.setAttribute('count', String(oldCount + 1))
-          sstEl.setAttribute('uniqueCount', String(oldUnique + 1))
+          sstEl.setAttribute('count', String(oldCount + addedCount))
+          sstEl.setAttribute('uniqueCount', String(oldUnique + addedCount))
         }
 
         // ---- 构建型号→价格查找表 ----
         // 注意：key 的归一化必须与 getRowTexts 一致（去除所有空白和星号）
         const normalizeForMatch = (s: string) => String(s).replace(/[\s*\n]/g, '').toUpperCase()
         const modelPriceMap = new Map<string, number>()
+        const lenovoModelPriceMap = new Map<string, number>()
         tableData.value.forEach((item: any) => {
           const basePrice = item.finalPrice || item.suggestedPrice || 0
           if (basePrice > 0) {
@@ -1955,6 +2039,18 @@ async function exportQuotationExcel() {
               const normalized = normalizeForMatch(k)
               if (normalized && !modelPriceMap.has(normalized)) {
                 modelPriceMap.set(normalized, adjustedPrice)
+              }
+            })
+          }
+          // 联想价（不应用 exportPriceMultiplier，价格表里本就含税 13%）
+          const lp = Number(item.lenovo_unit_price)
+          if (Number.isFinite(lp) && lp > 0) {
+            const rounded = Math.round(lp * 100) / 100
+            const keys = [item.model, item.matchedModel, item.originalModel].filter(Boolean)
+            keys.forEach((k: string) => {
+              const normalized = normalizeForMatch(k)
+              if (normalized && !lenovoModelPriceMap.has(normalized)) {
+                lenovoModelPriceMap.set(normalized, rounded)
               }
             })
           }
@@ -2018,10 +2114,10 @@ async function exportQuotationExcel() {
 
         for (let i = 0; i < rows.length; i++) {
           const rowNum = parseInt(rows[i].getAttribute('r') || '0')
-          const cellRef = `${priceColLetter}${rowNum}`
 
+          // ---- 维保单价单元格 ----
           const newCell = doc.createElementNS(nsResolver, 'c')
-          newCell.setAttribute('r', cellRef)
+          newCell.setAttribute('r', `${priceColLetter}${rowNum}`)
 
           if (rowNum === headerRowNum) {
             // 表头单元格 — 引用 sharedStrings 中的"维保单价"
@@ -2068,26 +2164,73 @@ async function exportQuotationExcel() {
           }
 
           rows[i].appendChild(newCell)
+
+          // ---- 联想框架单价单元格（仅在 hasLenovoData 时追加）----
+          if (hasLenovoData) {
+            const lenovoCell = doc.createElementNS(nsResolver, 'c')
+            lenovoCell.setAttribute('r', `${lenovoColLetter}${rowNum}`)
+            if (rowNum === headerRowNum) {
+              if (lenovoHeaderSsIndex >= 0) {
+                lenovoCell.setAttribute('t', 's')
+                if (headerStyleId) lenovoCell.setAttribute('s', headerStyleId)
+                const vEl = doc.createElementNS(nsResolver, 'v')
+                vEl.textContent = String(lenovoHeaderSsIndex)
+                lenovoCell.appendChild(vEl)
+              }
+            } else if (rowNum >= dataStartRowNum) {
+              let lp: number | undefined
+              const seqIndex = primarySheetSelection?.dataRowNumbers?.length
+                ? worksheetRowToSeqIndex.get(rowNum)
+                : rowIndexToSeqIndex.get(i)
+              if (rowCountMatch && seqIndex !== undefined) {
+                lp = primaryLenovoPriceDataMap.get(seqIndex)
+              }
+              if (lp === undefined) {
+                const texts = getRowTexts(rows[i])
+                for (const t of texts) {
+                  const normalized = normalizeForMatch(t)
+                  if (normalized && lenovoModelPriceMap.has(normalized)) {
+                    lp = lenovoModelPriceMap.get(normalized)
+                    break
+                  }
+                }
+              }
+              if (lp !== undefined && lp > 0) {
+                const vEl = doc.createElementNS(nsResolver, 'v')
+                vEl.textContent = String(lp)
+                lenovoCell.appendChild(vEl)
+                const cells = rows[i].getElementsByTagNameNS(nsResolver, 'c')
+                if (cells.length > 0) {
+                  const sAttr = cells[0].getAttribute('s')
+                  if (sAttr) lenovoCell.setAttribute('s', sAttr)
+                }
+              }
+            }
+            rows[i].appendChild(lenovoCell)
+          }
         }
 
-        // 更新 dimension（如果存在）
+        // 更新 dimension（如果存在）：终列改为最右新列
         const dimEl = doc.getElementsByTagNameNS(nsResolver, 'dimension')[0]
         if (dimEl) {
           const oldRef = dimEl.getAttribute('ref') || ''
-          // 将终止列更新为新列字母
-          const updatedRef = oldRef.replace(/([A-Z]+)(\d+)$/, `${priceColLetter}$2`)
+          const updatedRef = oldRef.replace(/([A-Z]+)(\d+)$/, `${lastColLetter}$2`)
           dimEl.setAttribute('ref', updatedRef)
         }
 
-        // 更新列宽信息（在 <cols> 中添加新列宽度）
+        // 更新列宽信息：维保单价 + 可选 联想框架单价
         let colsEl = doc.getElementsByTagNameNS(nsResolver, 'cols')[0]
         if (colsEl) {
-          const newColEl = doc.createElementNS(nsResolver, 'col')
-          newColEl.setAttribute('min', String(priceColIndex))
-          newColEl.setAttribute('max', String(priceColIndex))
-          newColEl.setAttribute('width', '15')
-          newColEl.setAttribute('customWidth', '1')
-          colsEl.appendChild(newColEl)
+          const appendColWidth = (colIdx: number, width: string) => {
+            const colEl = doc.createElementNS(nsResolver, 'col')
+            colEl.setAttribute('min', String(colIdx))
+            colEl.setAttribute('max', String(colIdx))
+            colEl.setAttribute('width', width)
+            colEl.setAttribute('customWidth', '1')
+            colsEl.appendChild(colEl)
+          }
+          appendColWidth(priceColIndex, '15')
+          if (hasLenovoData) appendColWidth(lenovoColIndex, '20')
         }
 
         // ---- 在 styles.xml 中添加 wrapText + bold 样式，供条款单元格使用 ----
@@ -2148,7 +2291,7 @@ async function exportQuotationExcel() {
           const titleRowNum = lastDataRowNum + 3  // 空一行
           const termsRowNum = titleRowNum + 1
           const termsRowEndNum = termsRowNum + 1
-          const mergeCols = Math.max(priceColIndex, 6)
+          const mergeCols = Math.max(lastColIndex, 6)
 
           // 添加"条款与条件"和条款内容到 sharedStrings
           let titleSsIndex = -1
@@ -2314,6 +2457,9 @@ async function exportQuotationExcel() {
           }
           const extraPriceColIndex = extraMaxCol + 1
           const extraPriceColLetter = colToLetter(extraPriceColIndex)
+          const extraLenovoColIndex = hasLenovoData ? extraPriceColIndex + 1 : extraPriceColIndex
+          const extraLenovoColLetter = hasLenovoData ? colToLetter(extraLenovoColIndex) : extraPriceColLetter
+          const extraLastColLetter = hasLenovoData ? extraLenovoColLetter : extraPriceColLetter
 
           const getExtraRowTexts = (rowEl: Element): string[] => {
             const texts: string[] = []
@@ -2384,9 +2530,15 @@ async function exportQuotationExcel() {
 
           for (let i = 0; i < extraRows.length; i++) {
             const rowNum = parseInt(extraRows[i].getAttribute('r') || '0')
-            const cellRef = `${extraPriceColLetter}${rowNum}`
+
+            // ---- 维保单价单元格 ----
             const newCell = extraDoc.createElementNS(extraNs, 'c')
-            newCell.setAttribute('r', cellRef)
+            newCell.setAttribute('r', `${extraPriceColLetter}${rowNum}`)
+
+            const seqIndex = extraSheetSelection?.dataRowNumbers?.length
+              ? extraWorksheetRowToSeqIndex.get(rowNum) ?? -1
+              : extraDataRowIndices.indexOf(i)
+            const item = seqIndex >= 0 ? extraItems[seqIndex] : null
 
             if (rowNum === extraHeaderRowNum && priceHeaderSsIndex >= 0) {
               newCell.setAttribute('t', 's')
@@ -2395,10 +2547,6 @@ async function exportQuotationExcel() {
               vEl.textContent = String(priceHeaderSsIndex)
               newCell.appendChild(vEl)
             } else {
-              const seqIndex = extraSheetSelection?.dataRowNumbers?.length
-                ? extraWorksheetRowToSeqIndex.get(rowNum) ?? -1
-                : extraDataRowIndices.indexOf(i)
-              const item = seqIndex >= 0 ? extraItems[seqIndex] : null
               const basePrice = item?.finalPrice || item?.suggestedPrice || 0
               if (basePrice > 0) {
                 const vEl = extraDoc.createElementNS(extraNs, 'v')
@@ -2409,14 +2557,37 @@ async function exportQuotationExcel() {
                 if (sAttr) newCell.setAttribute('s', sAttr)
               }
             }
-
             extraRows[i].appendChild(newCell)
+
+            // ---- 联想框架单价单元格（仅在 hasLenovoData 时追加） ----
+            if (hasLenovoData) {
+              const lenovoCell = extraDoc.createElementNS(extraNs, 'c')
+              lenovoCell.setAttribute('r', `${extraLenovoColLetter}${rowNum}`)
+              if (rowNum === extraHeaderRowNum && lenovoHeaderSsIndex >= 0) {
+                lenovoCell.setAttribute('t', 's')
+                if (extraHeaderStyleId) lenovoCell.setAttribute('s', extraHeaderStyleId)
+                const vEl = extraDoc.createElementNS(extraNs, 'v')
+                vEl.textContent = String(lenovoHeaderSsIndex)
+                lenovoCell.appendChild(vEl)
+              } else {
+                const lp = Number(item?.lenovo_unit_price)
+                if (Number.isFinite(lp) && lp > 0) {
+                  const vEl = extraDoc.createElementNS(extraNs, 'v')
+                  vEl.textContent = String(Math.round(lp * 100) / 100)
+                  lenovoCell.appendChild(vEl)
+                  const cells = extraRows[i].getElementsByTagNameNS(extraNs, 'c')
+                  const sAttr = cells[0]?.getAttribute('s')
+                  if (sAttr) lenovoCell.setAttribute('s', sAttr)
+                }
+              }
+              extraRows[i].appendChild(lenovoCell)
+            }
           }
 
           const extraDimEl = extraDoc.getElementsByTagNameNS(extraNs, 'dimension')[0]
           if (extraDimEl) {
             const oldRef = extraDimEl.getAttribute('ref') || ''
-            extraDimEl.setAttribute('ref', oldRef.replace(/([A-Z]+)(\d+)$/, `${extraPriceColLetter}$2`))
+            extraDimEl.setAttribute('ref', oldRef.replace(/([A-Z]+)(\d+)$/, `${extraLastColLetter}$2`))
           }
 
           const extraUpdatedSheetXml = serializer.serializeToString(extraDoc)
@@ -2461,7 +2632,8 @@ async function exportQuotationExcel() {
         : [{ sheetName: '报价表', headers: previewOriginalData.value.headers, data: previewOriginalData.value.data }]
 
       sourceSheets.forEach((sheetSource, sheetIndex) => {
-        const originalHeaders = sheetSource.headers
+        const baseHeaders = sheetSource.headers
+        const originalHeaders = hasLenovoData ? [...baseHeaders, LENOVO_HEADER] : baseHeaders
         const originalData = sheetSource.data
         const worksheet = workbook1.addWorksheet(safeSheetName(sheetSource.sheetName, sheetIndex))
 
@@ -2470,17 +2642,21 @@ async function exportQuotationExcel() {
         headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } }
         worksheet.columns = originalHeaders.map(() => ({ width: 18 }))
 
-        originalData.forEach(row => {
-          const values = originalHeaders.map(header => {
+        originalData.forEach((row, rowIndex) => {
+          const values = baseHeaders.map(header => {
             const val = row[header]
             if (isPriceColumn(header) && val !== '' && val !== null && val !== undefined) {
               return Number(val)
             }
             return val ?? ''
           })
+          if (hasLenovoData) {
+            const lp = matchLenovoPrice(row, rowIndex, sheetSource.sheetName)
+            values.push(lp !== null ? lp : '')
+          }
           const dataRow = worksheet.addRow(values)
           originalHeaders.forEach((header, colIndex) => {
-            if (isPriceColumn(header)) {
+            if (isPriceColumn(header) || header === LENOVO_HEADER) {
               dataRow.getCell(colIndex + 1).numFmt = '¥#,##0.00'
             }
           })
@@ -2538,10 +2714,13 @@ async function exportQuotationExcel() {
       }
 
       sheetSources.forEach((sheetSource, sheetIndex) => {
-        const convertedHeaders = (sheetSource.headers || previewHeaders).map(h => h === '单价'
+        const baseConvertedHeaders = (sheetSource.headers || previewHeaders).map(h => h === '单价'
           ? (priceLayout.value === 'layout3' ? '单价(含税6%)' : priceLayout.value === 'layout4' ? '单价(含税13%)' : h)
           : h
         )
+        const convertedHeaders = hasLenovoData
+          ? [...baseConvertedHeaders, LENOVO_HEADER]
+          : baseConvertedHeaders
         const rawHeaders = sheetSource.headers || previewHeaders
         const worksheet = workbook2.addWorksheet(safeSheetName(sheetSource.sheetName, sheetIndex))
 
@@ -2549,12 +2728,12 @@ async function exportQuotationExcel() {
         headerRow.font = { bold: true }
         headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } }
         worksheet.columns = convertedHeaders.map((header) => ({
-          width: isPriceColumn(header) ? 15 : 18
+          width: header === LENOVO_HEADER ? 22 : (isPriceColumn(header) ? 15 : 18)
         }))
 
         sheetSource.data.forEach((row, rowIndex) => {
           const values = rawHeaders.map((rawHeader, headerIndex) => {
-            const exportHeader = convertedHeaders[headerIndex]
+            const exportHeader = baseConvertedHeaders[headerIndex]
             if (rawHeader === '单价') {
               return getSheetPrice(row, rowIndex, sheetSource.sheetName)
             }
@@ -2564,11 +2743,15 @@ async function exportQuotationExcel() {
             }
             return val ?? ''
           })
+          if (hasLenovoData) {
+            const lp = matchLenovoPrice(row, rowIndex, sheetSource.sheetName)
+            values.push(lp !== null ? lp : '')
+          }
           const dataRow = worksheet.addRow(values)
 
           convertedHeaders.forEach((header, colIndex) => {
             const cell = dataRow.getCell(colIndex + 1)
-            if (isPriceColumn(header)) {
+            if (isPriceColumn(header) || header === LENOVO_HEADER) {
               cell.numFmt = '¥#,##0.00'
             }
             cell.border = {
@@ -3183,6 +3366,34 @@ h1, h2, h3, h4, h5, h6 {
 /* Items Table */
 .items-table {
   margin-bottom: 2rem;
+}
+
+/* 预览态：表格区固定高度内滚动；PDF 态由 is-scrolling 类移除恢复 auto */
+.items-table.is-scrolling .items-table-scroll {
+  max-height: 60vh;
+  overflow-y: auto;
+  position: relative;
+}
+.items-table:not(.is-scrolling) .items-table-scroll {
+  max-height: none;
+  overflow: visible;
+}
+
+.items-table-scroll .quote-table thead {
+  position: sticky;
+  top: 0;
+  background: white;
+  z-index: 2;
+}
+
+.quote-table tbody tr.virtual-spacer {
+  background: transparent !important;
+  border: none !important;
+  transition: none;
+}
+.quote-table tbody tr.virtual-spacer td {
+  padding: 0;
+  border: none;
 }
 
 .quote-table {
