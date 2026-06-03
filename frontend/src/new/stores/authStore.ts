@@ -58,8 +58,15 @@ export async function loadUserProfile(): Promise<void> {
       }
       profileLoaded = true
     }
-  } catch (err) {
-    console.error('加载用户资料失败', err)
+  } catch (err: any) {
+    // 401/403 = token 已失效 → 主动清掉本地认证，回到"未登录"态
+    const status = err?.response?.status
+    if (status === 401 || status === 403) {
+      console.warn('Token 已失效，清除本地登录状态')
+      clearAuth()
+    } else {
+      console.error('加载用户资料失败', err)
+    }
   }
 }
 
