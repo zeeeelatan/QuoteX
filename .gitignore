@@ -11,6 +11,10 @@
 # 数据库备份
 backups/
 
+# 本地源数据 / 一次性脚本产物（不入仓库）
+data/
+outputs/
+
 # 日志与 PID
 *.log
 backend.log
