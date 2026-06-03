@@ -45,6 +45,15 @@
           <a
             href="#"
             class="nav-item"
+            :class="{ active: activeModule === 'lenovo-models' }"
+            @click.prevent="switchModule('lenovo-models')"
+          >
+            <span class="material-symbols-outlined">database</span>
+            <span v-show="!sidebarCollapsed" class="nav-text">联想框架机型库</span>
+          </a>
+          <a
+            href="#"
+            class="nav-item"
             :class="{ active: activeModule === 'gpu' }"
             @click.prevent="switchModule('gpu')"
           >
@@ -185,6 +194,15 @@
             <span class="material-symbols-outlined">settings_applications</span>
             <span v-show="!sidebarCollapsed" class="nav-text">调价参数</span>
           </a>
+          <a
+            href="#"
+            class="nav-item"
+            :class="{ active: activeModule === 'lenovo-framework' }"
+            @click.prevent="switchModule('lenovo-framework')"
+          >
+            <span class="material-symbols-outlined">corporate_fare</span>
+            <span v-show="!sidebarCollapsed" class="nav-text">联想框架报价</span>
+          </a>
         </div>
 
         <div class="nav-section">
@@ -254,6 +272,11 @@
         <!-- 字段配置 -->
         <div v-show="activeModule === 'field-config'" class="module-content full-height">
           <DeviceFieldConfigManagement />
+        </div>
+
+        <!-- 联想框架机型库 -->
+        <div v-show="activeModule === 'lenovo-models'" class="module-content full-height">
+          <LenovoFrameworkModelsManagement />
         </div>
 
         <!-- GPU 价格管理 -->
@@ -332,6 +355,11 @@
           <ProductParameterManagement />
         </div>
 
+        <!-- 联想框架报价管理 -->
+        <div v-show="activeModule === 'lenovo-framework'" class="module-content">
+          <LenovoFrameworkManagement />
+        </div>
+
         <!-- 系统模块 -->
         <!-- 系统设置 -->
         <div v-show="activeModule === 'settings'" class="module-content">
@@ -377,6 +405,8 @@ import SuperimposedPriceManagement from '../components/admin/SuperimposedPriceMa
 import CitySocialInsurance from '../components/admin/CitySocialInsurance.vue'
 import RelocationVehicleManagement from '../components/admin/RelocationVehicleManagement.vue'
 import ChinaCityTierManagement from '../components/admin/ChinaCityTierManagement.vue'
+import LenovoFrameworkManagement from '../components/admin/LenovoFrameworkManagement.vue'
+import LenovoFrameworkModelsManagement from '../components/admin/LenovoFrameworkModelsManagement.vue'
 
 const router = useRouter()
 
@@ -395,6 +425,8 @@ const moduleTitles: Record<string, string> = {
   rate: '维保费率管理',
   service: '服务级别管理',
   parameter: '调价参数管理',
+  'lenovo-framework': '联想框架报价管理',
+  'lenovo-models': '联想框架机型库',
   gpu: 'GPU 价格管理',
   spare: '备件管理',
   manual: '手动匹配管理',
@@ -417,6 +449,8 @@ const moduleDescriptions: Record<string, string> = {
   rate: '管理设备维护费率配置',
   service: '配置服务级别和响应时间',
   parameter: '配置报价引擎的核心费率、时效因子及成本基数',
+  'lenovo-framework': '管理联想框架报价的机型分类、通配规则与各大类价格表（独立于标准报价口径）',
+  'lenovo-models': '统一机型库（型号 → 端型 / 子类）：分类表 + 通配展开 + 设备库导入 + 用户确认，报价时直查',
   gpu: '管理 GPU 设备价格信息',
   spare: '管理备件库存和价格',
   manual: '管理手动匹配覆盖记录',

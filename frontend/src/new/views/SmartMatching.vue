@@ -130,6 +130,17 @@
         </div>
         <div class="table-header">
           <div class="table-controls-left">
+            <div class="quote-mode-toggle">
+              <span class="material-symbols-outlined">tune</span>
+              <label class="mode-option" :class="{ active: quoteMode === 'standard' }">
+                <input type="radio" value="standard" v-model="quoteMode" />
+                <span>标准口径</span>
+              </label>
+              <label class="mode-option" :class="{ active: quoteMode === 'lenovo' }">
+                <input type="radio" value="lenovo" v-model="quoteMode" />
+                <span>联想框架</span>
+              </label>
+            </div>
             <div class="filter-select">
               <span class="material-symbols-outlined">filter_list</span>
               <select v-model="filterStatus">
@@ -139,7 +150,7 @@
                 <option value="matched">仅显示已匹配</option>
               </select>
             </div>
-            <div class="data-source-select">
+            <div class="data-source-select" v-if="quoteMode === 'standard'">
               <span class="material-symbols-outlined">storage</span>
               <select v-model="dataSource">
                 <option value="datacenter">数据中心设备</option>
@@ -147,6 +158,15 @@
                 <option value="hybrid">混合模式</option>
               </select>
             </div>
+            <button
+              v-if="quoteMode === 'lenovo'"
+              class="lenovo-config-btn"
+              @click="showLenovoConfig = true"
+              title="联想框架报价默认参数"
+            >
+              <span class="material-symbols-outlined">settings_applications</span>
+              <span>联想配置</span>
+            </button>
             <div class="pricing-params-dropdown" v-click-outside="closePricingParamsDropdown">
               <button class="pricing-params-btn" @click="togglePricingParamsDropdown" :class="{ active: showPricingParamsDropdown }">
                 <span class="material-symbols-outlined">tune</span>
@@ -236,7 +256,7 @@
           </div>
         </div>
 
-        <div class="table-wrapper">
+        <div class="table-wrapper" ref="tableWrapperRef">
           <table class="data-table">
             <thead>
               <tr>
@@ -253,89 +273,177 @@
                 <th class="col-model">原始品牌型号</th>
                 <th class="col-category">分类</th>
                 <th class="col-service-level">服务级别</th>
-                <th class="col-match">匹配型号</th>
-                <th class="col-confidence">置信度</th>
-                <th class="col-price">原始单价</th>
-                <th class="col-coefficient">服务系数</th>
-                <th class="col-adjusted-price">调整后单价</th>
+                <template v-if="quoteMode === 'standard'">
+                  <th class="col-match">匹配型号</th>
+                  <th class="col-confidence">置信度</th>
+                  <th class="col-price">原始单价</th>
+                  <th class="col-coefficient">服务系数</th>
+                  <th class="col-adjusted-price">调整后单价</th>
+                </template>
+                <template v-else>
+                  <th class="col-match">匹配型号</th>
+                  <th class="col-end-type">端型</th>
+                  <th class="col-sub-category">子类</th>
+                  <th class="col-match-method">命中方式</th>
+                  <th class="col-price">单价</th>
+                  <th class="col-adjusted-price">总价</th>
+                </template>
                 <th class="col-actions">操作</th>
               </tr>
             </thead>
             <tbody>
+              <tr v-if="topPadding > 0" :style="{ height: topPadding + 'px' }" class="virtual-spacer"><td></td></tr>
               <tr
-                v-for="(item, index) in filteredTableData"
-                :key="index"
+                v-for="(item, i) in visibleItems"
+                :key="item._uid"
+                :style="{ height: ROW_HEIGHT + 'px' }"
                 :class="{
                   'warning-row': item.matchRate > 0 && item.matchRate < 70,
                   'error-row': !item.matchedModel || item.matchRate === 0
                 }"
               >
                 <td class="col-checkbox">
-                  <label class="custom-checkbox" @click="toggleRowSelection(getOriginalIndex(item))">
-                    <span class="checkbox-circle" :class="{ 'checked': selectedRows.has(getOriginalIndex(item)) }">
-                      <span class="material-symbols-outlined" v-if="selectedRows.has(getOriginalIndex(item))">check</span>
+                  <label class="custom-checkbox" @click="toggleRowSelection(item)">
+                    <span class="checkbox-circle" :class="{ 'checked': isRowSelected(item) }">
+                      <span class="material-symbols-outlined" v-if="isRowSelected(item)">check</span>
                     </span>
                   </label>
                 </td>
-                <td class="col-index">{{ index + 1 }}</td>
+                <td class="col-index">{{ startIndex + i + 1 }}</td>
                 <td class="col-manufacturer">{{ item.manufacturer || '-' }}</td>
                 <td class="col-model">
                   <span class="original-model">{{ item.originalBrandModel || '-' }}</span>
                 </td>
-                <td class="col-category">{{ item.deviceCategory || '-' }}</td>
-                <td class="col-service-level">{{ item.serviceLevel || '-' }}</td>
-                <td class="col-match">
-                  <div class="match-cell-wrapper">
-                  <span
-                    class="matched-model"
-                    :class="{
-                      'high-match': item.matchRate >= 70,
-                      'mid-match': item.matchRate >= 50 && item.matchRate < 70,
-                      'low-match': item.matchRate > 0 && item.matchRate < 50,
-                      'no-match': !item.matchedModel || item.matchRate === 0
-                    }"
-                    @click="openSearch(index)"
-                    :title="'点击修改匹配型号'"
-                  >
-                    {{ item.matchedModel || '未匹配' }}
-                  </span>
-                    <button
-                      v-if="item.matchedModel"
-                      class="clear-match-btn"
-                      @click.stop="clearMatchResult(index)"
-                      title="清空匹配结果"
+                <td class="col-category">
+                  <template v-if="quoteMode === 'lenovo'">
+                    {{ item.lenovo_device_category || item.lenovo_matched_device_category || item.deviceCategory || '-' }}
+                  </template>
+                  <template v-else>{{ item.deviceCategory || '-' }}</template>
+                </td>
+                <td class="col-service-level">{{ getEffectiveServiceLevel(item) || '-' }}</td>
+                <template v-if="quoteMode === 'standard'">
+                  <td class="col-match">
+                    <div class="match-cell-wrapper">
+                    <span
+                      class="matched-model"
+                      :class="{
+                        'high-match': item.matchRate >= 70,
+                        'mid-match': item.matchRate >= 50 && item.matchRate < 70,
+                        'low-match': item.matchRate > 0 && item.matchRate < 50,
+                        'no-match': !item.matchedModel || item.matchRate === 0
+                      }"
+                      @click="openSearch(item)"
+                      :title="'点击修改匹配型号'"
                     >
-                      <span class="material-symbols-outlined">close</span>
-                    </button>
-                  </div>
-                </td>
-                <td class="col-confidence">
-                  <span
-                    class="confidence-badge"
-                    :class="{
-                      'high': item.matchRate >= 70,
-                      'mid': item.matchRate >= 50 && item.matchRate < 70,
-                      'low': item.matchRate > 0 && item.matchRate < 50,
-                      'none': !item.matchedModel || item.matchRate === 0
-                    }"
-                  >
-                    {{ item.matchRate ? Math.round(item.matchRate) + '%' : '-' }}
-                  </span>
-                </td>
-                <td class="col-price">{{ item.originalPrice ? '¥' + item.originalPrice.toFixed(2) : '-' }}</td>
-                <td class="col-coefficient">
-                  <span v-if="item.serviceLevelCoefficient !== 1" class="coefficient-value">
-                    {{ item.serviceLevelCoefficient.toFixed(2) }}
-                  </span>
-                  <span v-else>-</span>
-                </td>
-                <td class="col-adjusted-price">{{ item.price ? '¥' + item.price.toFixed(2) : '-' }}</td>
+                      {{ item.matchedModel || '未匹配' }}
+                    </span>
+                      <button
+                        v-if="item.matchedModel"
+                        class="clear-match-btn"
+                        @click.stop="clearMatchResult(item)"
+                        title="清空匹配结果"
+                      >
+                        <span class="material-symbols-outlined">close</span>
+                      </button>
+                    </div>
+                  </td>
+                  <td class="col-confidence">
+                    <span
+                      class="confidence-badge"
+                      :class="{
+                        'high': item.matchRate >= 70,
+                        'mid': item.matchRate >= 50 && item.matchRate < 70,
+                        'low': item.matchRate > 0 && item.matchRate < 50,
+                        'none': !item.matchedModel || item.matchRate === 0
+                      }"
+                    >
+                      {{ item.matchRate ? Math.round(item.matchRate) + '%' : '-' }}
+                    </span>
+                  </td>
+                  <td class="col-price">{{ item.originalPrice ? '¥' + item.originalPrice.toFixed(2) : '-' }}</td>
+                  <td class="col-coefficient">
+                    <span v-if="item.serviceLevelCoefficient !== 1" class="coefficient-value">
+                      {{ item.serviceLevelCoefficient.toFixed(2) }}
+                    </span>
+                    <span v-else>-</span>
+                  </td>
+                  <td class="col-adjusted-price">{{ item.price ? '¥' + item.price.toFixed(2) : '-' }}</td>
+                </template>
+                <template v-else>
+                  <td class="col-match">
+                    <div class="match-cell-wrapper">
+                      <span
+                        class="matched-model"
+                        :class="{
+                          'high-match': item.lenovo_match_method === 'exact' || item.lenovo_match_method === 'manual',
+                          'mid-match': item.lenovo_match_method === 'fuzzy' || item.lenovo_match_method === 'pattern',
+                          'no-match': !item.lenovo_match_method || item.lenovo_match_method === 'none'
+                        }"
+                        @click="openLenovoSearch(item)"
+                        :title="'点击修改匹配型号'"
+                      >
+                        {{ item.lenovo_matched_model || '未匹配' }}
+                      </span>
+                      <button
+                        v-if="item.lenovo_manual_lock_model"
+                        class="clear-match-btn"
+                        @click.stop="clearLenovoManualLock(item)"
+                        title="清除手动锁定"
+                      >
+                        <span class="material-symbols-outlined">close</span>
+                      </button>
+                    </div>
+                  </td>
+                  <td class="col-end-type">
+                    <div class="end-type-cell-wrapper">
+                      <span
+                        class="lenovo-end-type-badge clickable"
+                        :class="{ 'manual-locked': item.lenovo_manual_end_type, 'empty': !item.lenovo_end_type }"
+                        @click="openEndTypeDropdown(item, $event)"
+                        title="点击修改端型（同型号其他行同步生效）"
+                      >
+                        {{ item.lenovo_end_type || '点击选择' }}
+                        <span class="material-symbols-outlined dropdown-icon">expand_more</span>
+                      </span>
+                      <button
+                        v-if="item.lenovo_manual_end_type"
+                        class="clear-match-btn"
+                        @click.stop="clearLenovoManualEndType(item)"
+                        title="清除手动锁定的端型"
+                      >
+                        <span class="material-symbols-outlined">close</span>
+                      </button>
+                    </div>
+                  </td>
+                  <td class="col-sub-category">{{ item.lenovo_sub_category || '-' }}</td>
+                  <td class="col-match-method">
+                    <span class="match-method-badge" :class="'method-' + (item.lenovo_match_method || 'none')">
+                      {{ formatLenovoMethod(item.lenovo_match_method) }}
+                    </span>
+                  </td>
+                  <td class="col-price">{{ item.lenovo_unit_price ? '¥' + Number(item.lenovo_unit_price).toFixed(2) : '-' }}</td>
+                  <td class="col-adjusted-price">{{ item.lenovo_total_price ? '¥' + Number(item.lenovo_total_price).toFixed(2) : '-' }}</td>
+                </template>
                 <td class="col-actions">
-                  <button class="action-btn edit" @click="openSearch(index)" title="修改匹配">
+                  <button
+                    v-if="quoteMode === 'standard'"
+                    class="action-btn edit"
+                    @click="openSearch(item)"
+                    title="修改匹配"
+                  >
                     <span class="material-symbols-outlined">edit</span>
+                  </button>
+                  <button
+                    v-else
+                    class="action-btn edit"
+                    @click="openLenovoRowEditor(item, startIndex + i)"
+                    title="修改联想参数"
+                  >
+                    <span class="material-symbols-outlined">tune</span>
                   </button>
                 </td>
               </tr>
+              <tr v-if="bottomPadding > 0" :style="{ height: bottomPadding + 'px' }" class="virtual-spacer"><td></td></tr>
             </tbody>
           </table>
         </div>
@@ -345,6 +453,180 @@
         </div>
       </div>
     </main>
+
+    <!-- 联想框架默认参数对话框 -->
+    <div class="dialog-overlay" v-if="showLenovoConfig" @click="showLenovoConfig = false">
+      <div class="dialog-content lenovo-config-dialog" @click.stop>
+        <div class="dialog-header">
+          <h3 class="dialog-title">联想框架报价 - 默认参数</h3>
+          <button class="dialog-close" @click="showLenovoConfig = false">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+        <div class="dialog-body">
+          <p class="lenovo-config-tip">这些默认值会应用到所有行；每行可单独覆盖。</p>
+          <div class="lenovo-form-grid">
+            <div class="lenovo-form-item">
+              <label>设备大类</label>
+              <select v-model="lenovoDefaults.device_category">
+                <option value="磁带库">磁带库</option>
+                <option value="光纤交换机">光纤交换机 (FC)</option>
+                <option value="IB交换机">IB 交换机</option>
+                <option value="网络设备">网络设备</option>
+                <option value="服务器">服务器</option>
+                <option value="存储">存储</option>
+                <option value="小型机">小型机</option>
+              </select>
+            </div>
+            <div class="lenovo-form-item">
+              <label>默认 SLA</label>
+              <input v-model="lenovoDefaults.sla" placeholder="例：7*24*NCD" />
+            </div>
+            <div class="lenovo-form-item">
+              <label>磁带库驱动器配置</label>
+              <select v-model="lenovoDefaults.drive_config">
+                <option value="LTO5">LTO5</option>
+                <option value="LTO6">LTO6</option>
+                <option value="LTO7">LTO7</option>
+                <option value="LTO8">LTO8</option>
+              </select>
+            </div>
+            <div class="lenovo-form-item">
+              <label>网络子类（device_category=网络设备 时）</label>
+              <select v-model="lenovoDefaults.sub_category">
+                <option value="网络交换机">网络交换机</option>
+                <option value="路由器">路由器</option>
+                <option value="无线控制器">无线控制器</option>
+                <option value="无线AP">无线 AP</option>
+              </select>
+            </div>
+            <div class="lenovo-form-item">
+              <label>服务器：含 SSD</label>
+              <select v-model="lenovoDefaults.includes_ssd">
+                <option :value="false">不含</option>
+                <option :value="true">含</option>
+              </select>
+            </div>
+            <div class="lenovo-form-item">
+              <label>服务器：报价类型</label>
+              <select v-model="lenovoDefaults.package_type">
+                <option value="备件维保">备件维保</option>
+                <option value="整包">整包</option>
+              </select>
+            </div>
+            <div class="lenovo-form-item">
+              <label>服务器/小机：含硬盘不返还</label>
+              <select v-model="lenovoDefaults.includes_disk">
+                <option :value="false">不含</option>
+                <option :value="true">含</option>
+              </select>
+            </div>
+            <div class="lenovo-form-item">
+              <label>存储：含硬盘不回收</label>
+              <select v-model="lenovoDefaults.includes_disk_no_return">
+                <option :value="false">不含</option>
+                <option :value="true">含</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-footer">
+          <button class="btn-secondary" @click="showLenovoConfig = false">关闭</button>
+          <button class="btn-primary" @click="applyLenovoDefaultsToAll">应用到所有行</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 联想单行参数编辑对话框 -->
+    <div class="dialog-overlay" v-if="showLenovoRowEditor !== null" @click="showLenovoRowEditor = null">
+      <div class="dialog-content lenovo-config-dialog" @click.stop v-if="lenovoRowDraft">
+        <div class="dialog-header">
+          <h3 class="dialog-title">编辑联想参数（第 {{ lenovoEditorRowNumber }} 行）</h3>
+          <button class="dialog-close" @click="showLenovoRowEditor = null">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+        <div class="dialog-body">
+          <div class="lenovo-form-grid">
+            <div class="lenovo-form-item">
+              <label>设备大类</label>
+              <select v-model="lenovoRowDraft.device_category">
+                <option value="磁带库">磁带库</option>
+                <option value="光纤交换机">光纤交换机 (FC)</option>
+                <option value="IB交换机">IB 交换机</option>
+                <option value="网络设备">网络设备</option>
+                <option value="服务器">服务器</option>
+                <option value="存储">存储</option>
+                <option value="小型机">小型机</option>
+              </select>
+            </div>
+            <div class="lenovo-form-item">
+              <label>SLA</label>
+              <input v-model="lenovoRowDraft.sla" />
+            </div>
+            <div class="lenovo-form-item" v-if="lenovoRowDraft.device_category === '磁带库'">
+              <label>驱动器配置</label>
+              <select v-model="lenovoRowDraft.drive_config">
+                <option value="LTO5">LTO5</option>
+                <option value="LTO6">LTO6</option>
+                <option value="LTO7">LTO7</option>
+                <option value="LTO8">LTO8</option>
+              </select>
+            </div>
+            <div class="lenovo-form-item" v-if="lenovoRowDraft.device_category === '网络设备'">
+              <label>子类</label>
+              <select v-model="lenovoRowDraft.sub_category">
+                <option value="网络交换机">网络交换机</option>
+                <option value="路由器">路由器</option>
+                <option value="无线控制器">无线控制器</option>
+                <option value="无线AP">无线 AP</option>
+              </select>
+            </div>
+            <template v-if="lenovoRowDraft.device_category === '服务器'">
+              <div class="lenovo-form-item">
+                <label>含 SSD</label>
+                <select v-model="lenovoRowDraft.includes_ssd">
+                  <option :value="false">不含</option>
+                  <option :value="true">含</option>
+                </select>
+              </div>
+              <div class="lenovo-form-item">
+                <label>报价类型</label>
+                <select v-model="lenovoRowDraft.package_type">
+                  <option value="备件维保">备件维保</option>
+                  <option value="整包">整包</option>
+                </select>
+              </div>
+              <div class="lenovo-form-item">
+                <label>含硬盘不返还</label>
+                <select v-model="lenovoRowDraft.includes_disk">
+                  <option :value="false">不含</option>
+                  <option :value="true">含</option>
+                </select>
+              </div>
+            </template>
+            <div class="lenovo-form-item" v-if="lenovoRowDraft.device_category === '小型机'">
+              <label>含硬盘不返还</label>
+              <select v-model="lenovoRowDraft.includes_disk">
+                <option :value="false">不含</option>
+                <option :value="true">含</option>
+              </select>
+            </div>
+            <div class="lenovo-form-item" v-if="lenovoRowDraft.device_category === '存储'">
+              <label>含硬盘不回收</label>
+              <select v-model="lenovoRowDraft.includes_disk_no_return">
+                <option :value="false">不含</option>
+                <option :value="true">含</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-footer">
+          <button class="btn-secondary" @click="showLenovoRowEditor = null">取消</button>
+          <button class="btn-primary" @click="saveLenovoRowEditor">保存并重新报价</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Search Dialog -->
     <div class="dialog-overlay" v-if="showSearchDialog" @click="closeSearchDialog">
@@ -465,6 +747,190 @@
       </div>
     </div>
 
+    <!-- 联想框架"匹配型号"搜索弹窗 -->
+    <div class="dialog-overlay" v-if="showLenovoSearchDialog" @click="closeLenovoSearchDialog">
+      <div class="dialog-content" @click.stop>
+        <div class="dialog-header">
+          <h3 class="dialog-title">搜索联想框架机型</h3>
+          <button class="dialog-close" @click="closeLenovoSearchDialog">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+        <div class="dialog-body">
+          <div class="search-input-group">
+            <span class="material-symbols-outlined">search</span>
+            <input
+              ref="lenovoSearchInputRef"
+              type="text"
+              v-model="lenovoSearchQuery"
+              @input="handleLenovoSearchInput"
+              placeholder="输入型号/品牌/系列搜索..."
+              class="search-input-field"
+            />
+          </div>
+          <div class="search-results" v-if="lenovoSearchLoading">
+            <div class="search-loading">
+              <span class="material-symbols-outlined loading-icon">sync</span>
+              <span>搜索中...</span>
+            </div>
+          </div>
+          <div class="search-results" v-else-if="lenovoSearchResults.length > 0">
+            <div class="results-header">找到 {{ lenovoSearchResults.length }} 条结果</div>
+            <div class="results-list">
+              <div
+                v-for="result in lenovoSearchResults"
+                :key="result.id"
+                class="result-item"
+                @click="selectLenovoSearchResult(result)"
+              >
+                <div class="result-info">
+                  <div class="result-model">{{ result.model }}</div>
+                  <div class="result-details">
+                    {{ result.brand || '-' }}
+                    <span v-if="result.series"> • {{ result.series }}</span>
+                    • {{ result.device_category }}
+                    <span v-if="result.sub_category"> / {{ result.sub_category }}</span>
+                    • 端型: <strong>{{ result.end_type }}</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="search-results" v-else-if="lenovoSearchQuery && lenovoSearchQuery.length >= 1">
+            <div class="no-results">
+              <span class="material-symbols-outlined">search_off</span>
+              <span>未找到对应机型</span>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-footer">
+          <button class="btn-secondary" @click="closeLenovoSearchDialog">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 联想框架"对应关系"批量确认弹窗（点"下一步：价格调整"时触发） -->
+    <Teleport to="body">
+      <div v-if="showPendingAliasesDialog" class="alias-batch-overlay" @click.self="closePendingAliasesDialog">
+        <div class="alias-batch-dialog">
+          <div class="alias-batch-header">
+            <div>
+              <h3>确认本次手动调整的对应关系</h3>
+              <p class="alias-batch-tip">
+                本次共调整了 <strong>{{ pendingAliases.length }}</strong> 条「原始品牌型号 → 标准记录」对应关系。
+                选中后写入机型库，下次再遇到相同的「原始品牌型号」将直接命中，无需再次手动。
+              </p>
+            </div>
+            <button class="alias-batch-close" @click="closePendingAliasesDialog">
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </div>
+
+          <div class="alias-batch-body">
+            <table class="alias-batch-table">
+              <thead>
+                <tr>
+                  <th class="col-check">
+                    <label class="batch-checkbox" @click.prevent="toggleAllAliasesSelected">
+                      <span class="cb-circle" :class="{ checked: isAllAliasesSelected, indeterminate: isPartialAliasesSelected }">
+                        <span class="material-symbols-outlined" v-if="isAllAliasesSelected">check</span>
+                        <span class="material-symbols-outlined" v-else-if="isPartialAliasesSelected">remove</span>
+                      </span>
+                    </label>
+                  </th>
+                  <th class="col-raw">原始品牌型号</th>
+                  <th class="col-arrow">→</th>
+                  <th class="col-model">标准型号</th>
+                  <th class="col-endtype">端型</th>
+                  <th class="col-cat">大类</th>
+                  <th class="col-rows">影响行数</th>
+                  <th class="col-src">来源</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="alias in pendingAliases" :key="alias.id"
+                    :class="{ selected: selectedAliasIds.has(alias.id) }"
+                    @click="toggleAliasSelected(alias.id)">
+                  <td class="col-check">
+                    <label class="batch-checkbox" @click.prevent.stop="toggleAliasSelected(alias.id)">
+                      <span class="cb-circle" :class="{ checked: selectedAliasIds.has(alias.id) }">
+                        <span class="material-symbols-outlined" v-if="selectedAliasIds.has(alias.id)">check</span>
+                      </span>
+                    </label>
+                  </td>
+                  <td class="col-raw mono">{{ alias.rawBrandModel }}</td>
+                  <td class="col-arrow">→</td>
+                  <td class="col-model mono">{{ alias.model }}</td>
+                  <td class="col-endtype"><span class="alias-end-badge">{{ alias.end_type }}</span></td>
+                  <td class="col-cat">{{ alias.device_category }}</td>
+                  <td class="col-rows">{{ alias.affected_rows }}</td>
+                  <td class="col-src">
+                    <span class="alias-src-badge" :class="alias.source">
+                      {{ alias.source === 'end-type' ? '端型选择' : '匹配型号' }}
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div v-if="pendingAliases.length === 0" class="empty-state">
+              <span class="material-symbols-outlined">inventory_2</span>
+              <p>暂无对应关系</p>
+            </div>
+          </div>
+
+          <div class="alias-batch-footer">
+            <div class="footer-info">已选 {{ selectedAliasIds.size }} / {{ pendingAliases.length }}</div>
+            <div class="footer-actions">
+              <button class="btn-danger" :disabled="selectedAliasIds.size === 0 || pendingAliasesProcessing" @click="removePendingAliases">
+                <span class="material-symbols-outlined">delete_sweep</span>
+                移除选中
+              </button>
+              <button class="btn-secondary" :disabled="pendingAliasesProcessing" @click="skipAllPendingAliases">
+                全部跳过
+              </button>
+              <button class="btn-primary" :disabled="selectedAliasIds.size === 0 || pendingAliasesProcessing" @click="confirmSelectedAliases">
+                <span class="material-symbols-outlined" v-if="pendingAliasesProcessing">sync</span>
+                <span class="material-symbols-outlined" v-else>check_circle</span>
+                {{ pendingAliasesProcessing ? '写入中...' : `记住选中（${selectedAliasIds.size}）` }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- 联想"端型"下拉浮层（Teleport 到 body 避免表格 overflow 截断） -->
+    <Teleport to="body">
+      <div
+        v-if="endTypeDropdownVisible"
+        class="end-type-dropdown"
+        :style="{ top: endTypeDropdownPosition.top, left: endTypeDropdownPosition.left }"
+        @click.stop
+      >
+        <div class="dropdown-title">选择端型</div>
+        <div class="dropdown-list">
+          <div v-if="endTypeLoading" class="dropdown-loading">
+            <span class="material-symbols-outlined spinning">sync</span>
+            <span>加载中...</span>
+          </div>
+          <template v-else>
+            <div
+              v-for="opt in endTypeOptions"
+              :key="opt"
+              class="dropdown-option"
+              :class="{ active: endTypeDropdownTarget?.lenovo_end_type === opt }"
+              @click="selectEndType(opt)"
+            >
+              <span>{{ opt }}</span>
+              <span v-if="endTypeDropdownTarget?.lenovo_end_type === opt" class="material-symbols-outlined">check</span>
+            </div>
+            <div v-if="endTypeOptions.length === 0" class="dropdown-empty">该设备大类暂无可选端型</div>
+          </template>
+        </div>
+      </div>
+      <div v-if="endTypeDropdownVisible" class="end-type-dropdown-mask" @click="closeEndTypeDropdown"></div>
+    </Teleport>
+
     <!-- Sticky Bottom Bar -->
     <div class="bottom-bar" v-if="tableData.length > 0">
       <div class="bottom-content">
@@ -531,6 +997,7 @@ import {
   saveDraft,
   getCurrentDraftId
 } from '../utils/draftUtils'
+import { useVirtualList } from '../composables/useVirtualList'
 
 const router = useRouter()
 
@@ -572,11 +1039,212 @@ const matchingProgress = computed(() => {
 // Filter
 const filterStatus = ref<'all' | 'low' | 'unmatched' | 'matched'>('all')
 
-// Row selection for deletion
-const selectedRows = ref<Set<number>>(new Set())
+// Row selection for deletion（uid 化，避免 O(n²) indexOf）
+const selectedRows = ref<Set<string>>(new Set())
+
+// 表格滚动容器引用（用于虚拟滚动）
+const tableWrapperRef = ref<HTMLElement | null>(null)
+const ROW_HEIGHT = 56
+
+// 行 uid 自增器
+let _rowUidCounter = 0
+function genRowUid(): string {
+  return `r${++_rowUidCounter}`
+}
+
+// 给 sheetGroups 里没有 _uid 的旧行补 uid（处理从持久化状态恢复的旧数据）
+function ensureRowUidsInSheetGroups(groups: Record<string, any[]>) {
+  for (const sheetName of Object.keys(groups || {})) {
+    const rows = groups[sheetName] || []
+    for (const row of rows) {
+      if (!row._uid) row._uid = genRowUid()
+    }
+  }
+}
 
 // Data source
 const dataSource = ref<'datacenter' | 'office' | 'hybrid'>('datacenter')
+
+// ============ 报价口径 ============
+type QuoteMode = 'standard' | 'lenovo'
+const quoteMode = ref<QuoteMode>('standard')
+
+interface LenovoParams {
+  device_category: string
+  sla: string
+  drive_config: string
+  sub_category: string
+  includes_ssd: boolean
+  package_type: string
+  includes_disk: boolean
+  includes_disk_no_return: boolean
+}
+
+// 联想模式下"空 SLA"的默认值（同时也是"标准口径的空 SLA 占位符 7*24*NCR"被认为是空时的回填值）
+const LENOVO_DEFAULT_SLA = '7*24*NCD'
+
+const lenovoDefaults = ref<LenovoParams>({
+  device_category: '服务器',
+  sla: LENOVO_DEFAULT_SLA,
+  drive_config: 'LTO7',
+  sub_category: '网络交换机',
+  includes_ssd: false,
+  package_type: '整包',
+  includes_disk: false,
+  includes_disk_no_return: false,
+})
+
+/** 行在当前报价口径下生效的"服务级别"——用于表格展示 + 报价请求
+ *
+ * - 标准口径：用行内 serviceLevel（来自源数据 / 智能识别阶段）
+ * - 联想框架：用行内 lenovo_sla（单行编辑覆盖）> 联想配置默认 SLA > 兜底
+ *   联想模式不沿用源导入时自动填充的 SLA，避免被智能识别阶段的默认值（如 7*24*NBD）干扰
+ */
+function getEffectiveServiceLevel(row: any): string {
+  if (quoteMode.value === 'lenovo') {
+    return row?.lenovo_sla
+      || lenovoDefaults.value.sla
+      || LENOVO_DEFAULT_SLA
+  }
+  return (row?.serviceLevel ?? '').toString()
+}
+
+const showLenovoConfig = ref(false)
+const showLenovoRowEditor = ref<any | null>(null)
+const lenovoEditorRowNumber = ref<number>(0)
+const lenovoRowDraft = ref<LenovoParams | null>(null)
+
+// 行"分类"列 → 联想 device_category / sub_category 映射
+const LENOVO_CATEGORY_MAP: Record<string, { device_category: string; sub_category?: string }> = {
+  '磁带存储': { device_category: '磁带库' },
+  '磁带库': { device_category: '磁带库' },
+  '磁带机': { device_category: '磁带库' },
+  '光纤交换机': { device_category: '光纤交换机' },
+  'FC光纤交换机': { device_category: '光纤交换机' },
+  'IB交换机': { device_category: 'IB交换机' },
+  'IB光纤交换机': { device_category: 'IB交换机' },
+  '网络交换机': { device_category: '网络设备', sub_category: '网络交换机' },
+  '交换机': { device_category: '网络设备', sub_category: '网络交换机' },
+  '路由器': { device_category: '网络设备', sub_category: '路由器' },
+  '无线控制器': { device_category: '网络设备', sub_category: '无线控制器' },
+  '无线AP': { device_category: '网络设备', sub_category: '无线AP' },
+  '网络设备': { device_category: '网络设备' },
+  '服务器': { device_category: '服务器' },
+  'x86服务器': { device_category: '服务器' },
+  '存储': { device_category: '存储' },
+  'NAS存储': { device_category: '存储' },
+  'SAN存储': { device_category: '存储' },
+  '小型机': { device_category: '小型机' },
+}
+
+function autoDetectLenovoCategory(row: any): { device_category?: string; sub_category?: string } {
+  const cat = String(row?.category || row?.deviceCategory || '').trim()
+  if (!cat) return {}
+  if (cat in LENOVO_CATEGORY_MAP) return LENOVO_CATEGORY_MAP[cat]
+  for (const [key, val] of Object.entries(LENOVO_CATEGORY_MAP)) {
+    if (cat.includes(key)) return val
+  }
+  return {}
+}
+
+// 剥离品牌前缀：HP-MSL3040 → MSL3040；惠普 MSL3040 → MSL3040
+const LENOVO_BRAND_PREFIXES = [
+  'HPE', 'HP', 'IBM', 'DELL EMC', 'DELL|EMC', 'DELL', 'EMC', 'Lenovo', '联想',
+  'Huawei', '华为', 'Cisco', 'H3C', 'Brocade', 'Inspur', '浪潮',
+  'Sugon', '曙光', 'Mellanox', '迈络思', '惠普', '慧与', 'NetApp',
+  '昆腾', 'Quantum', 'Macroson', '宏杉', 'Foxconn', 'SuperMicro', '超微',
+]
+
+function stripBrandPrefix(model: string): string {
+  if (!model) return ''
+  let m = String(model).trim()
+  // 反复剥离，处理 "HP-Lenovo-XXX" 这种叠加情况
+  for (let i = 0; i < 3; i++) {
+    let changed = false
+    for (const b of LENOVO_BRAND_PREFIXES) {
+      const esc = b.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')
+      const re = new RegExp(`^${esc}[-_\\s/]+`, 'i')
+      if (re.test(m)) {
+        m = m.replace(re, '').trim()
+        changed = true
+        break
+      }
+    }
+    if (!changed) break
+  }
+  return m
+}
+
+function formatLenovoMethod(method: string | undefined): string {
+  switch (method) {
+    case 'exact': return '精确'
+    case 'fuzzy': return '模糊'
+    case 'pattern': return '兜底'
+    case 'manual': return '手动'
+    case 'none': return '未命中'
+    default: return '-'
+  }
+}
+
+function getRowLenovoParams(row: any): LenovoParams {
+  // 优先级与 buildLenovoQuoteRequest 完全一致：
+  //   行内手动覆盖 > 自动识别（行的"分类"列） > 联想配置全局默认
+  const auto = autoDetectLenovoCategory(row)
+  return {
+    device_category:
+      row.lenovo_device_category || auto.device_category || lenovoDefaults.value.device_category,
+    // 服务级别走和表格展示一致的口径函数：联想模式下只受联想配置 / 单行覆盖控制，
+    // 不受智能识别阶段自动填充的 SLA 影响
+    sla: getEffectiveServiceLevel(row),
+    drive_config: row.lenovo_drive_config || lenovoDefaults.value.drive_config,
+    sub_category:
+      row.lenovo_sub_category_input || auto.sub_category || lenovoDefaults.value.sub_category,
+    includes_ssd: row.lenovo_includes_ssd ?? lenovoDefaults.value.includes_ssd,
+    package_type: row.lenovo_package_type || lenovoDefaults.value.package_type,
+    includes_disk: row.lenovo_includes_disk ?? lenovoDefaults.value.includes_disk,
+    includes_disk_no_return: row.lenovo_includes_disk_no_return ?? lenovoDefaults.value.includes_disk_no_return,
+  }
+}
+
+function applyLenovoDefaultsToAll() {
+  showLenovoConfig.value = false
+  // 联想模式下且有数据 → 直接用新默认参数重新跑一遍报价
+  if (
+    quoteMode.value === 'lenovo'
+    && !matchingInProgress.value
+    && flattenSheetGroups().length > 0
+  ) {
+    runLenovoBulkQuote()
+  } else {
+    ElMessage.success('已更新默认参数')
+  }
+}
+
+function openLenovoRowEditor(item: any, displayIndex: number) {
+  if (!item) return
+  lenovoRowDraft.value = getRowLenovoParams(item)
+  showLenovoRowEditor.value = item
+  lenovoEditorRowNumber.value = displayIndex + 1
+}
+
+function saveLenovoRowEditor() {
+  const row = showLenovoRowEditor.value
+  if (!row || !lenovoRowDraft.value) return
+  const draft = lenovoRowDraft.value
+  row.lenovo_device_category = draft.device_category
+  row.lenovo_sla = draft.sla
+  row.lenovo_drive_config = draft.drive_config
+  row.lenovo_sub_category_input = draft.sub_category
+  row.lenovo_includes_ssd = draft.includes_ssd
+  row.lenovo_package_type = draft.package_type
+  row.lenovo_includes_disk = draft.includes_disk
+  row.lenovo_includes_disk_no_return = draft.includes_disk_no_return
+  syncActiveSheetGroup()
+  // 重新报价单行
+  quoteLenovoRows([row])
+  showLenovoRowEditor.value = null
+  lenovoRowDraft.value = null
+}
 
 // Pricing params dropdown
 const showPricingParamsDropdown = ref(false)
@@ -589,7 +1257,57 @@ const pricingParams = ref({
 
 // Search dialog
 const showSearchDialog = ref(false)
-const activeModelIndex = ref<number | null>(null)
+const activeModelRow = ref<any | null>(null)
+
+// 联想框架"匹配型号"搜索弹窗
+const showLenovoSearchDialog = ref(false)
+const lenovoSearchTargetRow = ref<any | null>(null)
+const lenovoSearchQuery = ref('')
+const lenovoSearchResults = ref<any[]>([])
+const lenovoSearchLoading = ref(false)
+const lenovoSearchInputRef = ref<HTMLInputElement | null>(null)
+let lenovoSearchTimeout: NodeJS.Timeout | null = null
+
+// 联想框架"对应关系"批量确认队列
+// 用户在端型列 / 匹配型号搜索弹窗里每次手动调整产生的「raw → 标准记录」对应关系，
+// 都不立即弹窗，统一缓存到此队列，点"下一步：价格调整"前一次性批量确认。
+interface PendingAliasItem {
+  id: string                          // 去重 key: rawBrandModel + '|' + lower(device_category) + '|' + lower(model)
+  rawBrandModel: string               // 用户上传的「原始品牌型号」
+  device_category: string             // 联想大类
+  brand: string                       // 标准记录的 brand
+  model: string                       // 标准记录的 model
+  end_type: string                    // 端型
+  sub_category: string | null
+  source: 'end-type' | 'manual-match' // 触发来源（用于备注）
+  affected_rows: number               // 同 rawBrandModel 行数
+}
+
+const pendingAliases = ref<PendingAliasItem[]>([])
+
+function queuePendingAlias(item: PendingAliasItem) {
+  if (!item.id || !item.rawBrandModel || !item.model || !item.end_type) return
+  const idx = pendingAliases.value.findIndex(x => x.id === item.id)
+  if (idx >= 0) {
+    pendingAliases.value[idx] = item   // 覆盖（用户反复调整同一型号时，保留最后一次）
+  } else {
+    pendingAliases.value.push(item)
+  }
+}
+
+// 批量确认弹窗状态
+const showPendingAliasesDialog = ref(false)
+const selectedAliasIds = ref<Set<string>>(new Set())
+const pendingAliasesProcessing = ref(false)
+let _pendingAliasesResolver: ((action: 'navigate' | 'cancel') => void) | null = null
+
+// 联想框架"端型"下拉
+const endTypeDropdownVisible = ref(false)
+const endTypeDropdownPosition = ref({ top: '0px', left: '0px' })
+const endTypeDropdownTarget = ref<any | null>(null)
+const endTypeOptions = ref<string[]>([])
+const endTypeOptionsCache = ref<Record<string, string[]>>({})
+const endTypeLoading = ref(false)
 const searchQuery = ref('')
 const searchResults = ref<any[]>([])
 const searchLoading = ref(false)
@@ -649,6 +1367,7 @@ function setSheetGroupsFromRows(rows: any[]) {
     if (!groups[sheetName]) groups[sheetName] = []
     groups[sheetName].push({
       ...row,
+      _uid: row._uid || genRowUid(),
       sheetName,
       sourceRowIndex: Number.isFinite(Number(row.sourceRowIndex ?? row._sheetRowIndex))
         ? Number(row.sourceRowIndex ?? row._sheetRowIndex)
@@ -681,6 +1400,7 @@ function switchSheet(sheetName: string) {
 
 function createMatchingRow(row: any, index: number, sheetName = row.sheetName || row._sheetName || '') {
   return {
+    _uid: genRowUid(),
     manufacturer: row['厂商'] || '',
     model: row['设备/软件型号'] || '',
     originalBrandModel: `${row['厂商'] || ''}-${row['设备/软件型号'] || ''}`,
@@ -733,49 +1453,57 @@ const filteredTableData = computed(() => {
   return tableData.value
 })
 
-// Selection computed properties
+// 虚拟滚动切片
+const { visibleItems, topPadding, bottomPadding, startIndex } =
+  useVirtualList(filteredTableData, ROW_HEIGHT, tableWrapperRef)
+
+// Selection computed properties —— 基于 _uid，无 indexOf
 const isAllSelected = computed(() => {
-  if (filteredTableData.value.length === 0) return false
-  return filteredTableData.value.every(item => selectedRows.value.has(tableData.value.indexOf(item)))
+  const list = filteredTableData.value
+  if (list.length === 0) return false
+  for (let i = 0; i < list.length; i++) {
+    if (!selectedRows.value.has(list[i]._uid)) return false
+  }
+  return true
 })
 
 const isPartialSelected = computed(() => {
-  if (filteredTableData.value.length === 0) return false
-  const selectedCount = filteredTableData.value.filter(item => selectedRows.value.has(tableData.value.indexOf(item))).length
-  return selectedCount > 0 && selectedCount < filteredTableData.value.length
+  const list = filteredTableData.value
+  if (list.length === 0) return false
+  let count = 0
+  for (let i = 0; i < list.length; i++) {
+    if (selectedRows.value.has(list[i]._uid)) count++
+  }
+  return count > 0 && count < list.length
 })
 
-// Get original index in tableData for a filtered item
-function getOriginalIndex(item: any): number {
-  return tableData.value.indexOf(item)
+// O(1) 选中判断
+function isRowSelected(item: any): boolean {
+  return !!item && selectedRows.value.has(item._uid)
 }
 
-// Toggle single row selection
-function toggleRowSelection(index: number) {
+// Toggle single row selection（按 item 传入）
+function toggleRowSelection(item: any) {
+  if (!item || !item._uid) return
   const newSet = new Set(selectedRows.value)
-  if (newSet.has(index)) {
-    newSet.delete(index)
+  if (newSet.has(item._uid)) {
+    newSet.delete(item._uid)
   } else {
-    newSet.add(index)
+    newSet.add(item._uid)
   }
   selectedRows.value = newSet
 }
 
 // Toggle all rows selection
 function toggleSelectAll() {
+  const list = filteredTableData.value
   if (isAllSelected.value) {
-    // Deselect all filtered items
     const newSet = new Set(selectedRows.value)
-    filteredTableData.value.forEach(item => {
-      newSet.delete(tableData.value.indexOf(item))
-    })
+    for (let i = 0; i < list.length; i++) newSet.delete(list[i]._uid)
     selectedRows.value = newSet
   } else {
-    // Select all filtered items
     const newSet = new Set(selectedRows.value)
-    filteredTableData.value.forEach(item => {
-      newSet.add(tableData.value.indexOf(item))
-    })
+    for (let i = 0; i < list.length; i++) newSet.add(list[i]._uid)
     selectedRows.value = newSet
   }
 }
@@ -796,11 +1524,9 @@ function deleteSelectedRows() {
       type: 'warning',
     }
   ).then(() => {
-    // Convert Set to sorted array (descending) to avoid index shift issues
-    const indicesToDelete = Array.from(selectedRows.value).sort((a, b) => b - a)
-
-    // Create new array without deleted items
-    const newData = tableData.value.filter((_, index) => !selectedRows.value.has(index))
+    const deletedCount = selectedRows.value.size
+    // 用 _uid 过滤被删除的行
+    const newData = tableData.value.filter(item => !selectedRows.value.has(item._uid))
     tableData.value = newData
     syncActiveSheetGroup()
 
@@ -810,7 +1536,7 @@ function deleteSelectedRows() {
     // Update page state
     savePageState(PAGE_STATE_KEYS.SMART_MATCHING, getCurrentState())
 
-    ElMessage.success(`已删除 ${indicesToDelete.length} 条数据`)
+    ElMessage.success(`已删除 ${deletedCount} 条数据`)
   }).catch(() => {
     // User cancelled
   })
@@ -819,6 +1545,23 @@ function deleteSelectedRows() {
 // Clear selection when filter changes
 watch(filterStatus, () => {
   selectedRows.value = new Set()
+})
+
+/**
+ * 切到联想框架口径时自动触发一次联想报价
+ *
+ * - 表格里没数据 / 正在匹配 → 不触发，避免重复
+ * - 所有行已有联想价 → 跳过（用户可点顶部"重新匹配"强制再跑）
+ * - 否则立刻调用 /lenovo/bulk-quote
+ */
+watch(quoteMode, async (mode, prev) => {
+  if (mode !== 'lenovo' || prev === mode) return
+  if (matchingInProgress.value) return
+  const rows = flattenSheetGroups()
+  if (rows.length === 0) return
+  const allHaveLenovoPrice = rows.every(r => Number(r?.lenovo_unit_price) > 0)
+  if (allHaveLenovoPrice) return
+  await runLenovoBulkQuote()
 })
 
 // Navigation
@@ -838,6 +1581,15 @@ const goToPriceAdjustment = async () => {
   // 防止重复点击
   if (isNavigating.value) {
     return
+  }
+
+  // 如果本次会话累计了"待确认对应关系"，先弹窗让用户批量处理
+  if (quoteMode.value === 'lenovo' && pendingAliases.value.length > 0) {
+    const action = await openPendingAliasesDialog()
+    if (action === 'cancel') {
+      // 用户关闭弹窗（不点跳过也不点记住）→ 停留在当前页继续编辑
+      return
+    }
   }
 
   isNavigating.value = true
@@ -978,6 +1730,7 @@ onMounted(async () => {
   if (savedState && savedState.hasData) {
     // Restore page state - do NOT trigger matching
     if (savedState.sheetGroups && Object.keys(savedState.sheetGroups).length > 0) {
+      ensureRowUidsInSheetGroups(savedState.sheetGroups)
       sheetGroups.value = savedState.sheetGroups
       activeSheetName.value = savedState.activeSheetName || Object.keys(savedState.sheetGroups)[0]
       tableData.value = sheetGroups.value[activeSheetName.value] || []
@@ -1126,6 +1879,12 @@ async function startMatching() {
   if (matchingInProgress.value || flattenSheetGroups().length === 0) return
   syncActiveSheetGroup()
 
+  // 联想口径：走独立的批量报价分支
+  if (quoteMode.value === 'lenovo') {
+    await runLenovoBulkQuote()
+    return
+  }
+
   matchingInProgress.value = true
   matchingTotal.value = flattenSheetGroups().length
   matchingCompleted.value = 0
@@ -1248,6 +2007,114 @@ function stopMatching() {
   shouldStop.value = true
   matchingInProgress.value = false
   console.log('Matching stopped by user')
+}
+
+// ============ 联想框架报价 ============
+
+function buildLenovoQuoteRequest(row: any) {
+  // getRowLenovoParams 内部已含 "手动覆盖 > 自动识别 > 全局默认" 三层
+  const p = getRowLenovoParams(row)
+  const device_category = p.device_category
+  const sub_category = p.sub_category
+
+  // 手动锁定型号 > 输入 model 剥离品牌前缀
+  const lockedModel = row.lenovo_manual_lock_model || ''
+  const lockedBrand = row.lenovo_manual_lock_brand || ''
+  const effectiveModel = lockedModel || stripBrandPrefix(row.model || '')
+  const effectiveBrand = lockedBrand || row.manufacturer || undefined
+
+  return {
+    device_category,
+    brand: effectiveBrand,
+    model: effectiveModel,
+    sla: p.sla,
+    quantity: Number(row.quantity) || 1,
+    drive_config: device_category === '磁带库' ? p.drive_config : undefined,
+    sub_category: device_category === '网络设备' ? sub_category : undefined,
+    includes_ssd: device_category === '服务器' ? p.includes_ssd : undefined,
+    package_type: device_category === '服务器' ? p.package_type : undefined,
+    includes_disk:
+      device_category === '服务器' || device_category === '小型机' ? p.includes_disk : undefined,
+    includes_disk_no_return: device_category === '存储' ? p.includes_disk_no_return : undefined,
+    // 用户手动锁定端型 → 跳过后端自动判定
+    force_end_type: row.lenovo_manual_end_type || undefined,
+    // alias 快查键：用户上传时的「原始品牌型号」完整字符串
+    alias_key: row.originalBrandModel || undefined,
+  }
+}
+
+function applyLenovoResultToRow(row: any, result: any) {
+  row.lenovo_end_type = result.end_type || ''
+  row.lenovo_sub_category = result.sub_category || ''
+  // 手动锁定优先级最高：自动报价不覆盖 manual 标记
+  if (row.lenovo_match_method !== 'manual') {
+    row.lenovo_match_method = result.match_method || 'none'
+  }
+  row.lenovo_unit_price = result.unit_price ?? null
+  row.lenovo_total_price = result.total_price ?? null
+  row.lenovo_status = result.status
+  row.lenovo_message = result.message || ''
+  row.lenovo_classification_id = result.matched_classification_id ?? null
+  row.lenovo_pattern_id = result.matched_pattern_id ?? null
+  row.lenovo_matched_brand = result.matched_brand ?? null
+  row.lenovo_matched_model = result.matched_model ?? null
+  row.lenovo_matched_device_category = result.matched_device_category ?? null
+}
+
+async function quoteLenovoRows(rows: any[]) {
+  if (!rows || rows.length === 0) return
+
+  const payload = { items: rows.map(buildLenovoQuoteRequest) }
+  try {
+    const resp = await axios.post(`${API_URL}/lenovo/bulk-quote`, payload)
+    const results = resp.data?.results || []
+    rows.forEach((row, k) => {
+      if (results[k]) applyLenovoResultToRow(row, results[k])
+    })
+    syncActiveSheetGroup()
+    triggerRef(tableData)
+  } catch (e: any) {
+    console.error('Lenovo quote failed:', e)
+    ElMessage.error(`联想报价失败：${e?.response?.data?.detail || e?.message || '未知错误'}`)
+  }
+}
+
+async function runLenovoBulkQuote() {
+  const allRows = flattenSheetGroups()
+  if (allRows.length === 0) return
+
+  matchingInProgress.value = true
+  matchingTotal.value = allRows.length
+  matchingCompleted.value = 0
+  shouldStop.value = false
+
+  // 切批：每批 200 条避免单请求过大
+  const batchSize = 200
+  try {
+    for (let i = 0; i < allRows.length; i += batchSize) {
+      if (shouldStop.value) break
+      const batch = allRows.slice(i, i + batchSize)
+      const payload = { items: batch.map(buildLenovoQuoteRequest) }
+      const resp = await axios.post(`${API_URL}/lenovo/bulk-quote`, payload)
+      const results = resp.data?.results || []
+      batch.forEach((row, k) => {
+        if (results[k]) applyLenovoResultToRow(row, results[k])
+      })
+      matchingCompleted.value += batch.length
+      // 关键：循环内不再触发整表重渲染（避免每批锁死主线程）。
+      // 只更新进度数字 matchingCompleted，行内字段已直接 mutated。
+    }
+    // 全部完成后一次性同步 sheetGroups + 当前 tab 视图
+    setSheetGroupsFromRows(allRows)
+    if (activeSheetName.value) tableData.value = sheetGroups.value[activeSheetName.value] || []
+    triggerRef(tableData)
+    ElMessage.success(`联想框架报价完成，共 ${matchingCompleted.value} 条`)
+  } catch (e: any) {
+    console.error('Lenovo bulk-quote failed:', e)
+    ElMessage.error(`联想报价失败：${e?.response?.data?.detail || e?.message || '未知错误'}`)
+  } finally {
+    matchingInProgress.value = false
+  }
 }
 
 // Pricing params dropdown functions
@@ -1381,14 +2248,15 @@ function normalizeServicePeriodUnit(value: string): string {
 }
 
 // Open search dialog
-function openSearch(index: number) {
-  activeModelIndex.value = index
+function openSearch(item: any) {
+  if (!item) return
+  activeModelRow.value = item
   showSearchDialog.value = true
   searchPage.value = 1
   // 重置搜索数据源为当前行的数据源
-  searchDataSource.value = tableData.value[index].dataSource || 'datacenter'
+  searchDataSource.value = item.dataSource || 'datacenter'
   // Use original model for search (not the matched one)
-  searchQuery.value = tableData.value[index].model || ''
+  searchQuery.value = item.model || ''
   handleSearchInput()
 
   nextTick(() => {
@@ -1399,14 +2267,13 @@ function openSearch(index: number) {
 // Close search dialog
 function closeSearchDialog() {
   showSearchDialog.value = false
-  activeModelIndex.value = null
+  activeModelRow.value = null
   searchQuery.value = ''
   searchResults.value = []
 }
 
 // Clear match result - 清空匹配结果，恢复到"未匹配"状态
-function clearMatchResult(index: number) {
-  const item = tableData.value[index]
+function clearMatchResult(item: any) {
   if (item) {
     // 重置匹配相关字段
     item.matchedModel = ''
@@ -1417,11 +2284,363 @@ function clearMatchResult(index: number) {
     item.price = 0
     item.serviceLevelCoefficient = 1
     item.deviceCategory = ''
-    // 保留原始数据（厂商、型号等）
-    console.log(`已清空第 ${index + 1} 行的匹配结果`)
     // 使用 shallowRef 时需要手动触发更新
     triggerRef(tableData)
   }
+}
+
+// ============ 联想框架：匹配型号 手动搜索 ============
+
+function openLenovoSearch(item: any) {
+  if (!item) return
+  lenovoSearchTargetRow.value = item
+  // 初始关键词：用原始 model 或当前已匹配的 lenovo_matched_model
+  lenovoSearchQuery.value = item.lenovo_matched_model || stripBrandPrefix(item.model || '') || (item.model || '')
+  showLenovoSearchDialog.value = true
+  performLenovoSearch()
+  nextTick(() => lenovoSearchInputRef.value?.focus())
+}
+
+function closeLenovoSearchDialog() {
+  showLenovoSearchDialog.value = false
+  lenovoSearchTargetRow.value = null
+  lenovoSearchQuery.value = ''
+  lenovoSearchResults.value = []
+}
+
+function handleLenovoSearchInput() {
+  if (lenovoSearchTimeout) clearTimeout(lenovoSearchTimeout)
+  lenovoSearchTimeout = setTimeout(() => performLenovoSearch(), 250)
+}
+
+async function performLenovoSearch() {
+  const kw = (lenovoSearchQuery.value || '').trim()
+  if (!kw) {
+    lenovoSearchResults.value = []
+    return
+  }
+  lenovoSearchLoading.value = true
+  try {
+    // 设备大类：行内手动覆盖 > 行内自动识别 > 全局默认；为空时不限制
+    const row = lenovoSearchTargetRow.value
+    const cat = row ? getRowLenovoParams(row).device_category : ''
+    const resp = await axios.get(`${API_URL}/lenovo/search-classification`, {
+      params: { keyword: kw, device_category: cat || undefined, limit: 50 },
+    })
+    lenovoSearchResults.value = resp.data || []
+  } catch (e: any) {
+    console.error('Lenovo classification search failed:', e)
+    lenovoSearchResults.value = []
+  } finally {
+    lenovoSearchLoading.value = false
+  }
+}
+
+async function selectLenovoSearchResult(result: any) {
+  const targetRow = lenovoSearchTargetRow.value
+  if (!targetRow || !result) return
+
+  // 同名"原始品牌型号"全量批量应用（与端型下拉的 selectEndType 行为一致）
+  const targetOriginalBrandModel = targetRow.originalBrandModel || ''
+  const allRows = flattenSheetGroups()
+  const sameRows = targetOriginalBrandModel
+    ? allRows.filter(r => (r.originalBrandModel || '') === targetOriginalBrandModel)
+    : [targetRow]
+
+  // 把命中机型作为"手动锁定"，后端按这个 brand+model 重新查价（命中 exact）
+  // 并把端型 / 子类 等结果一并应用到所有同名"原始品牌型号"的行
+  for (const r of sameRows) {
+    r.lenovo_manual_lock_brand = result.brand || ''
+    r.lenovo_manual_lock_model = result.model || ''
+    r.lenovo_matched_brand = result.brand || ''
+    r.lenovo_matched_model = result.model || ''
+    r.lenovo_end_type = result.end_type || ''
+    r.lenovo_sub_category = result.sub_category || ''
+    r.lenovo_match_method = 'manual'
+    r.lenovo_classification_id = result.id
+  }
+
+  closeLenovoSearchDialog()
+
+  // 立即按手动锁定值批量重新查价
+  try {
+    await quoteLenovoRows(sameRows)
+  } finally {
+    setSheetGroupsFromRows(allRows)
+    if (activeSheetName.value) tableData.value = sheetGroups.value[activeSheetName.value] || []
+    triggerRef(tableData)
+    const endTypeNote = result.end_type ? `，端型「${result.end_type}」` : ''
+    ElMessage.success(
+      `已为 ${sameRows.length} 个同型号条目应用匹配型号「${result.model}」${endTypeNote}`
+    )
+  }
+
+  // 如果机型库 result 已有 end_type，入队待批量确认（不再立即弹窗）
+  if (result.end_type) {
+    queueAliasFromManualMatch(targetRow, result, sameRows.length)
+  }
+}
+
+/**
+ * 用户在「匹配型号」搜索弹窗里手动选了机型库中已有 end_type 的记录
+ * → 把「原始品牌型号 → 标准记录」入队等待批量确认
+ */
+function queueAliasFromManualMatch(row: any, result: any, affectedCount: number) {
+  const rawBrandModel = row?.originalBrandModel || ''
+  if (!rawBrandModel || !result?.model || !result?.end_type) return
+  queuePendingAlias({
+    id: `${rawBrandModel}|${(result.device_category || '').toLowerCase()}|${(result.model || '').toLowerCase()}`,
+    rawBrandModel,
+    device_category: result.device_category,
+    brand: result.brand || '',
+    model: result.model,
+    end_type: result.end_type,
+    sub_category: result.sub_category || null,
+    source: 'manual-match',
+    affected_rows: affectedCount,
+  })
+}
+
+// ============ 批量确认弹窗：打开、关闭、确认、跳过 ============
+
+function openPendingAliasesDialog(): Promise<'navigate' | 'cancel'> {
+  // 默认全选所有待确认项
+  selectedAliasIds.value = new Set(pendingAliases.value.map(a => a.id))
+  showPendingAliasesDialog.value = true
+  return new Promise(resolve => {
+    _pendingAliasesResolver = resolve
+  })
+}
+
+function closePendingAliasesDialog() {
+  showPendingAliasesDialog.value = false
+  if (_pendingAliasesResolver) {
+    _pendingAliasesResolver('cancel')
+    _pendingAliasesResolver = null
+  }
+}
+
+const isAllAliasesSelected = computed(() => {
+  return pendingAliases.value.length > 0
+    && selectedAliasIds.value.size === pendingAliases.value.length
+})
+const isPartialAliasesSelected = computed(() => {
+  const n = selectedAliasIds.value.size
+  return n > 0 && n < pendingAliases.value.length
+})
+
+function toggleAllAliasesSelected() {
+  if (isAllAliasesSelected.value) {
+    selectedAliasIds.value = new Set()
+  } else {
+    selectedAliasIds.value = new Set(pendingAliases.value.map(a => a.id))
+  }
+}
+
+function toggleAliasSelected(id: string) {
+  const next = new Set(selectedAliasIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selectedAliasIds.value = next
+}
+
+// 从队列中移除选中（"批量删除选中"按钮）
+function removePendingAliases() {
+  if (selectedAliasIds.value.size === 0) return
+  pendingAliases.value = pendingAliases.value.filter(a => !selectedAliasIds.value.has(a.id))
+  selectedAliasIds.value = new Set()
+}
+
+// 全部跳过：不写库，但允许导航
+function skipAllPendingAliases() {
+  pendingAliases.value = []
+  selectedAliasIds.value = new Set()
+  showPendingAliasesDialog.value = false
+  if (_pendingAliasesResolver) {
+    _pendingAliasesResolver('navigate')
+    _pendingAliasesResolver = null
+  }
+}
+
+// 记住选中：批量调 upsert，完成后清空队列并允许导航
+async function confirmSelectedAliases() {
+  if (selectedAliasIds.value.size === 0) return
+  pendingAliasesProcessing.value = true
+  const toWrite = pendingAliases.value.filter(a => selectedAliasIds.value.has(a.id))
+  let success = 0
+  let failed = 0
+  try {
+    // 串行 upsert（保持简单 + 显式错误处理）
+    for (const item of toWrite) {
+      try {
+        await axios.post(`${API_URL}/lenovo/framework-models/upsert`, {
+          device_category: item.device_category,
+          brand: item.brand,
+          model: item.model,
+          end_type: item.end_type,
+          sub_category: item.sub_category || null,
+          alias_raw: item.rawBrandModel,
+          notes: item.source === 'end-type'
+            ? '由用户在「智能匹配」端型列手动确认后批量回写'
+            : '由用户在「匹配型号」搜索弹窗手动确认后批量回写',
+        })
+        success++
+      } catch (e) {
+        console.error('Upsert failed for', item, e)
+        failed++
+      }
+    }
+    if (failed > 0) {
+      ElMessage.warning(`已记住 ${success} 条，${failed} 条失败（详见控制台）`)
+    } else {
+      ElMessage.success(`已记住 ${success} 条对应关系到机型库`)
+    }
+  } finally {
+    pendingAliasesProcessing.value = false
+    pendingAliases.value = []
+    selectedAliasIds.value = new Set()
+    showPendingAliasesDialog.value = false
+    if (_pendingAliasesResolver) {
+      _pendingAliasesResolver('navigate')
+      _pendingAliasesResolver = null
+    }
+  }
+}
+
+function clearLenovoManualLock(item: any) {
+  if (!item) return
+  item.lenovo_manual_lock_brand = ''
+  item.lenovo_manual_lock_model = ''
+  item.lenovo_match_method = 'none'  // 让 quoteLenovoRows 后续覆盖
+  // 立即用原始 model 重新跑自动报价
+  quoteLenovoRows([item]).then(() => triggerRef(tableData))
+}
+
+// ============ 联想框架：端型 下拉选择 ============
+
+async function ensureEndTypeOptions(category: string) {
+  if (!category) {
+    endTypeOptions.value = []
+    return
+  }
+  if (endTypeOptionsCache.value[category]) {
+    endTypeOptions.value = endTypeOptionsCache.value[category]
+    return
+  }
+  endTypeLoading.value = true
+  try {
+    const resp = await axios.get(`${API_URL}/lenovo/end-types`, {
+      params: { device_category: category },
+    })
+    const list = (resp.data as string[]) || []
+    endTypeOptionsCache.value[category] = list
+    endTypeOptions.value = list
+  } catch (e) {
+    console.error('Load lenovo end types failed:', e)
+    endTypeOptions.value = []
+  } finally {
+    endTypeLoading.value = false
+  }
+}
+
+async function openEndTypeDropdown(item: any, event: MouseEvent) {
+  event.stopPropagation()
+  if (!item) return
+  const target = event.currentTarget as HTMLElement
+  const rect = target.getBoundingClientRect()
+  endTypeDropdownPosition.value = {
+    top: rect.bottom + 4 + 'px',
+    left: rect.left + 'px',
+  }
+  endTypeDropdownTarget.value = item
+  endTypeDropdownVisible.value = true
+  const cat = getRowLenovoParams(item).device_category
+  await ensureEndTypeOptions(cat)
+}
+
+function closeEndTypeDropdown() {
+  endTypeDropdownVisible.value = false
+  endTypeDropdownTarget.value = null
+}
+
+async function selectEndType(endType: string) {
+  const targetRow = endTypeDropdownTarget.value
+  if (!targetRow || !endType) return closeEndTypeDropdown()
+
+  const targetOriginalBrandModel = targetRow.originalBrandModel || ''
+
+  // 找出 sheetGroups 全集中所有"原始品牌型号"相同的行
+  const allRows = flattenSheetGroups()
+  const sameRows = targetOriginalBrandModel
+    ? allRows.filter(r => (r.originalBrandModel || '') === targetOriginalBrandModel)
+    : [targetRow]
+
+  // 应用端型锁定
+  for (const r of sameRows) {
+    r.lenovo_manual_end_type = endType
+    r.lenovo_end_type = endType
+    r.lenovo_match_method = 'manual'
+  }
+
+  // 保留 dialog 关闭前的快照
+  const snapshotRow = targetRow
+  closeEndTypeDropdown()
+
+  // 重新批量报价（buildLenovoQuoteRequest 会传 force_end_type）
+  try {
+    await quoteLenovoRows(sameRows)
+  } finally {
+    setSheetGroupsFromRows(allRows)
+    if (activeSheetName.value) tableData.value = sheetGroups.value[activeSheetName.value] || []
+    triggerRef(tableData)
+    ElMessage.success(`已为 ${sameRows.length} 个同型号条目设置端型：${endType}`)
+  }
+
+  // 把对应关系入队，等用户点"下一步：价格调整"时统一弹窗批量确认
+  queueAliasFromEndTypeChange(snapshotRow, endType, sameRows.length)
+}
+
+/**
+ * 用户在「端型」下拉里手动选了端型 → 把「原始品牌型号 → 标准记录」入队
+ * （不立即弹窗，统一在 goToPriceAdjustment 前批量确认）
+ */
+function queueAliasFromEndTypeChange(row: any, endType: string, affectedCount: number) {
+  if (!row) return
+  const p = getRowLenovoParams(row)
+  const device_category = p.device_category
+  const brand = row.lenovo_matched_brand || row.manufacturer || ''
+  const model = row.lenovo_matched_model || stripBrandPrefix(row.model || '') || row.model || ''
+  const rawBrandModel = row.originalBrandModel || ''
+  if (!rawBrandModel || !model || !endType) return
+  queuePendingAlias({
+    id: `${rawBrandModel}|${device_category.toLowerCase()}|${model.toLowerCase()}`,
+    rawBrandModel,
+    device_category,
+    brand,
+    model,
+    end_type: endType,
+    sub_category: p.sub_category || null,
+    source: 'end-type',
+    affected_rows: affectedCount,
+  })
+}
+
+function clearLenovoManualEndType(item: any) {
+  if (!item) return
+  const targetOriginalBrandModel = item.originalBrandModel || ''
+  const allRows = flattenSheetGroups()
+  const sameRows = targetOriginalBrandModel
+    ? allRows.filter(r => (r.originalBrandModel || '') === targetOriginalBrandModel)
+    : [item]
+  for (const r of sameRows) {
+    r.lenovo_manual_end_type = ''
+    r.lenovo_match_method = 'none'
+  }
+  quoteLenovoRows(sameRows).then(() => {
+    setSheetGroupsFromRows(allRows)
+    if (activeSheetName.value) tableData.value = sheetGroups.value[activeSheetName.value] || []
+    triggerRef(tableData)
+  })
 }
 
 // Handle search input
@@ -1493,8 +2712,8 @@ function onSearchDataSourceChange() {
 
 // Select search result
 async function selectSearchResult(result: any) {
-  const index = activeModelIndex.value
-  if (index === null || index < 0 || index >= tableData.value.length) return
+  const activeRow = activeModelRow.value
+  if (!activeRow) return
 
   const selectedModel = result.model_number || result.model
   const devicePrice = result.device_price || 0
@@ -1508,8 +2727,8 @@ async function selectSearchResult(result: any) {
 
   // 原始单价 = 设备价格 × 费率（未含税）
   const originalPrice = devicePrice * rate
-  const originalModel = tableData.value[index].model  // 原始型号（来自Excel"设备/软件型号"列）
-  const originalManufacturer = tableData.value[index].originalManufacturer || ''  // 原始厂商（来自Excel"厂商"列，永不修改）
+  const originalModel = activeRow.model  // 原始型号（来自Excel"设备/软件型号"列）
+  const originalManufacturer = activeRow.originalManufacturer || ''  // 原始厂商（来自Excel"厂商"列，永不修改）
 
   console.log('手动匹配 - 原始值:', { originalManufacturer, originalModel })
   console.log('手动匹配 - 匹配值:', { manufacturer: result.manufacturer, model: result.model_number || result.model })
@@ -1638,25 +2857,53 @@ function calculateSimilarity(str1: string, str2: string): number {
 
 // Export data
 async function exportData() {
-  const exportDataItems = tableData.value.map(item => ({
-    '厂商': item.manufacturer,
-    '设备/软件型号': item.model,
-    '设备/软件分类': item.deviceCategory,
-    '服务级别': item.serviceLevel,
-    '匹配型号': item.matchedModel || '未匹配',
-    '置信度': item.matchRate ? `${Math.round(item.matchRate)}%` : '0%',
-    '原始单价': item.originalPrice ? `¥${item.originalPrice.toFixed(2)}` : '-',
-    '服务系数': item.serviceLevelCoefficient !== 1 ? item.serviceLevelCoefficient.toFixed(2) : '-',
-    '调整后单价': item.price ? `¥${item.price.toFixed(2)}` : '-'
-  }))
+  const isLenovo = quoteMode.value === 'lenovo'
+  const exportDataItems = tableData.value.map(item => {
+    if (isLenovo) {
+      const params = getRowLenovoParams(item)
+      return {
+        '厂商': item.manufacturer,
+        '设备/软件型号': item.model,
+        '设备大类': params.device_category,
+        '子类': item.lenovo_sub_category || params.sub_category || '-',
+        'SLA': params.sla,
+        '驱动器配置': params.device_category === '磁带库' ? params.drive_config : '-',
+        '含SSD': params.device_category === '服务器' ? (params.includes_ssd ? '是' : '否') : '-',
+        '报价类型': params.device_category === '服务器' ? params.package_type : '-',
+        '含硬盘不返还': params.device_category === '服务器' || params.device_category === '小型机'
+          ? (params.includes_disk ? '是' : '否') : '-',
+        '含硬盘不回收': params.device_category === '存储' ? (params.includes_disk_no_return ? '是' : '否') : '-',
+        '端型': item.lenovo_end_type || '-',
+        '命中方式': formatLenovoMethod(item.lenovo_match_method),
+        '数量': Number(item.quantity) || 1,
+        '单价': item.lenovo_unit_price ? `¥${Number(item.lenovo_unit_price).toFixed(2)}` : '-',
+        '总价': item.lenovo_total_price ? `¥${Number(item.lenovo_total_price).toFixed(2)}` : '-',
+        '状态': item.lenovo_status || '-',
+        '说明': item.lenovo_message || '',
+      }
+    }
+    return {
+      '厂商': item.manufacturer,
+      '设备/软件型号': item.model,
+      '设备/软件分类': item.deviceCategory,
+      '服务级别': item.serviceLevel,
+      '匹配型号': item.matchedModel || '未匹配',
+      '置信度': item.matchRate ? `${Math.round(item.matchRate)}%` : '0%',
+      '原始单价': item.originalPrice ? `¥${item.originalPrice.toFixed(2)}` : '-',
+      '服务系数': item.serviceLevelCoefficient !== 1 ? item.serviceLevelCoefficient.toFixed(2) : '-',
+      '调整后单价': item.price ? `¥${item.price.toFixed(2)}` : '-'
+    }
+  })
 
   // Use XLSX to export - 处理不同的模块导出格式
   const xlsxModule = await import('xlsx')
   const XLSX = xlsxModule.default || xlsxModule
   const ws = XLSX.utils.json_to_sheet(exportDataItems)
   const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, ws, '匹配结果')
-  XLSX.writeFile(wb, '智能匹配结果.xlsx')
+  const sheetName = isLenovo ? '联想框架报价结果' : '匹配结果'
+  XLSX.utils.book_append_sheet(wb, ws, sheetName)
+  const fileName = isLenovo ? '联想框架报价结果.xlsx' : '智能匹配结果.xlsx'
+  XLSX.writeFile(wb, fileName)
 }
 </script>
 
@@ -2669,6 +3916,20 @@ async function exportData() {
   overflow: auto;
   position: relative;
   min-height: 400px;
+  /* 虚拟滚动需要可计算的容器高度（clientHeight） */
+  height: calc(100vh - 360px);
+  max-height: calc(100vh - 360px);
+}
+
+/* 虚拟列表 spacer 行：去除任何边距 / padding，避免影响行高度计算 */
+.data-table tbody tr.virtual-spacer {
+  background: transparent !important;
+  border: none !important;
+  transition: none;
+}
+.data-table tbody tr.virtual-spacer td {
+  padding: 0;
+  border: none;
 }
 
 .data-table {
@@ -3347,6 +4608,123 @@ async function exportData() {
   background: #4b6189;
 }
 
+/* 联想框架报价：模式切换 / 列 / 对话框 */
+.quote-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  background: rgba(20, 30, 48, 0.6);
+  border: 1px solid rgba(75, 97, 137, 0.4);
+  border-radius: 0.5rem;
+  color: #c7d3e6;
+}
+
+.quote-mode-toggle .mode-option {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 0.35rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: #8aa0c0;
+  transition: all 0.15s;
+}
+
+.quote-mode-toggle .mode-option input[type="radio"] {
+  display: none;
+}
+
+.quote-mode-toggle .mode-option.active {
+  background: #2563eb;
+  color: #fff;
+  font-weight: 600;
+}
+
+.lenovo-config-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.85rem;
+  background: rgba(20, 30, 48, 0.6);
+  border: 1px solid rgba(75, 97, 137, 0.4);
+  border-radius: 0.5rem;
+  color: #c7d3e6;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.lenovo-config-btn:hover {
+  background: rgba(37, 99, 235, 0.15);
+  border-color: #2563eb;
+  color: #fff;
+}
+
+.col-end-type { width: 5rem; text-align: center; }
+.col-sub-category { width: 7rem; text-align: center; }
+.col-match-method { width: 6rem; text-align: center; }
+
+.lenovo-end-type-badge {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 0.35rem;
+  background: rgba(37, 99, 235, 0.18);
+  color: #74a8ff;
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+
+.match-method-badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 0.35rem;
+  font-size: 0.75rem;
+}
+.match-method-badge.method-exact { background: rgba(34, 197, 94, 0.18); color: #4ade80; }
+.match-method-badge.method-fuzzy { background: rgba(234, 179, 8, 0.18); color: #facc15; }
+.match-method-badge.method-pattern { background: rgba(168, 85, 247, 0.18); color: #c084fc; }
+.match-method-badge.method-none { background: rgba(239, 68, 68, 0.18); color: #f87171; }
+
+.lenovo-config-dialog {
+  max-width: 720px;
+}
+
+.lenovo-config-tip {
+  color: #8aa0c0;
+  margin: 0 0 1rem 0;
+  font-size: 0.85rem;
+}
+
+.lenovo-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.85rem 1.2rem;
+}
+
+.lenovo-form-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.lenovo-form-item label {
+  font-size: 0.8rem;
+  color: #8aa0c0;
+}
+
+.lenovo-form-item input,
+.lenovo-form-item select {
+  padding: 0.5rem 0.75rem;
+  background: rgba(20, 30, 48, 0.8);
+  border: 1px solid rgba(75, 97, 137, 0.4);
+  border-radius: 0.4rem;
+  color: #e3eaf5;
+  font-size: 0.88rem;
+}
+
+.text-muted { color: #6b7d96; }
+
 /* Responsive */
 @media (max-width: 1024px) {
   .nav-links {
@@ -3356,5 +4734,313 @@ async function exportData() {
   .table-container {
     overflow-x: auto;
   }
+}
+
+/* 联想框架"端型"列：单元格 wrapper */
+.end-type-cell-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.lenovo-end-type-badge.clickable {
+  cursor: pointer;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  transition: filter 0.15s, box-shadow 0.15s;
+}
+.lenovo-end-type-badge.clickable:hover {
+  filter: brightness(1.15);
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.45);
+}
+.lenovo-end-type-badge.empty {
+  color: #94a3b8;
+  background: rgba(148, 163, 184, 0.12) !important;
+  border: 1px dashed rgba(148, 163, 184, 0.4);
+}
+.lenovo-end-type-badge.manual-locked {
+  outline: 1px solid #22c55e;
+}
+.lenovo-end-type-badge .dropdown-icon {
+  font-size: 1rem;
+  opacity: 0.7;
+}
+</style>
+
+<!-- 端型下拉浮层（Teleport 到 body，需要 non-scoped 样式） -->
+<style>
+.end-type-dropdown-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1999;
+}
+.end-type-dropdown {
+  position: fixed;
+  z-index: 2000;
+  min-width: 160px;
+  background: #1e232f;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+  padding: 8px 0;
+  color: #e2e8f0;
+  font-family: "Noto Sans SC", sans-serif;
+  font-size: 0.8rem;
+}
+.end-type-dropdown .dropdown-title {
+  padding: 4px 12px 8px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+  text-transform: uppercase;
+  border-bottom: 1px solid #2a3447;
+  margin-bottom: 4px;
+}
+.end-type-dropdown .dropdown-list {
+  max-height: 280px;
+  overflow-y: auto;
+}
+.end-type-dropdown .dropdown-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.end-type-dropdown .dropdown-option:hover {
+  background: rgba(96, 165, 250, 0.12);
+}
+.end-type-dropdown .dropdown-option.active {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+.end-type-dropdown .dropdown-option .material-symbols-outlined {
+  font-size: 1rem;
+}
+.end-type-dropdown .dropdown-loading,
+.end-type-dropdown .dropdown-empty {
+  padding: 16px;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.end-type-dropdown .spinning {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ============ 对应关系批量确认弹窗 ============ */
+.alias-batch-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2050;
+  background: rgba(15, 23, 42, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  font-family: "Noto Sans SC", sans-serif;
+}
+.alias-batch-dialog {
+  background: #1e232f;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  width: min(1100px, 100%);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  color: #e2e8f0;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+}
+.alias-batch-header {
+  padding: 1.25rem 1.5rem 1rem;
+  border-bottom: 1px solid #2a3447;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+.alias-batch-header h3 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+  font-weight: 600;
+}
+.alias-batch-tip {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+.alias-batch-tip strong { color: #fbbf24; }
+.alias-batch-close {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px;
+}
+.alias-batch-close:hover { color: #f87171; }
+
+.alias-batch-body {
+  flex: 1;
+  overflow: auto;
+  padding: 0 1.5rem;
+  min-height: 200px;
+}
+.alias-batch-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+.alias-batch-table thead {
+  position: sticky;
+  top: 0;
+  background: #1e232f;
+  z-index: 1;
+}
+.alias-batch-table th {
+  padding: 0.6rem 0.5rem;
+  font-weight: 600;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.7rem;
+  text-align: left;
+  border-bottom: 1px solid #2a3447;
+  white-space: nowrap;
+}
+.alias-batch-table td {
+  padding: 0.55rem 0.5rem;
+  border-bottom: 1px solid rgba(35, 47, 72, 0.5);
+  vertical-align: middle;
+}
+.alias-batch-table tbody tr {
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.alias-batch-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.alias-batch-table tbody tr.selected {
+  background: rgba(34, 197, 94, 0.08);
+}
+.alias-batch-table .col-check { width: 36px; text-align: center; }
+.alias-batch-table .col-arrow { width: 24px; text-align: center; color: #64748b; }
+.alias-batch-table .col-rows { width: 78px; text-align: center; }
+.alias-batch-table .col-src { width: 110px; }
+.alias-batch-table .col-endtype { width: 90px; }
+.alias-batch-table .col-cat { width: 110px; }
+.alias-batch-table .mono { font-family: monospace; color: #cbd5e1; }
+
+/* checkbox circle */
+.batch-checkbox {
+  display: inline-flex;
+  cursor: pointer;
+  user-select: none;
+}
+.cb-circle {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1.5px solid #475569;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #0f1525;
+  transition: all 0.12s;
+}
+.cb-circle.checked {
+  background: #22c55e;
+  border-color: #22c55e;
+}
+.cb-circle.indeterminate {
+  background: #3b82f6;
+  border-color: #3b82f6;
+}
+.cb-circle .material-symbols-outlined {
+  font-size: 14px;
+  color: #ffffff;
+}
+
+.alias-end-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  background: rgba(34, 197, 94, 0.18);
+  color: #22c55e;
+}
+.alias-src-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+}
+.alias-src-badge.end-type { background: rgba(59, 130, 246, 0.18); color: #60a5fa; }
+.alias-src-badge.manual-match { background: rgba(245, 158, 11, 0.18); color: #fbbf24; }
+
+.alias-batch-body .empty-state {
+  padding: 3rem;
+  text-align: center;
+  color: #64748b;
+}
+
+.alias-batch-footer {
+  padding: 0.9rem 1.5rem 1.1rem;
+  border-top: 1px solid #2a3447;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.alias-batch-footer .footer-info {
+  color: #94a3b8;
+  font-size: 0.8rem;
+}
+.alias-batch-footer .footer-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.alias-batch-footer button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: filter 0.12s;
+}
+.alias-batch-footer button .material-symbols-outlined { font-size: 16px; }
+.alias-batch-footer button:disabled { opacity: 0.45; cursor: not-allowed; }
+.alias-batch-footer .btn-primary { background: #3b82f6; color: white; }
+.alias-batch-footer .btn-primary:not(:disabled):hover { filter: brightness(1.1); }
+.alias-batch-footer .btn-secondary {
+  background: #1e232f; color: #e2e8f0; border-color: #2a3447;
+}
+.alias-batch-footer .btn-secondary:not(:disabled):hover { background: #2a3447; }
+.alias-batch-footer .btn-danger {
+  background: rgba(239, 68, 68, 0.15);
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+.alias-batch-footer .btn-danger:not(:disabled):hover { background: rgba(239, 68, 68, 0.25); }
+.alias-batch-footer .spinning {
+  animation: spin 1s linear infinite;
 }
 </style>

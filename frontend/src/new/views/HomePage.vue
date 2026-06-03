@@ -51,6 +51,10 @@
             <span class="material-symbols-outlined">local_shipping</span>
             <span class="item-text">搬迁服务测算模型</span>
           </a>
+          <a href="#" class="menu-item" @click.prevent="currentView = 'lenovo-quote-model'" :class="{ 'nav-active': currentView === 'lenovo-quote-model' }">
+            <span class="material-symbols-outlined">corporate_fare</span>
+            <span class="item-text">联想框架报价模型</span>
+          </a>
         </div>
       </div>
 
@@ -135,7 +139,7 @@
         </div>
       </header>
 
-      <div class="content-area" :class="{ 'embedded-view': currentView === 'product-database' || currentView === 'quote-history' || currentView === 'onsite-calculator' || currentView === 'relocation-calculator', 'draft-view': currentView === 'draft-box', 'chat-active': currentView === 'home' && chatMode }">
+      <div class="content-area" :class="{ 'embedded-view': currentView === 'product-database' || currentView === 'quote-history' || currentView === 'onsite-calculator' || currentView === 'relocation-calculator' || currentView === 'lenovo-quote-model', 'draft-view': currentView === 'draft-box', 'chat-active': currentView === 'home' && chatMode }">
         <!-- Product Database View -->
         <ProductDatabase v-if="currentView === 'product-database'" @go-home="currentView = 'home'" />
 
@@ -152,6 +156,9 @@
 
         <!-- Relocation Service Calculator View -->
         <RelocationServiceCalculator v-if="currentView === 'relocation-calculator'" />
+
+        <!-- 联想框架报价模型 -->
+        <LenovoQuoteModel v-if="currentView === 'lenovo-quote-model'" />
 
         <!-- Home Content -->
         <div v-if="currentView === 'home'" class="home-content">
@@ -468,6 +475,7 @@ import QuoteHistory from './QuoteHistory.vue'
 import DraftBox from '../components/DraftBox.vue'
 import OnsiteServiceCalculator from '../components/pricing/OnsiteServiceCalculator.vue'
 import RelocationServiceCalculator from '../components/pricing/RelocationServiceCalculator.vue'
+import LenovoQuoteModel from '../components/pricing/LenovoQuoteModel.vue'
 
 const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5002'
 const API_BASE = API_URL.replace(/\/$/, '')

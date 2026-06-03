@@ -44,8 +44,10 @@
       <table class="data-table">
         <thead>
           <tr>
-            <th>服务级别</th>
-            <th>响应时效</th>
+            <th>服务等级</th>
+            <th>SLA 组合</th>
+            <th class="col-definition">释义</th>
+            <th class="col-aliases">别名</th>
             <th>适用产品</th>
             <th>服务级别系数值</th>
             <th>操作</th>
@@ -54,7 +56,23 @@
         <tbody>
           <tr v-for="level in pagedServiceLevelList" :key="level.id">
             <td><span class="level-badge">{{ level.service_level || level.level_code }}</span></td>
-            <td>{{ level.response_time }}</td>
+            <td><span class="sla-combo">{{ level.response_time }}</span></td>
+            <td class="col-definition">
+              <span class="definition-text" :title="level.definition || ''">
+                {{ level.definition || '-' }}
+              </span>
+            </td>
+            <td class="col-aliases">
+              <div class="aliases-cell">
+                <span v-if="!level.aliases || level.aliases.length === 0" class="no-products">-</span>
+                <span v-for="(alias, idx) in (level.aliases || []).slice(0, 3)" :key="idx" class="alias-tag">
+                  {{ alias }}
+                </span>
+                <span v-if="(level.aliases || []).length > 3" class="more-products">
+                  +{{ (level.aliases || []).length - 3 }}
+                </span>
+              </div>
+            </td>
             <td>
               <div class="applicable-products">
                 <span v-if="getApplicableProducts(level).length === 0" class="no-products">-</span>
@@ -118,19 +136,44 @@
     <div v-if="dialogVisible" class="dialog-overlay" @click="closeDialog">
       <div class="dialog" @click.stop>
         <div class="dialog-header">
-          <h3>服务级别设置</h3>
+          <h3>{{ form.id ? '编辑' : '新增' }}服务等级</h3>
           <button class="close-btn" @click="closeDialog">
             <span class="material-symbols-outlined">close</span>
           </button>
         </div>
         <div class="dialog-body">
           <div class="form-group">
-            <label>服务级别</label>
-            <input v-model="form.service_level" placeholder="例如: 7*24*4" />
+            <label>服务等级</label>
+            <input v-model="form.service_level" placeholder="例如: 基础级 / 标准级 / 增强级 / 高级 / 关键业务级" />
           </div>
           <div class="form-group">
-            <label>响应时效</label>
-            <input v-model="form.response_time" placeholder="例如: 4小时到达现场" />
+            <label>SLA 组合</label>
+            <input v-model="form.response_time" placeholder="例如: 7×24×NBD / 7×24×4 / 5×8×NBD" />
+          </div>
+          <div class="form-group">
+            <label>释义</label>
+            <textarea v-model="form.definition" rows="2"
+                      placeholder="例如：全天候受理（含夜间及节假日）；备件下一工作日送达。"></textarea>
+          </div>
+          <div class="form-group">
+            <label>别名 <span class="form-hint">（用于匹配源数据中各种写法；按回车或逗号添加）</span></label>
+            <div class="aliases-editor">
+              <div class="aliases-list">
+                <span v-for="(alias, idx) in form.aliases" :key="idx" class="alias-tag editable">
+                  {{ alias }}
+                  <button class="remove-alias" @click="removeAlias(idx)">
+                    <span class="material-symbols-outlined">close</span>
+                  </button>
+                </span>
+              </div>
+              <input
+                v-model="aliasInput"
+                @keydown.enter.prevent="addAlias"
+                @keydown.tab.prevent="addAlias"
+                @blur="addAlias"
+                placeholder="如：7*24*NBD、7*24*ND维保 …"
+              />
+            </div>
           </div>
           <div class="form-group">
             <label>适用产品</label>
@@ -243,9 +286,34 @@ const form = ref({
   id: null as number | null,
   service_level: '',
   response_time: '',
+  definition: '' as string | null,
+  aliases: [] as string[],
   coefficient: 1.0,
   applicable_products: '' as string | null
 })
+
+// 别名输入框暂存
+const aliasInput = ref('')
+
+function addAlias() {
+  const v = (aliasInput.value || '').trim().replace(/,$/, '')
+  if (!v) {
+    aliasInput.value = ''
+    return
+  }
+  // 支持一次粘贴多个，按逗号/分号/空格切
+  const parts = v.split(/[,，;；]+/).map(s => s.trim()).filter(Boolean)
+  for (const p of parts) {
+    if (!form.value.aliases.includes(p)) {
+      form.value.aliases.push(p)
+    }
+  }
+  aliasInput.value = ''
+}
+
+function removeAlias(idx: number) {
+  form.value.aliases.splice(idx, 1)
+}
 
 // Template data
 const templateHeaders = ['服务级别', '响应时效', '服务级别系数值']
@@ -338,6 +406,8 @@ function openDialog(row?: any) {
       id: row.id,
       service_level: row.service_level || row.level_code || '',
       response_time: row.response_time || '',
+      definition: row.definition || '',
+      aliases: Array.isArray(row.aliases) ? [...row.aliases] : [],
       coefficient: Number(row.coefficient) || 1.0,
       applicable_products: row.applicable_products || null
     }
@@ -347,10 +417,13 @@ function openDialog(row?: any) {
       id: null,
       service_level: '',
       response_time: '',
+      definition: '',
+      aliases: [],
       coefficient: 1.0,
       applicable_products: null
     }
   }
+  aliasInput.value = ''
   showProductDropdown.value = false
   productSearchQuery.value = ''
   dialogVisible.value = true
@@ -363,8 +436,11 @@ function closeDialog() {
 
 // Save service level
 async function saveServiceLevel() {
+  // 保存前把别名输入框里残余内容也并入
+  addAlias()
+
   if (!form.value.service_level || !form.value.response_time) {
-    alert('服务级别和响应时效不能为空')
+    alert('服务等级和 SLA 组合不能为空')
     return
   }
 
@@ -377,6 +453,8 @@ async function saveServiceLevel() {
     const payload = {
       level_code: form.value.service_level,
       response_time: form.value.response_time,
+      definition: form.value.definition || null,
+      aliases: form.value.aliases || [],
       coefficient: form.value.coefficient,
       applicable_products: selectedProducts.value.length > 0 ? JSON.stringify(selectedProducts.value) : null
     }
@@ -1079,5 +1157,113 @@ onMounted(() => {
 
 .dropdown-item:last-child {
   border-radius: 0 0 0.375rem 0.375rem;
+}
+
+/* SLA 标准化 - 新字段样式 */
+.col-definition {
+  max-width: 22rem;
+}
+
+.definition-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #94a3b8;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.col-aliases {
+  max-width: 18rem;
+}
+
+.aliases-cell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.alias-tag {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  background: rgba(168, 85, 247, 0.18);
+  color: #c084fc;
+  border-radius: 0.3rem;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.alias-tag.editable {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding-right: 0.25rem;
+}
+
+.alias-tag .remove-alias {
+  background: transparent;
+  border: none;
+  color: #c084fc;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+}
+
+.alias-tag .remove-alias .material-symbols-outlined {
+  font-size: 14px;
+}
+
+.sla-combo {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-weight: 600;
+  color: #74a8ff;
+}
+
+.aliases-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  background: rgba(20, 30, 48, 0.6);
+  border: 1px solid rgba(75, 97, 137, 0.4);
+  border-radius: 0.4rem;
+}
+
+.aliases-editor .aliases-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  min-height: 0;
+}
+
+.aliases-editor input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #e3eaf5;
+  font-size: 0.88rem;
+  padding: 0.3rem 0.1rem;
+}
+
+.form-hint {
+  color: #6b7d96;
+  font-weight: normal;
+  font-size: 0.75rem;
+  margin-left: 0.35rem;
+}
+
+.form-group textarea {
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  background: rgba(20, 30, 48, 0.8);
+  border: 1px solid rgba(75, 97, 137, 0.4);
+  border-radius: 0.4rem;
+  color: #e3eaf5;
+  font-size: 0.88rem;
+  font-family: inherit;
+  resize: vertical;
 }
 </style>

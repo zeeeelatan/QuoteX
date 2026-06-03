@@ -9,3 +9,13 @@ from .relocation_vehicle import RelocationVehicle
 from .china_city_tier import ChinaCityTier
 from .manufacturer import Manufacturer
 from .device_field_config import DeviceFieldConfig
+from .lenovo_framework import (
+    LenovoClassification,
+    LenovoPatternRule,
+    LenovoPriceTapeLibrary,
+    LenovoPriceNetwork,
+    LenovoPriceServer,
+    LenovoPriceStorage,
+    LenovoPriceMinicomputer,
+    LenovoPriceInspection,
+)
