@@ -8,6 +8,7 @@ from app.models.manufacturer import Manufacturer
 from app.schemas.manufacturer import (
     ManufacturerCreate, ManufacturerUpdate, ManufacturerOut, ManufacturerListResponse
 )
+from app.matching import invalidate_manufacturer_cache
 
 router = APIRouter(prefix="/manufacturers", tags=["品牌管理"])
 
@@ -77,6 +78,7 @@ def create_manufacturer(data: ManufacturerCreate, db: Session = Depends(get_db))
     db.add(m)
     db.commit()
     db.refresh(m)
+    invalidate_manufacturer_cache()
     return manufacturer_to_dict(m)
 
 
@@ -99,6 +101,7 @@ def update_manufacturer(manufacturer_id: int, data: ManufacturerUpdate, db: Sess
     m.updated_at = datetime.now()
     db.commit()
     db.refresh(m)
+    invalidate_manufacturer_cache()
     return manufacturer_to_dict(m)
 
 
@@ -109,6 +112,7 @@ def delete_manufacturer(manufacturer_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="品牌不存在")
     db.delete(m)
     db.commit()
+    invalidate_manufacturer_cache()
     return {"ok": True, "message": "品牌删除成功"}
 
 
@@ -125,6 +129,7 @@ def add_alias(manufacturer_id: int, alias: str = Query(...), db: Session = Depen
         m.updated_at = datetime.now()
         db.commit()
         db.refresh(m)
+        invalidate_manufacturer_cache()
     return manufacturer_to_dict(m)
 
 
@@ -141,6 +146,7 @@ def remove_alias(manufacturer_id: int, alias: str = Query(...), db: Session = De
         m.updated_at = datetime.now()
         db.commit()
         db.refresh(m)
+        invalidate_manufacturer_cache()
     return manufacturer_to_dict(m)
 
 

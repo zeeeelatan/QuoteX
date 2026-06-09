@@ -9,6 +9,7 @@ from .relocation_vehicle import RelocationVehicle
 from .china_city_tier import ChinaCityTier
 from .manufacturer import Manufacturer
 from .device_field_config import DeviceFieldConfig
+from .semantic_noise_term import SemanticNoiseTerm
 from .lenovo_framework import (
     LenovoClassification,
     LenovoPatternRule,

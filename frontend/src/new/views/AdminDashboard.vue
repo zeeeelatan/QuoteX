@@ -81,6 +81,15 @@
           <a
             href="#"
             class="nav-item"
+            :class="{ active: activeModule === 'semantic-dict' }"
+            @click.prevent="switchModule('semantic-dict')"
+          >
+            <span class="material-symbols-outlined">spellcheck</span>
+            <span v-show="!sidebarCollapsed" class="nav-text">语义词典</span>
+          </a>
+          <a
+            href="#"
+            class="nav-item"
             :class="{ active: activeModule === 'personnel' }"
             @click.prevent="switchModule('personnel')"
           >
@@ -294,6 +303,11 @@
           <ManualMatchingManagement />
         </div>
 
+        <!-- 语义词典管理 -->
+        <div v-show="activeModule === 'semantic-dict'" class="module-content full-height">
+          <SemanticDictionaryManagement />
+        </div>
+
         <!-- 服务人员数据管理 -->
         <div v-show="activeModule === 'personnel'" class="module-content full-height">
           <ServicePersonnelManagement />
@@ -391,6 +405,7 @@ import ProductParameterManagement from '../components/admin/ProductParameterMana
 import GPUPriceManagement from '../components/admin/GPUPriceManagement.vue'
 import SparePartsManagement from '../components/admin/SparePartsManagement.vue'
 import ManualMatchingManagement from '../components/admin/ManualMatchingManagement.vue'
+import SemanticDictionaryManagement from '../components/admin/SemanticDictionaryManagement.vue'
 import SystemSettings from '../components/admin/SystemSettings.vue'
 import ServiceTermsManagement from '../components/admin/ServiceTermsManagement.vue'
 import ITInfrastructureLibrary from '../components/admin/ITInfrastructureLibrary.vue'
@@ -430,6 +445,7 @@ const moduleTitles: Record<string, string> = {
   gpu: 'GPU 价格管理',
   spare: '备件管理',
   manual: '手动匹配管理',
+  'semantic-dict': '语义词典管理',
   personnel: '服务人员数据管理',
   'single-service': '单次服务数据管理',
   outsourced: '驻场人员岗位及薪资管理',
@@ -454,6 +470,7 @@ const moduleDescriptions: Record<string, string> = {
   gpu: '管理 GPU 设备价格信息',
   spare: '管理备件库存和价格',
   manual: '管理手动匹配覆盖记录',
+  'semantic-dict': '管理智能匹配的设备类型/噪声词库，审核自动挖掘的候选词使其生效',
   personnel: '管理可用于项目报价的技术服务人员及其费率标准',
   'single-service': '管理单次服务报价数据，包含操作实施、安装调试、备件更换等服务项及定价标准',
   outsourced: '管理驻场人员岗位级别、能力要求及薪资标准',

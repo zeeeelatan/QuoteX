@@ -36,6 +36,7 @@ from app.routers import user_profile, auth
 from app.routers import ai_quote
 from app.routers import document_parser
 from app.routers import lenovo_framework
+from app.routers import semantic_term
 from app.seed_default_user import ensure_default_user
 
 app = FastAPI(title="智能报价系统API")
@@ -272,3 +273,4 @@ app.include_router(auth.router)
 app.include_router(ai_quote.router)
 app.include_router(document_parser.router)
 app.include_router(lenovo_framework.router)
+app.include_router(semantic_term.router)
