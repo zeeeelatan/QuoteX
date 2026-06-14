@@ -820,25 +820,38 @@ def _search_framework_models(
     limit: int,
     db: Session,
 ):
-    """共享：在 lenovo_framework_models 中模糊查询。"""
-    q = db.query(LenovoFrameworkModel)
-    if device_category:
-        q = q.filter(LenovoFrameworkModel.device_category == device_category)
+    """共享：在 lenovo_framework_models 中模糊查询。
+
+    device_category 作为「软过滤」：优先在该大类内查；若该大类查无结果
+    （常见于前端自动识别的大类不准，如把存储识别成服务器），则放宽大类再查一次，
+    避免把本应能模糊命中的型号（如 AS13000 系列）误隐藏。
+    """
     keyword = (keyword or "").strip()
-    if keyword:
-        kw = f"%{keyword}%"
-        q = q.filter(
-            or_(
-                LenovoFrameworkModel.model.ilike(kw),
-                LenovoFrameworkModel.brand.ilike(kw),
-                LenovoFrameworkModel.series.ilike(kw),
+
+    def _run(cat: Optional[str]):
+        q = db.query(LenovoFrameworkModel)
+        if cat:
+            q = q.filter(LenovoFrameworkModel.device_category == cat)
+        if keyword:
+            kw = f"%{keyword}%"
+            q = q.filter(
+                or_(
+                    LenovoFrameworkModel.model.ilike(kw),
+                    LenovoFrameworkModel.brand.ilike(kw),
+                    LenovoFrameworkModel.series.ilike(kw),
+                )
             )
-        )
-    # 有端型的优先（dc_inventory 留空的排在后面）
-    return q.order_by(
-        LenovoFrameworkModel.end_type.is_(None).asc(),
-        LenovoFrameworkModel.id.asc(),
-    ).limit(limit).all()
+        # 有端型的优先（dc_inventory 留空的排在后面）
+        return q.order_by(
+            LenovoFrameworkModel.end_type.is_(None).asc(),
+            LenovoFrameworkModel.id.asc(),
+        ).limit(limit).all()
+
+    rows = _run(device_category)
+    if not rows and device_category:
+        # 指定大类查无结果 → 放宽大类兜底，避免大类识别错误导致漏检
+        rows = _run(None)
+    return rows
 
 
 @router.get("/search-models")

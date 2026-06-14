@@ -148,6 +148,11 @@
                 <option value="low">仅显示低置信度</option>
                 <option value="unmatched">仅显示未匹配</option>
                 <option value="matched">仅显示已匹配</option>
+                <template v-if="quoteMode === 'lenovo'">
+                  <option value="lenovo_endtype_unmatched">端型未匹配</option>
+                  <option value="lenovo_method_manual">手动命名方式</option>
+                  <option value="lenovo_method_exact">精确命名方式</option>
+                </template>
               </select>
             </div>
             <div class="data-source-select" v-if="quoteMode === 'standard'">
@@ -238,6 +243,16 @@
                 </div>
               </div>
             </div>
+            <button
+              class="dedupe-btn"
+              :class="{ active: dedupeEnabled }"
+              @click="toggleDedupe"
+              :title="dedupeEnabled ? '已开启去重：相同「原始品牌型号」仅展示一条，再次点击恢复全部' : '开启后相同「原始品牌型号」仅展示一条，便于快速报价'"
+            >
+              <span class="material-symbols-outlined">filter_alt</span>
+              <span>去重</span>
+              <span v-if="dedupeEnabled && dedupeHiddenCount > 0" class="dedupe-count">-{{ dedupeHiddenCount }}</span>
+            </button>
           </div>
           <div class="table-controls-right">
             <button class="btn-danger" @click="deleteSelectedRows" :disabled="selectedRows.size === 0">
@@ -382,7 +397,7 @@
                         @click="openLenovoSearch(item)"
                         :title="'点击修改匹配型号'"
                       >
-                        {{ item.lenovo_matched_model || '未匹配' }}
+                        {{ lenovoDisplayModel(item) }}
                       </span>
                       <button
                         v-if="item.lenovo_manual_lock_model"
@@ -1031,13 +1046,39 @@ const isNavigating = ref(false)
 const matchingInProgress = ref(false)
 const matchingTotal = ref(0)
 const matchingCompleted = ref(0)
+// 匹配运行代号：每次启动匹配自增，老的在途任务据此自我终止（用于切换去重时安全重启）
+const matchGeneration = ref(0)
 const matchingProgress = computed(() => {
   if (!matchingTotal.value) return 0
   return Math.floor((matchingCompleted.value / matchingTotal.value) * 100)
 })
 
 // Filter
-const filterStatus = ref<'all' | 'low' | 'unmatched' | 'matched'>('all')
+const filterStatus = ref<
+  'all' | 'low' | 'unmatched' | 'matched'
+  // 联想框架专用筛选
+  | 'lenovo_endtype_unmatched' | 'lenovo_method_manual' | 'lenovo_method_exact'
+>('all')
+
+// 去重展示开关：点亮后「原始品牌型号」相同的行仅展示一条（不删除数据，仅折叠展示）
+// 便于报价时只看唯一型号；关闭后恢复展示全部行。
+const dedupeEnabled = ref(false)
+function toggleDedupe() {
+  dedupeEnabled.value = !dedupeEnabled.value
+}
+
+// 点亮「去重」即自动触发一次重新匹配：按去重后的唯一「原始品牌型号」匹配，
+// 结果回填到同值的所有行（关闭去重不重匹，因结果已应用到全部行）。
+watch(dedupeEnabled, async (on) => {
+  if (!on) return
+  if (matchingInProgress.value) {
+    // 终止正在进行的全量匹配（matchGeneration 自增使旧任务自我退出），再以去重方式重启
+    stopMatching()
+    await nextTick()
+  }
+  if (flattenSheetGroups().length === 0) return
+  startMatching()
+})
 
 // Row selection for deletion（uid 化，避免 O(n²) indexOf）
 const selectedRows = ref<Set<string>>(new Set())
@@ -1173,6 +1214,14 @@ function stripBrandPrefix(model: string): string {
     if (!changed) break
   }
   return m
+}
+
+// 匹配型号显示：未命中（命中方式为 none/空）时显示"未匹配"，
+// 不沿用后端透传回来的原始输入型号，避免误以为已命中。
+function lenovoDisplayModel(item: any): string {
+  const m = item?.lenovo_match_method
+  if (!m || m === 'none') return '未匹配'
+  return item.lenovo_matched_model || '未匹配'
 }
 
 function formatLenovoMethod(method: string | undefined): string {
@@ -1444,14 +1493,39 @@ function setSheetGroupsFromConvertedSheets(sheetTables: Array<{ sheetName: strin
   tableData.value = activeSheetName.value ? (groups[activeSheetName.value] || []) : []
 }
 
-// Filtered table data
-const filteredTableData = computed(() => {
+// 按状态筛选后的数据（去重前）
+const statusFilteredData = computed(() => {
   if (filterStatus.value === 'all') return tableData.value
   if (filterStatus.value === 'low') return tableData.value.filter(item => item.matchRate > 0 && item.matchRate < 70)
   if (filterStatus.value === 'unmatched') return tableData.value.filter(item => !item.matchedModel || item.matchRate === 0)
   if (filterStatus.value === 'matched') return tableData.value.filter(item => item.matchRate >= 70)
+  // 联想框架专用筛选
+  if (filterStatus.value === 'lenovo_endtype_unmatched') return tableData.value.filter(item => !item.lenovo_end_type)
+  if (filterStatus.value === 'lenovo_method_manual') return tableData.value.filter(item => item.lenovo_match_method === 'manual')
+  if (filterStatus.value === 'lenovo_method_exact') return tableData.value.filter(item => item.lenovo_match_method === 'exact')
   return tableData.value
 })
+
+// Filtered table data —— 在状态筛选基础上叠加「去重展示」
+const filteredTableData = computed(() => {
+  const base = statusFilteredData.value
+  if (!dedupeEnabled.value) return base
+  // 「原始品牌型号」相同仅保留首条；空值不参与折叠（各自保留，避免误隐藏不同的未匹配行）
+  const seen = new Set<string>()
+  const result: typeof base = []
+  for (const item of base) {
+    const key = (item.originalBrandModel || '').trim()
+    if (key) {
+      if (seen.has(key)) continue
+      seen.add(key)
+    }
+    result.push(item)
+  }
+  return result
+})
+
+// 去重折叠掉的行数（用于按钮上提示）
+const dedupeHiddenCount = computed(() => statusFilteredData.value.length - filteredTableData.value.length)
 
 // 虚拟滚动切片
 const { visibleItems, topPadding, bottomPadding, startIndex } =
@@ -1562,6 +1636,14 @@ watch(quoteMode, async (mode, prev) => {
   const allHaveLenovoPrice = rows.every(r => Number(r?.lenovo_unit_price) > 0)
   if (allHaveLenovoPrice) return
   await runLenovoBulkQuote()
+})
+
+// 离开联想框架模式时，重置联想专用筛选，避免在标准口径下隐藏全部数据
+watch(quoteMode, (mode) => {
+  const lenovoOnlyFilters = ['lenovo_endtype_unmatched', 'lenovo_method_manual', 'lenovo_method_exact']
+  if (mode !== 'lenovo' && lenovoOnlyFilters.includes(filterStatus.value)) {
+    filterStatus.value = 'all'
+  }
 })
 
 // Navigation
@@ -1915,87 +1997,151 @@ async function startMatching() {
   }
 
   // 使用分批并发匹配，实时更新进度
-  await individualMatching()
+  const myGen = await individualMatching()
 
-  matchingInProgress.value = false
-  abortController.value = null
+  // 仅当本轮仍是最新时才收尾，避免在"切换去重→重启匹配"时误关掉新一轮
+  if (matchGeneration.value === myGen) {
+    matchingInProgress.value = false
+    abortController.value = null
+  }
+}
+
+// 把 /match/ 响应的「型号匹配结果」写入某一行（不含服务级别价格）
+function applyMatchResultToRow(row: any, data: any) {
+  row.matchedModel = data.matched_model || ''
+  row.matchRate = data.match_rate || 0
+  // 原始单价 = 设备价格 × 费率（未含税）
+  row.originalPrice = (data.device_price || 0) * (data.rate || 0)
+  row.deviceCategory = data.device_category || data.category || ''
+  row.device_price = data.device_price || null
+  row.primary_category = data.primary_category || ''
+  row.secondary_category = data.secondary_category || ''
+  row.tertiary_category = data.tertiary_category || ''
+  row.rate = data.rate || 0
+  // 保存匹配到的厂商和系列信息，供价格调整模块使用
+  row.matchedManufacturer = data.manufacturer || ''
+  row.matchedSeries = data.device_series || ''
+  // 用匹配到的厂商更新显示（与手动匹配逻辑一致）；后端无返回则保留原始值
+  if (data.manufacturer) row.manufacturer = data.manufacturer
+}
+
+function isCancelError(error: any) {
+  return error?.name === 'CanceledError' || error?.code === 'ERR_CANCELED' || error?.message?.includes('cancel')
 }
 
 // Individual matching - 分批并发匹配，实时更新进度
+// 去重开启时：相同「原始品牌型号」只匹配一次，结果回填到该值的所有行，避免重复匹配以提速。
 async function individualMatching() {
-  const concurrency = 10  // 增加并发数到10
-  let current = 0
+  const concurrency = 10
+  const myGen = ++matchGeneration.value  // 本次运行代号
   const matchItems = flattenSheetGroups()
-  const total = matchItems.length
+
+  // 构造匹配任务单元：去重时按「原始品牌型号」分组（一组一次匹配），否则每行一组
+  let units: any[][]
+  if (dedupeEnabled.value) {
+    const groups = new Map<string, any[]>()
+    const order: string[] = []
+    for (const it of matchItems) {
+      const key = (it.originalBrandModel || '').trim()
+      // 空值各自独立匹配，避免误合并不同的未匹配行
+      const gk = key ? `k:${key}` : `u:${it._uid}`
+      if (!groups.has(gk)) { groups.set(gk, []); order.push(gk) }
+      groups.get(gk)!.push(it)
+    }
+    units = order.map(gk => groups.get(gk)!)
+  } else {
+    units = matchItems.map(it => [it])
+  }
+
+  // 进度按任务单元计（去重时即唯一型号数）
+  matchingTotal.value = units.length
+  matchingCompleted.value = 0
+
+  let current = 0
+  const total = units.length
+
+  // 视图刷新节流：每次 setSheetGroupsFromRows 都会全量重建 sheetGroups（可能 2 万+ 行），
+  // 频繁调用会卡死主线程，故限制为最多每 200ms 一次 + 收尾强制刷新一次。
+  let lastViewRefresh = 0
+  function refreshView(force = false) {
+    if (matchGeneration.value !== myGen) return
+    const now = Date.now()
+    if (!force && now - lastViewRefresh < 200) return
+    lastViewRefresh = now
+    setSheetGroupsFromRows(matchItems)
+    if (activeSheetName.value) tableData.value = sheetGroups.value[activeSheetName.value] || []
+    triggerRef(tableData)
+  }
 
   async function worker() {
-    while (current < total && !shouldStop.value) {
-      const index = current++
-      const item = matchItems[index]
+    // 代号变化（被新一轮匹配取代）时立即退出，避免新旧任务并发写入
+    while (current < total && !shouldStop.value && matchGeneration.value === myGen) {
+      const rows = units[current++]
+      const rep = rows[0]  // 同组代表行，用它发起一次匹配
 
       try {
         const response = await axios.post(`${API_URL}/match/`, {
-          manufacturer: item.manufacturer,
-          model: item.model,
-          category: item.category,
+          manufacturer: rep.manufacturer,
+          model: rep.model,
+          category: rep.category,
           source: dataSource.value
         }, {
           signal: abortController.value?.signal
         })
 
-        if (response.data) {
-          matchItems[index].matchedModel = response.data.matched_model || ''
-          matchItems[index].matchRate = response.data.match_rate || 0
-          // 原始单价 = 设备价格 × 费率（未含税）
-          matchItems[index].originalPrice = (response.data.device_price || 0) * (response.data.rate || 0)
-          matchItems[index].deviceCategory = response.data.device_category || response.data.category || ''
-          matchItems[index].device_price = response.data.device_price || null
-          matchItems[index].primary_category = response.data.primary_category || ''
-          matchItems[index].secondary_category = response.data.secondary_category || ''
-          matchItems[index].tertiary_category = response.data.tertiary_category || ''
-          matchItems[index].rate = response.data.rate || 0
-          // 保存匹配到的厂商和系列信息，供价格调整模块使用
-          matchItems[index].matchedManufacturer = response.data.manufacturer || ''
-          matchItems[index].matchedSeries = response.data.device_series || ''
-          // 更新显示的厂商为匹配到的厂商（与手动匹配逻辑一致）
-          // 如果后端返回了厂商，则用后端返回的；否则保留原始值
-          if (response.data.manufacturer) {
-            matchItems[index].manufacturer = response.data.manufacturer
-          }
+        if (matchGeneration.value !== myGen) return  // 已被新一轮取代，丢弃结果
 
-          if (matchItems[index].originalPrice && item.serviceLevel) {
-            const priceInfo = await calculateServiceLevelPrice(
-              matchItems[index].originalPrice!,
-              item.serviceLevel
-            )
-            matchItems[index].price = priceInfo.adjustedPrice
-            matchItems[index].serviceLevelCoefficient = priceInfo.coefficient
-            matchItems[index].matchedServiceLevel = priceInfo.matchedLevel
+        if (response.data) {
+          // 同组（同一原始品牌型号）匹配结果与原始单价相同；服务价格只与 serviceLevel 有关，
+          // 故按"不同 serviceLevel"只算一次，避免对超大组逐行 await 造成 microtask 风暴卡死。
+          const priceCache = new Map<string, { adjustedPrice: number; coefficient: number; matchedLevel: any }>()
+          let processed = 0
+          for (const row of rows) {
+            applyMatchResultToRow(row, response.data)
+            const sl = row.serviceLevel || ''
+            if (row.originalPrice && sl) {
+              let pi = priceCache.get(sl)
+              if (!pi) {
+                pi = await calculateServiceLevelPrice(row.originalPrice, sl)
+                if (matchGeneration.value !== myGen) return
+                priceCache.set(sl, pi)
+              }
+              row.price = pi.adjustedPrice
+              row.serviceLevelCoefficient = pi.coefficient
+              row.matchedServiceLevel = pi.matchedLevel
+            }
+            // 超大组：每 2000 行让出主线程一次，保持页面响应（避免假死）
+            if (++processed % 2000 === 0) {
+              await new Promise(r => setTimeout(r, 0))
+              if (matchGeneration.value !== myGen) return
+            }
           }
         }
       } catch (error: any) {
-        // 如果是主动取消的错误，不记录日志
-        if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED' || error.message?.includes('cancel')) {
+        if (isCancelError(error)) {
           console.log('Matching was stopped by user')
           return
         }
-        console.error('Match failed for item:', item.model, error)
+        console.error('Match failed for item:', rep.model, error)
         // 失败时也要设置默认值
-        matchItems[index].matchedModel = ''
-        matchItems[index].matchRate = 0
+        for (const row of rows) {
+          row.matchedModel = ''
+          row.matchRate = 0
+        }
       } finally {
-        // 每完成一条立即更新进度
-        matchingCompleted.value++
-        // 使用 shallowRef 时需要手动触发更新
-        setSheetGroupsFromRows(matchItems)
-        if (activeSheetName.value) tableData.value = sheetGroups.value[activeSheetName.value] || []
-        triggerRef(tableData)
+        // 进度按单元推进；视图刷新走节流，避免频繁全量重建
+        if (matchGeneration.value === myGen) {
+          matchingCompleted.value++
+          refreshView()
+        }
       }
     }
   }
 
   const workers = Array(Math.min(concurrency, total)).fill(0).map(() => worker())
   await Promise.all(workers)
+  refreshView(true)  // 收尾强制刷新一次，确保显示最终结果
+  return myGen
 }
 
 // Stop matching
@@ -2083,37 +2229,74 @@ async function runLenovoBulkQuote() {
   const allRows = flattenSheetGroups()
   if (allRows.length === 0) return
 
+  const myGen = ++matchGeneration.value  // 本次运行代号
   matchingInProgress.value = true
-  matchingTotal.value = allRows.length
   matchingCompleted.value = 0
   shouldStop.value = false
 
-  // 切批：每批 200 条避免单请求过大
+  // 构造任务单元：去重点亮时按「原始品牌型号」分组，每组只取代表行报价；
+  // 否则每行一个单元（行为同原逻辑）。
+  let units: any[][]
+  if (dedupeEnabled.value) {
+    const groups = new Map<string, any[]>()
+    const order: string[] = []
+    for (const r of allRows) {
+      const key = (r.originalBrandModel || '').trim()
+      // 空值各自独立，避免误并不同的未匹配行
+      const gk = key ? `k:${key}` : `u:${r._uid}`
+      if (!groups.has(gk)) { groups.set(gk, []); order.push(gk) }
+      groups.get(gk)!.push(r)
+    }
+    units = order.map(gk => groups.get(gk)!)
+  } else {
+    units = allRows.map(r => [r])
+  }
+
+  matchingTotal.value = units.length
+
+  // 切批：每批 200 个单元避免单请求过大
   const batchSize = 200
   try {
-    for (let i = 0; i < allRows.length; i += batchSize) {
-      if (shouldStop.value) break
-      const batch = allRows.slice(i, i + batchSize)
-      const payload = { items: batch.map(buildLenovoQuoteRequest) }
+    for (let i = 0; i < units.length; i += batchSize) {
+      if (shouldStop.value || matchGeneration.value !== myGen) break
+      const batchUnits = units.slice(i, i + batchSize)
+      // 每组用代表行发起报价
+      const payload = { items: batchUnits.map(u => buildLenovoQuoteRequest(u[0])) }
       const resp = await axios.post(`${API_URL}/lenovo/bulk-quote`, payload)
+      if (matchGeneration.value !== myGen) break  // 已被新一轮取代，丢弃结果
       const results = resp.data?.results || []
-      batch.forEach((row, k) => {
-        if (results[k]) applyLenovoResultToRow(row, results[k])
+      batchUnits.forEach((u, k) => {
+        const result = results[k]
+        if (!result) return
+        // 匹配型号/端型/单价等结果回填到同「原始品牌型号」全组
+        for (const row of u) {
+          applyLenovoResultToRow(row, result)
+          // 总价按各行自身数量单独重算（同型号单价相同，数量可不同）
+          if (u.length > 1 && result.unit_price != null) {
+            row.lenovo_total_price = result.unit_price * (Number(row.quantity) || 1)
+          }
+        }
       })
-      matchingCompleted.value += batch.length
+      matchingCompleted.value += batchUnits.length
       // 关键：循环内不再触发整表重渲染（避免每批锁死主线程）。
-      // 只更新进度数字 matchingCompleted，行内字段已直接 mutated。
     }
     // 全部完成后一次性同步 sheetGroups + 当前 tab 视图
+    // 已被新一轮取代则不收尾（让最新一轮接管视图与状态）
+    if (matchGeneration.value !== myGen) return
     setSheetGroupsFromRows(allRows)
     if (activeSheetName.value) tableData.value = sheetGroups.value[activeSheetName.value] || []
     triggerRef(tableData)
-    ElMessage.success(`联想框架报价完成，共 ${matchingCompleted.value} 条`)
+    ElMessage.success(
+      dedupeEnabled.value
+        ? `联想框架报价完成：${units.length} 个去重型号，已应用到 ${allRows.length} 条`
+        : `联想框架报价完成，共 ${allRows.length} 条`
+    )
   } catch (e: any) {
     console.error('Lenovo bulk-quote failed:', e)
     ElMessage.error(`联想报价失败：${e?.response?.data?.detail || e?.message || '未知错误'}`)
   } finally {
-    matchingInProgress.value = false
+    // 仅当本轮仍是最新时才复位进行中标记，避免误关新一轮
+    if (matchGeneration.value === myGen) matchingInProgress.value = false
   }
 }
 
@@ -2340,7 +2523,8 @@ async function selectLenovoSearchResult(result: any) {
   const targetRow = lenovoSearchTargetRow.value
   if (!targetRow || !result) return
 
-  // 同名"原始品牌型号"全量批量应用（与端型下拉的 selectEndType 行为一致）
+  // 改「匹配型号」按"原始品牌型号"同步：同一上传输入的行应用同一标准机型
+  // （注意与端型不同：端型由"匹配型号"决定，故 selectEndType 按匹配型号同步）
   const targetOriginalBrandModel = targetRow.originalBrandModel || ''
   const allRows = flattenSheetGroups()
   const sameRows = targetOriginalBrandModel
@@ -2358,6 +2542,13 @@ async function selectLenovoSearchResult(result: any) {
     r.lenovo_sub_category = result.sub_category || ''
     r.lenovo_match_method = 'manual'
     r.lenovo_classification_id = result.id
+    // 同步联想设备大类为命中机型的大类（如"存储"），否则会沿用原始自动识别（如"服务器"），
+    // 导致分类显示不对、端型下拉仍按服务器端型加载。lenovo_device_category 会被
+    // getRowLenovoParams 作为最高优先级，驱动端型选项与查价。
+    if (result.device_category) {
+      r.lenovo_device_category = result.device_category
+      r.lenovo_matched_device_category = result.device_category
+    }
   }
 
   closeLenovoSearchDialog()
@@ -2567,12 +2758,13 @@ async function selectEndType(endType: string) {
   const targetRow = endTypeDropdownTarget.value
   if (!targetRow || !endType) return closeEndTypeDropdown()
 
-  const targetOriginalBrandModel = targetRow.originalBrandModel || ''
+  // 端型由「匹配型号」决定：同一「匹配型号」的所有行同步应用最新端型
+  // （二次调整时同样会再次覆盖同型号全部行，保持一致）
+  const targetMatchedModel = (targetRow.lenovo_matched_model || '').trim()
 
-  // 找出 sheetGroups 全集中所有"原始品牌型号"相同的行
   const allRows = flattenSheetGroups()
-  const sameRows = targetOriginalBrandModel
-    ? allRows.filter(r => (r.originalBrandModel || '') === targetOriginalBrandModel)
+  const sameRows = targetMatchedModel
+    ? allRows.filter(r => (r.lenovo_matched_model || '').trim() === targetMatchedModel)
     : [targetRow]
 
   // 应用端型锁定
@@ -2627,10 +2819,11 @@ function queueAliasFromEndTypeChange(row: any, endType: string, affectedCount: n
 
 function clearLenovoManualEndType(item: any) {
   if (!item) return
-  const targetOriginalBrandModel = item.originalBrandModel || ''
+  // 与 selectEndType 一致：按「匹配型号」同步清除同型号全部行的手动端型
+  const targetMatchedModel = (item.lenovo_matched_model || '').trim()
   const allRows = flattenSheetGroups()
-  const sameRows = targetOriginalBrandModel
-    ? allRows.filter(r => (r.originalBrandModel || '') === targetOriginalBrandModel)
+  const sameRows = targetMatchedModel
+    ? allRows.filter(r => (r.lenovo_matched_model || '').trim() === targetMatchedModel)
     : [item]
   for (const r of sameRows) {
     r.lenovo_manual_end_type = ''
@@ -3631,6 +3824,47 @@ async function exportData() {
 
 .pricing-params-btn.active .dropdown-arrow {
   transform: rotate(180deg);
+}
+
+/* 去重切换按钮 */
+.dedupe-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.5rem 0.875rem;
+  background-color: #101622;
+  border: 1px solid #232f48;
+  border-radius: 0.5rem;
+  color: #e2e8f0;
+  font-size: 0.875rem;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.2s;
+}
+
+.dedupe-btn:hover {
+  border-color: #3b4d6a;
+  background-color: #161d2d;
+}
+
+.dedupe-btn.active {
+  border-color: #135bec;
+  background-color: #135bec;
+  color: #ffffff;
+  box-shadow: 0 0 0 1px rgba(19, 91, 236, 0.4), 0 2px 8px rgba(19, 91, 236, 0.35);
+}
+
+.dedupe-btn .material-symbols-outlined {
+  font-size: 1.125rem;
+}
+
+.dedupe-count {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.05rem 0.35rem;
+  border-radius: 0.5rem;
+  background-color: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
 }
 
 .pricing-params-panel {
