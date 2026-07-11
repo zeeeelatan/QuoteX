@@ -35,7 +35,7 @@
     <div class="filters">
       <div class="filter-group">
         <label>筛选状态:</label>
-        <select v-model="filterStatus" @change="loadData">
+        <select v-model="filterStatus" @change="reload">
           <option value="all">全部</option>
           <option value="pending">待确认</option>
           <option value="confirmed">已确认</option>
@@ -154,13 +154,13 @@
     <!-- Pagination -->
     <div class="pagination">
       <div class="pagination-info">
-        共 {{ totalCount }} 条，第 {{ currentPage }} / {{ totalPages || 1 }} 页
+        共 {{ pageTotal }} 条，第 {{ currentPage }} / {{ totalPages }} 页
       </div>
       <div class="pagination-controls">
         <button
           class="page-btn"
           :disabled="currentPage === 1"
-          @click="currentPage = 1"
+          @click="goToPage(1)"
           title="首页"
         >
           <span class="material-symbols-outlined">first_page</span>
@@ -168,23 +168,23 @@
         <button
           class="page-btn"
           :disabled="currentPage === 1"
-          @click="currentPage--"
+          @click="goToPage(currentPage - 1)"
           title="上一页"
         >
           <span class="material-symbols-outlined">chevron_left</span>
         </button>
         <button
           class="page-btn"
-          :disabled="currentPage === totalPages || totalPages === 0"
-          @click="currentPage++"
+          :disabled="currentPage >= totalPages"
+          @click="goToPage(currentPage + 1)"
           title="下一页"
         >
           <span class="material-symbols-outlined">chevron_right</span>
         </button>
         <button
           class="page-btn"
-          :disabled="currentPage === totalPages || totalPages === 0"
-          @click="currentPage = totalPages"
+          :disabled="currentPage >= totalPages"
+          @click="goToPage(totalPages)"
           title="末页"
         >
           <span class="material-symbols-outlined">last_page</span>
@@ -275,16 +275,14 @@ const confirmDialog = ref({
   existingRecord: null as any
 })
 
-// Computed
-const totalCount = ref(0)
+// Computed / 统计（全部走后端真实计数，不再受“仅取前 100 条”影响）
+const totalCount = ref(0)      // 总计（全局：待确认 + 已确认）
+const pendingCount = ref(0)    // 全局待确认数
+const confirmedCount = ref(0)  // 全局已确认数
+const pageTotal = ref(0)       // 当前筛选+搜索下的记录总数（用于分页）
 
-const pendingCount = computed(() =>
-  tableData.value.filter(item => !item.is_confirmed).length
-)
-
-const confirmedCount = computed(() =>
-  tableData.value.filter(item => item.is_confirmed).length
-)
+// 服务端已按 skip/limit 分页，当前页数据即 tableData
+const paginatedData = computed(() => tableData.value)
 
 const allSelected = computed(() =>
   paginatedData.value.length > 0 &&
@@ -298,55 +296,67 @@ const someSelected = computed(() =>
 
 const hasSelected = computed(() => selectedIds.value.length > 0)
 
-const filteredData = computed(() => {
-  let data = tableData.value
-
-  if (filterStatus.value === 'pending') {
-    data = data.filter(item => !item.is_confirmed)
-  } else if (filterStatus.value === 'confirmed') {
-    data = data.filter(item => item.is_confirmed)
-  }
-
-  if (searchQuery.value) {
-    const query = searchQuery.value.toLowerCase()
-    data = data.filter(item =>
-      item.original_manufacturer?.toLowerCase().includes(query) ||
-      item.original_model?.toLowerCase().includes(query) ||
-      item.matched_model_number?.toLowerCase().includes(query)
-    )
-  }
-
-  return data
-})
-
-const paginatedData = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  const end = start + pageSize.value
-  return filteredData.value.slice(start, end)
-})
-
 const totalPages = computed(() =>
-  Math.ceil(filteredData.value.length / pageSize.value)
+  Math.max(1, Math.ceil(pageTotal.value / pageSize.value))
 )
 
-// Load data
+// 构造与当前筛选/搜索一致的查询参数
+function buildFilterParams(): URLSearchParams {
+  const params = new URLSearchParams()
+  if (filterStatus.value === 'pending') {
+    params.append('is_confirmed', 'false')
+  } else if (filterStatus.value === 'confirmed') {
+    params.append('is_confirmed', 'true')
+  }
+  if (searchQuery.value) {
+    params.append('search', searchQuery.value)
+  }
+  return params
+}
+
+// 加载统计：全局待确认/已确认（统计卡片）+ 当前筛选搜索下的总数（分页）
+async function loadCounts() {
+  try {
+    const [pendingResp, confirmedResp] = await Promise.all([
+      axios.get(`${API_URL}/manual-matching-override/count?is_confirmed=false`),
+      axios.get(`${API_URL}/manual-matching-override/count?is_confirmed=true`),
+    ])
+    pendingCount.value = pendingResp.data?.total ?? 0
+    confirmedCount.value = confirmedResp.data?.total ?? 0
+    totalCount.value = pendingCount.value + confirmedCount.value
+
+    // 分页总数：与列表同口径（筛选 + 搜索）
+    if (!searchQuery.value) {
+      pageTotal.value = filterStatus.value === 'pending' ? pendingCount.value
+        : filterStatus.value === 'confirmed' ? confirmedCount.value
+        : totalCount.value
+    } else {
+      const resp = await axios.get(`${API_URL}/manual-matching-override/count?${buildFilterParams()}`)
+      pageTotal.value = resp.data?.total ?? 0
+    }
+  } catch (error) {
+    console.error('Failed to load counts:', error)
+  }
+}
+
+// Load data（服务端分页：只取当前页）
 async function loadData() {
   loading.value = true
   try {
-    const params = new URLSearchParams()
-    if (filterStatus.value === 'pending') {
-      params.append('is_confirmed', 'false')
-    } else if (filterStatus.value === 'confirmed') {
-      params.append('is_confirmed', 'true')
-    }
-    if (searchQuery.value) {
-      params.append('search', searchQuery.value)
-    }
+    const params = buildFilterParams()
+    params.append('skip', String((currentPage.value - 1) * pageSize.value))
+    params.append('limit', String(pageSize.value))
 
     const response = await axios.get(`${API_URL}/manual-matching-override/?${params}`)
     tableData.value = response.data || []
-    totalCount.value = tableData.value.length
-    currentPage.value = 1
+    selectedIds.value = []  // 翻页/筛选后清空跨页选择，避免误操作
+    await loadCounts()
+
+    // 当前页为空且不在第一页（如删除后）→ 回退一页重新加载
+    if (tableData.value.length === 0 && currentPage.value > 1) {
+      currentPage.value = Math.min(currentPage.value - 1, totalPages.value)
+      return loadData()
+    }
   } catch (error) {
     console.error('Failed to load data:', error)
   } finally {
@@ -354,16 +364,30 @@ async function loadData() {
   }
 }
 
+// 重置到第一页并重新加载（筛选/搜索/每页条数变化时调用）
+function reload() {
+  currentPage.value = 1
+  loadData()
+}
+
+// 跳转到指定页
+function goToPage(target: number) {
+  const page = Math.min(Math.max(1, target), totalPages.value)
+  if (page === currentPage.value) return
+  currentPage.value = page
+  loadData()
+}
+
 let searchTimeout: NodeJS.Timeout | null = null
 function handleSearch() {
   if (searchTimeout) clearTimeout(searchTimeout)
   searchTimeout = setTimeout(() => {
-    loadData()
+    reload()
   }, 300)
 }
 
 function handlePageSizeChange() {
-  currentPage.value = 1
+  reload()
 }
 
 // Selection

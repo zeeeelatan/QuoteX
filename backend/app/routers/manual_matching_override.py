@@ -143,15 +143,26 @@ def get_manual_overrides(
 @router.get("/count")
 def get_manual_overrides_count(
     is_confirmed: Optional[bool] = Query(None, description="筛选确认状态"),
+    search: Optional[str] = Query(None, description="搜索原始厂商或型号"),
     db: Session = Depends(get_db)
 ):
     """
-    获取手动匹配覆盖记录数量
+    获取手动匹配覆盖记录数量（与列表接口同口径：支持 is_confirmed + search 过滤）
     """
     query = db.query(ManualMatchingOverride)
 
     if is_confirmed is not None:
         query = query.filter(ManualMatchingOverride.is_confirmed == is_confirmed)
+
+    if search:
+        search_pattern = f"%{search}%"
+        query = query.filter(
+            or_(
+                ManualMatchingOverride.original_manufacturer.ilike(search_pattern),
+                ManualMatchingOverride.original_model.ilike(search_pattern),
+                ManualMatchingOverride.matched_model_number.ilike(search_pattern)
+            )
+        )
 
     count = query.count()
     return {"total": count}
