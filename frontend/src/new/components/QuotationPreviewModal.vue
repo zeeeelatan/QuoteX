@@ -364,6 +364,7 @@ interface CompanyInfo {
   id: number
   company_name: string
   company_address?: string
+  company_logo?: string
 }
 
 interface CustomerInfo {
@@ -518,6 +519,15 @@ const editableProjectName = ref('项目名称')
 const logoInputRef = ref<HTMLInputElement | null>(null)
 const customLogoUrl = ref<string>('')
 
+const DEFAULT_COMPANY_LOGO_SVG = `
+<svg width="300" height="88" viewBox="0 0 300 88" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="44" cy="44" r="34" fill="none" stroke="#005bac" stroke-width="5"/>
+  <path d="M28 44 Q44 21 60 44 Q44 67 28 44" fill="#8dc21f"/>
+  <path d="M24 32 Q44 12 64 32" fill="none" stroke="#005bac" stroke-width="4" stroke-linecap="round"/>
+  <text x="92" y="39" font-family="Microsoft YaHei, Arial, sans-serif" font-size="24" font-weight="700" fill="#1A3A5C">源晨动力</text>
+  <text x="94" y="62" font-family="Arial, sans-serif" font-size="13" font-weight="700" letter-spacing="1.5" fill="#005bac">YUANCHENDONGLI</text>
+</svg>`
+
 // PDF 导出相关
 const paperRef = ref<HTMLElement | null>(null)
 const isDownloading = ref(false)
@@ -564,6 +574,56 @@ function loadCustomLogo() {
   const savedLogo = localStorage.getItem('quotation_custom_logo')
   if (savedLogo) {
     customLogoUrl.value = savedLogo
+  }
+}
+
+function encodeSvgDataUrl(svg: string): string {
+  return `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`
+}
+
+function getExcelLogoSource(): string {
+  return customLogoUrl.value || encodeSvgDataUrl(DEFAULT_COMPANY_LOGO_SVG)
+}
+
+function imageSourceToPngDataUrl(source: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      const naturalWidth = img.naturalWidth || 300
+      const naturalHeight = img.naturalHeight || 88
+      const canvas = document.createElement('canvas')
+      canvas.width = naturalWidth
+      canvas.height = naturalHeight
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        reject(new Error('无法创建 Logo 画布'))
+        return
+      }
+      ctx.clearRect(0, 0, naturalWidth, naturalHeight)
+      ctx.drawImage(img, 0, 0, naturalWidth, naturalHeight)
+      resolve(canvas.toDataURL('image/png'))
+    }
+    img.onerror = () => reject(new Error('Logo 图片加载失败'))
+    if (!source.startsWith('data:')) {
+      img.crossOrigin = 'anonymous'
+    }
+    img.src = source
+  })
+}
+
+async function addLogoToWorksheet(workbook: ExcelJS.Workbook, worksheet: ExcelJS.Worksheet) {
+  try {
+    const logoDataUrl = await imageSourceToPngDataUrl(getExcelLogoSource())
+    const logoImageId = workbook.addImage({
+      base64: logoDataUrl,
+      extension: 'png'
+    })
+    worksheet.addImage(logoImageId, {
+      tl: { col: 0.15, row: 0.18 },
+      ext: { width: 150, height: 44 }
+    })
+  } catch (error) {
+    console.warn('Logo 写入 Excel 失败，已继续导出报价单:', error)
   }
 }
 
@@ -831,6 +891,8 @@ async function downloadExcel() {
       { width: 18 },  // F - 综合单价
       { width: 18 },  // G - 总价
     ]
+
+    await addLogoToWorksheet(wb, ws)
 
     // 样式定义
     const titleFont: Partial<ExcelJS.Font> = { name: '微软雅黑', size: 16, bold: true, color: { argb: 'FF1A3A5C' } }
