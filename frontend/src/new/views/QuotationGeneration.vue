@@ -475,6 +475,7 @@ import {
   clearNavigationMode,
   setNavigationMode,
   clearAllQuotationStates,
+  getExternalRef,
   type QuotationGenerationState,
   type TableDataWithHeaders,
   type SheetTableDataWithHeaders,
@@ -971,6 +972,9 @@ const completeQuotation = async () => {
         data_source: 'datacenter',
         device_count: tableData.value.length,
         quote_metadata: {
+          // 外部系统集成：若本次询价由第三方系统（如 TopSales）发起，
+          // 携带其引用令牌，供对方按 GET /quote-history/by-ref/{ref} 查询本次报价结果
+          external_ref: getExternalRef() || undefined,
           quote_number: quoteNumber.value,
           quote_date: quoteDate.value,
           project_name: projectName.value,
@@ -1012,6 +1016,9 @@ const completeQuotation = async () => {
       console.log('History saved successfully')
     } catch (error) {
       console.error('Failed to save history:', error)
+      // 保存失败时不能继续清空数据 / 提示"已完成"，否则会让用户误以为保存成功，
+      // 实际报价数据却已丢失（例如未登录导致的 401，会在 axios 拦截器里弹出具体错误提示）
+      return
     }
 
     // 完成报价：清除所有流程状态和本地数据

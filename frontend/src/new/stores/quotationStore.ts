@@ -26,6 +26,9 @@ export const FlowDataKeys = {
   SELECTED_SHEET_NAME: 'quotation_selectedSheetName',
   SELECTED_SHEET_NAMES: 'quotation_selectedSheetNames',
   ORIGINAL_FILE_NAME: 'quotation_originalFileName',
+  // 外部系统集成：第三方系统（如 TopSales）发起询价时传入的引用令牌，
+  // 贯穿四步向导，最终随报价结果一起保存，供对方系统按令牌查询结果
+  EXTERNAL_REF: 'quotation_externalRef',
 } as const
 
 export const PageStateKeys = {
@@ -127,6 +130,7 @@ const flowData: Record<string, any> = reactive({
   [FlowDataKeys.SELECTED_SHEET_NAME]: shallowRef<string | null>(null),
   [FlowDataKeys.SELECTED_SHEET_NAMES]: shallowRef<string[]>([]),
   [FlowDataKeys.ORIGINAL_FILE_NAME]: shallowRef<string | null>(null),
+  [FlowDataKeys.EXTERNAL_REF]: shallowRef<string | null>(null),
 })
 
 // 页面状态
@@ -242,7 +246,24 @@ export function clearAllFlowData(): void {
   safeClear(FlowDataKeys.ORIGINAL_EXCEL_FILE, null)
   safeClear(FlowDataKeys.SELECTED_SHEET_NAME, null)
   safeClear(FlowDataKeys.ORIGINAL_FILE_NAME, null)
+  safeClear(FlowDataKeys.EXTERNAL_REF, null)
   console.log('[QuotationStore] Cleared all flow data')
+}
+
+// ========== 外部系统集成 ==========
+
+/**
+ * 设置外部引用令牌（第三方系统发起询价时通过 URL 参数传入）
+ */
+export function setExternalRef(ref: string | null): void {
+  saveFlowData(FlowDataKeys.EXTERNAL_REF, ref)
+}
+
+/**
+ * 获取外部引用令牌
+ */
+export function getExternalRef(): string | null {
+  return getFlowData<string>(FlowDataKeys.EXTERNAL_REF)
 }
 
 // ========== 页面状态操作 ==========

@@ -104,6 +104,32 @@ def get_today_quote_count(db: Session = Depends(get_db)):
     }
 
 
+@router.get("/by-ref/{ref}", response_model=QuoteHistoryOut)
+def get_quote_history_by_ref(ref: str, db: Session = Depends(get_db)):
+    """
+    按外部引用令牌(external_ref)查询报价结果，供第三方系统（如 TopSales）集成使用。
+
+    与常规的 /quote-history/{id} 不同，本接口不做用户身份校验：
+    ref 由调用方系统生成的高强度随机字符串（如 UUID）充当一次性查询凭证，
+    只要不外泄该 ref，安全性即等价于"分享链接"模式。
+
+    调用方需在发起询价时把 ref 作为 URL 参数带给本系统前端
+    （见 DocumentRecognition.vue 对 route.query.ref 的读取），
+    并在 QuotationGeneration.vue 完成保存时把 ref 写入 quote_metadata.external_ref。
+    """
+    if not ref or len(ref) < 8:
+        raise HTTPException(status_code=400, detail="无效的引用令牌")
+    history = (
+        db.query(QuoteHistory)
+        .filter(QuoteHistory.quote_metadata["external_ref"].as_string() == ref)
+        .order_by(QuoteHistory.created_at.desc())
+        .first()
+    )
+    if not history:
+        raise HTTPException(status_code=404, detail="未找到对应的报价结果，请确认已在生成报价页完成保存")
+    return history
+
+
 @router.get("/{history_id}", response_model=QuoteHistoryOut)
 def get_quote_history_detail(
     history_id: int,

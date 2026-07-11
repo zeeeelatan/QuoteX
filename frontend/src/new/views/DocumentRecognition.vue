@@ -939,7 +939,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, shallowRef, nextTick, watch } from 'vue'
-import { useRouter, onBeforeRouteLeave } from 'vue-router'
+import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
 import * as XLSX from 'xlsx'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
@@ -957,6 +957,7 @@ import {
   clearFlowData,
   createNavigateWithState,
   createJumpNavigate,
+  setExternalRef,
   type DocumentRecognitionState
 } from '../stores/quotationStore'
 import {
@@ -969,8 +970,68 @@ import { getStorageKeyPrefix } from '../stores/authStore'
 import { useVirtualList } from '../composables/useVirtualList'
 
 const router = useRouter()
+const route = useRoute()
 
 const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5002'
+
+// 外部系统集成：捕获第三方系统（如 TopSales）通过 URL 参数传入的引用令牌与预填信息，
+// 令牌会随向导流转到最后一步随报价结果一起保存，供对方按令牌回查结果
+const captureExternalIntegrationParams = () => {
+  const refParam = route.query.ref
+  const ref = Array.isArray(refParam) ? refParam[0] : refParam
+  if (typeof ref === 'string' && ref.trim()) {
+    setExternalRef(ref.trim())
+    console.log('[DocumentRecognition] 捕获外部系统引用令牌:', ref)
+  }
+
+  const quoteTypeParam = route.query.quoteType
+  const quoteType = Array.isArray(quoteTypeParam) ? quoteTypeParam[0] : quoteTypeParam
+  if (typeof quoteType === 'string' && quoteType.trim()) {
+    const matched = productCategories.value.find(c => c.name === quoteType.trim())
+    if (matched) {
+      selectedQuotationType.value = matched.name
+    }
+  }
+}
+
+// 外部系统集成：若第三方系统（如 TopSales）通过 URL 参数传入了源文件下载地址(sourceFileUrl)，
+// 则自动跨域拉取该文件并加载到本页面的"源文件"组件中，免去用户手动重新上传
+const loadExternalSourceFile = async () => {
+  const sourceFileUrlParam = route.query.sourceFileUrl
+  const sourceFileUrl = Array.isArray(sourceFileUrlParam) ? sourceFileUrlParam[0] : sourceFileUrlParam
+  if (typeof sourceFileUrl !== 'string' || !sourceFileUrl.trim()) {
+    return
+  }
+
+  const sourceFileNameParam = route.query.sourceFileName
+  const sourceFileNameRaw = Array.isArray(sourceFileNameParam) ? sourceFileNameParam[0] : sourceFileNameParam
+  const sourceFileName = (typeof sourceFileNameRaw === 'string' && sourceFileNameRaw.trim())
+    ? sourceFileNameRaw.trim()
+    : 'TopSales-报价单附件'
+
+  if (!sourceFileName.match(SUPPORTED_FILE_PATTERN)) {
+    ElMessage.warning(`来自 TopSales 的报价单附件"${sourceFileName}"格式不受支持，请手动上传源文件`)
+    return
+  }
+
+  isParsingDocument.value = true
+  parsingMessage.value = '正在获取 TopSales 报价单附件...'
+  try {
+    const response = await fetch(sourceFileUrl)
+    if (!response.ok) {
+      throw new Error(`获取源文件失败（HTTP ${response.status}）`)
+    }
+    const blob = await response.blob()
+    const file = new File([blob], sourceFileName, { type: blob.type || 'application/octet-stream' })
+    isParsingDocument.value = false
+    processIncomingFile(file)
+    ElMessage.success(`已自动加载来自 TopSales 的报价单附件："${sourceFileName}"`)
+  } catch (error) {
+    console.error('[DocumentRecognition] 自动加载TopSales源文件失败:', error)
+    isParsingDocument.value = false
+    ElMessage.error('自动加载 TopSales 报价单附件失败，请手动上传：' + (error as Error).message)
+  }
+}
 
 // UI State
 const isUploadSectionCollapsed = ref(false)
@@ -1000,8 +1061,10 @@ const closeProductDatabaseModal = () => {
 }
 
 onMounted(() => {
+  captureExternalIntegrationParams()
   loadRecentUploads()
   restorePageStateOnMount()
+  loadExternalSourceFile()
   window.addEventListener('keydown', handleKeyDown)
   window.addEventListener('mouseup', stopOriginalSelection)
   window.addEventListener('mousemove', handleWindowMouseMove)
@@ -2509,7 +2572,11 @@ function handleFileChange(event: Event) {
   const target = event.target as HTMLInputElement
   const file = target.files?.[0]
   if (!file) return
+  processIncomingFile(file)
+}
 
+// 处理一个File对象（无论是来自本地文件选择框，还是通过外部系统集成自动拉取而来）
+function processIncomingFile(file: File) {
   // Check file type
   if (!file.name.match(SUPPORTED_FILE_PATTERN)) {
     ElMessage.error('不支持的文件格式。支持：Excel (.xlsx/.xls)、Word (.docx)、PDF、图片 (.png/.jpg)')
