@@ -28,6 +28,11 @@ class CitySocialInsuranceBase(BaseModel):
     indiv_maternity_rate: Optional[float] = Field(None, description="生育保险-个人比例")
     indiv_unemployment_rate: Optional[float] = Field(None, description="失业保险-个人比例")
     indiv_fund_rate: Optional[float] = Field(None, description="公积金-个人比例")
+    fund_lower_limit: Optional[int] = Field(None, description="公积金基数下限")
+    fund_upper_limit: Optional[int] = Field(None, description="公积金基数上限")
+    fund_rate_min: Optional[float] = Field(None, description="公积金比例下限")
+    fund_rate_max: Optional[float] = Field(None, description="公积金比例上限")
+    fund_default_rate: Optional[float] = Field(None, description="公积金默认比例")
     is_active: Optional[bool] = Field(True, description="是否启用")
     remarks: Optional[str] = Field(None, description="备注")
 
@@ -59,6 +64,11 @@ class CitySocialInsuranceUpdate(BaseModel):
     indiv_maternity_rate: Optional[float] = None
     indiv_unemployment_rate: Optional[float] = None
     indiv_fund_rate: Optional[float] = None
+    fund_lower_limit: Optional[int] = None
+    fund_upper_limit: Optional[int] = None
+    fund_rate_min: Optional[float] = None
+    fund_rate_max: Optional[float] = None
+    fund_default_rate: Optional[float] = None
     is_active: Optional[bool] = None
     remarks: Optional[str] = None
 

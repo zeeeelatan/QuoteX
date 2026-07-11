@@ -67,6 +67,9 @@
             <th>公司失业</th>
             <th>公司残保金</th>
             <th>公司公积金</th>
+            <th>公积金基数下限</th>
+            <th>公积金基数上限</th>
+            <th>公积金默认比例</th>
             <th>个人养老</th>
             <th>个人医疗</th>
             <th>个人失业</th>
@@ -91,6 +94,9 @@
             <td>{{ formatRate(item.corp_unemployment_rate) }}</td>
             <td>{{ formatRate(item.corp_disability_rate) }}</td>
             <td>{{ formatRate(item.corp_fund_rate) }}</td>
+            <td>{{ formatNumber(item.fund_lower_limit) }}</td>
+            <td>{{ formatNumber(item.fund_upper_limit) }}</td>
+            <td>{{ formatRate(item.fund_default_rate) }}</td>
             <td>{{ formatRate(item.indiv_pension_rate) }}</td>
             <td>{{ formatRate(item.indiv_medical_rate) }}</td>
             <td>{{ formatRate(item.indiv_unemployment_rate) }}</td>
@@ -105,7 +111,7 @@
             </td>
           </tr>
           <tr v-if="paginatedData.length === 0">
-            <td colspan="17" class="empty-state">暂无数据</td>
+            <td colspan="20" class="empty-state">暂无数据</td>
           </tr>
         </tbody>
       </table>
@@ -227,9 +233,40 @@
             </el-form-item>
           </el-col>
         </el-row>
-        <el-form-item label="公积金">
-          <el-input-number v-model="formData.corp_fund_rate" :min="0" :max="1" :step="0.001" style="width: 100%" />
-        </el-form-item>
+        <el-row :gutter="20">
+          <el-col :span="8">
+            <el-form-item label="公积金">
+              <el-input-number v-model="formData.corp_fund_rate" :min="0" :max="1" :step="0.001" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="公积金比例下限">
+              <el-input-number v-model="formData.fund_rate_min" :min="0" :max="1" :step="0.001" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="公积金比例上限">
+              <el-input-number v-model="formData.fund_rate_max" :min="0" :max="1" :step="0.001" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-row :gutter="20">
+          <el-col :span="8">
+            <el-form-item label="公积金默认比例">
+              <el-input-number v-model="formData.fund_default_rate" :min="0" :max="1" :step="0.001" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="公积金基数下限">
+              <el-input-number v-model="formData.fund_lower_limit" :min="0" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="公积金基数上限">
+              <el-input-number v-model="formData.fund_upper_limit" :min="0" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+        </el-row>
 
         <div class="form-section-title">个人部分比例</div>
         <el-row :gutter="20">
@@ -332,6 +369,11 @@ interface CitySocialInsurance {
   indiv_maternity_rate: number | null
   indiv_unemployment_rate: number | null
   indiv_fund_rate: number | null
+  fund_lower_limit: number | null
+  fund_upper_limit: number | null
+  fund_rate_min: number | null
+  fund_rate_max: number | null
+  fund_default_rate: number | null
 }
 
 // State
@@ -369,7 +411,12 @@ const formData = ref<any>({
   indiv_injury_rate: null,
   indiv_maternity_rate: null,
   indiv_unemployment_rate: null,
-  indiv_fund_rate: null
+  indiv_fund_rate: null,
+  fund_lower_limit: null,
+  fund_upper_limit: null,
+  fund_rate_min: null,
+  fund_rate_max: null,
+  fund_default_rate: null
 })
 const currentEditId = ref<number | null>(null)
 
@@ -510,7 +557,12 @@ function openAddDialog() {
     indiv_injury_rate: null,
     indiv_maternity_rate: null,
     indiv_unemployment_rate: null,
-    indiv_fund_rate: null
+    indiv_fund_rate: null,
+    fund_lower_limit: null,
+    fund_upper_limit: null,
+    fund_rate_min: null,
+    fund_rate_max: null,
+    fund_default_rate: null
   }
   dialogVisible.value = true
 }

@@ -41,6 +41,13 @@ class CitySocialInsurance(Base):
     indiv_unemployment_rate = Column(Float, nullable=True, comment="失业保险-个人比例")
     indiv_fund_rate = Column(Float, nullable=True, comment="公积金-个人比例")
 
+    # 公积金专用规则（2025 版全量城市数据中，公积金基数与社保基数分开维护）
+    fund_lower_limit = Column(Integer, nullable=True, comment="公积金基数下限")
+    fund_upper_limit = Column(Integer, nullable=True, comment="公积金基数上限")
+    fund_rate_min = Column(Float, nullable=True, comment="公积金比例下限")
+    fund_rate_max = Column(Float, nullable=True, comment="公积金比例上限")
+    fund_default_rate = Column(Float, nullable=True, comment="公积金默认比例")
+
     # 扩展字段
     is_active = Column(Boolean, default=True, comment="是否启用")
     remarks = Column(String(500), nullable=True, comment="备注")

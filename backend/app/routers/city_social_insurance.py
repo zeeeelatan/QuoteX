@@ -5,8 +5,11 @@
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from typing import List, Optional
 import pandas as pd
+import re
+from io import BytesIO
 
 from app.schemas.city_social_insurance import (
     CitySocialInsuranceCreate,
@@ -17,6 +20,172 @@ from app.models.city_social_insurance import CitySocialInsurance
 from app.database import get_db
 
 router = APIRouter(prefix="/city-social-insurance", tags=["城市社保基准数据管理"])
+
+
+def _city_variants(city_name: str) -> list[str]:
+    city = (city_name or "").strip()
+    if not city:
+        return []
+    variants = {city}
+    if city.endswith("市"):
+        variants.add(city[:-1])
+    else:
+        variants.add(f"{city}市")
+    return list(variants)
+
+
+def _nullable_number(value, default=None):
+    if pd.isna(value) or value == "":
+        return default
+    if isinstance(value, str):
+        text = value.strip()
+        if not text or text in {"-", "—", "–"}:
+            return default
+        text = text.replace(",", "")
+        if text.endswith("%"):
+            return float(text[:-1]) / 100
+        return float(text)
+    return float(value)
+
+
+def _nullable_int(value, default=None):
+    number = _nullable_number(value, default)
+    if number is None:
+        return default
+    return int(round(number))
+
+
+def _parse_fund_rate_range(value) -> tuple[Optional[float], Optional[float], Optional[float]]:
+    if pd.isna(value):
+        return None, None, None
+    if isinstance(value, (int, float)):
+        rate = float(value)
+        return rate, rate, rate
+
+    text = str(value).strip()
+    if not text or text in {"-", "—", "–"}:
+        return None, None, None
+
+    numbers = re.findall(r"\d+(?:\.\d+)?", text)
+    if not numbers:
+        return None, None, None
+
+    rates = [float(item) / 100 for item in numbers]
+    if len(rates) == 1:
+        return rates[0], rates[0], rates[0]
+    return rates[0], rates[-1], rates[0]
+
+
+def _city_alias(city: str) -> Optional[str]:
+    city = (city or "").strip()
+    if city.endswith("市") and len(city) > 1:
+        return city[:-1]
+    return None
+
+
+def _parse_2025_workbook(file_bytes: bytes) -> list[dict]:
+    df = pd.read_excel(BytesIO(file_bytes), sheet_name="各城市社保比例", header=None)
+    records = []
+
+    for idx, row in df.iterrows():
+        if idx < 2:
+            continue
+
+        province = row[0] if pd.notna(row[0]) else None
+        city = row[1] if pd.notna(row[1]) else None
+        if not province or not city:
+            continue
+
+        province = str(province).strip()
+        city = str(city).strip()
+        if province.startswith("*") or city.startswith("*"):
+            continue
+
+        fund_rate_min, fund_rate_max, fund_default_rate = _parse_fund_rate_range(row[15])
+        fund_lower_limit = _nullable_int(row[16])
+        fund_upper_limit = _nullable_int(row[17])
+        corp_fund_rate = fund_default_rate
+
+        record_data = {
+            "province": province,
+            "city": city,
+            "city_alias": _city_alias(city),
+            "upper_limit": _nullable_int(row[14], 0),
+            "lower_limit": _nullable_int(row[13], 0),
+            "calc_base": _nullable_int(row[13], 0),
+            "injury_base": None,
+            "corp_pension_rate": _nullable_number(row[2]),
+            "corp_medical_rate": _nullable_number(row[4]),
+            "corp_injury_rate": _nullable_number(row[8]),
+            "corp_maternity_rate": _nullable_number(row[9], 0),
+            "corp_unemployment_rate": _nullable_number(row[6]),
+            "corp_disability_rate": _nullable_number(row[11]),
+            "corp_fund_rate": corp_fund_rate,
+            "indiv_pension_rate": _nullable_number(row[3]),
+            "indiv_medical_rate": _nullable_number(row[5]),
+            "indiv_injury_rate": 0,
+            "indiv_maternity_rate": 0,
+            "indiv_unemployment_rate": _nullable_number(row[7]),
+            "indiv_fund_rate": corp_fund_rate,
+            "fund_lower_limit": fund_lower_limit,
+            "fund_upper_limit": fund_upper_limit,
+            "fund_rate_min": fund_rate_min,
+            "fund_rate_max": fund_rate_max,
+            "fund_default_rate": fund_default_rate,
+            "is_active": True,
+            "remarks": str(row[19]).strip() if pd.notna(row[19]) else None,
+        }
+        records.append(record_data)
+
+    return records
+
+
+def _parse_legacy_workbook(file_bytes: bytes) -> list[dict]:
+    df = pd.read_excel(BytesIO(file_bytes), header=None)
+    records = []
+
+    for idx, row in df.iterrows():
+        if idx < 3:
+            continue
+
+        province = row[0] if pd.notna(row[0]) else None
+        city = row[1] if pd.notna(row[1]) else None
+        if not province or not city:
+            continue
+
+        corp_fund_rate = _nullable_number(row[13])
+        indiv_fund_rate = _nullable_number(row[19])
+        record_data = {
+            "province": str(province).strip(),
+            "city": str(city).strip(),
+            "city_alias": _city_alias(str(city)),
+            "upper_limit": _nullable_int(row[2], 0),
+            "lower_limit": _nullable_int(row[3], 0),
+            "calc_base": _nullable_int(row[4], 0),
+            "injury_base": _nullable_int(row[5]),
+            "corp_pension_rate": _nullable_number(row[6]),
+            "corp_medical_rate": _nullable_number(row[7]),
+            "corp_injury_rate": _nullable_number(row[8]),
+            "corp_maternity_rate": _nullable_number(row[9]),
+            "corp_unemployment_rate": _nullable_number(row[10]),
+            "corp_disability_rate": _nullable_number(row[11]),
+            "corp_fund_rate": corp_fund_rate,
+            "indiv_pension_rate": _nullable_number(row[14]),
+            "indiv_medical_rate": _nullable_number(row[15]),
+            "indiv_injury_rate": _nullable_number(row[16]),
+            "indiv_maternity_rate": _nullable_number(row[17]),
+            "indiv_unemployment_rate": _nullable_number(row[18]),
+            "indiv_fund_rate": indiv_fund_rate,
+            "fund_lower_limit": _nullable_int(row[3], 0),
+            "fund_upper_limit": _nullable_int(row[2], 0),
+            "fund_rate_min": corp_fund_rate,
+            "fund_rate_max": corp_fund_rate,
+            "fund_default_rate": corp_fund_rate,
+            "is_active": True
+        }
+        records.append(record_data)
+
+    return records
 
 
 @router.get("/", response_model=List[CitySocialInsuranceOut])
@@ -40,7 +209,13 @@ def list_city_social_insurance(
         query = query.filter(CitySocialInsurance.province == province)
 
     if city:
-        query = query.filter(CitySocialInsurance.city == city)
+        variants = _city_variants(city)
+        query = query.filter(
+            or_(
+                CitySocialInsurance.city.in_(variants),
+                CitySocialInsurance.city_alias.in_(variants),
+            )
+        )
 
     return query.order_by(CitySocialInsurance.province, CitySocialInsurance.city).all()
 
@@ -63,23 +238,27 @@ def get_cities(province: Optional[str] = None, db: Session = Depends(get_db)):
     return [c[0] for c in cities]
 
 
+@router.get("/city/{city_name}", response_model=CitySocialInsuranceOut)
+def get_by_city_name(city_name: str, db: Session = Depends(get_db)):
+    """根据城市名称获取社保基准数据"""
+    variants = _city_variants(city_name)
+    record = db.query(CitySocialInsurance).filter(
+        or_(
+            CitySocialInsurance.city.in_(variants),
+            CitySocialInsurance.city_alias.in_(variants),
+        )
+    ).first()
+    if not record:
+        raise HTTPException(status_code=404, detail=f"城市 {city_name} 的社保数据不存在")
+    return record
+
+
 @router.get("/{record_id}", response_model=CitySocialInsuranceOut)
 def get_city_social_insurance(record_id: int, db: Session = Depends(get_db)):
     """获取单条城市社保基准数据"""
     record = db.query(CitySocialInsurance).filter(CitySocialInsurance.id == record_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="数据不存在")
-    return record
-
-
-@router.get("/city/{city_name}", response_model=CitySocialInsuranceOut)
-def get_by_city_name(city_name: str, db: Session = Depends(get_db)):
-    """根据城市名称获取社保基准数据"""
-    record = db.query(CitySocialInsurance).filter(
-        (CitySocialInsurance.city == city_name) | (CitySocialInsurance.city_alias == city_name)
-    ).first()
-    if not record:
-        raise HTTPException(status_code=404, detail=f"城市 {city_name} 的社保数据不存在")
     return record
 
 
@@ -116,45 +295,14 @@ def batch_create_city_social_insurance(data: dict, db: Session = Depends(get_db)
 def import_excel(file: UploadFile, db: Session = Depends(get_db)):
     """导入Excel文件"""
     try:
-        # Read Excel file
-        df = pd.read_excel(file.file.read(), header=None)
+        file_bytes = file.file.read()
+        try:
+            records = _parse_2025_workbook(file_bytes)
+        except ValueError:
+            records = _parse_legacy_workbook(file_bytes)
 
-        # Parse data (skip first 3 header rows)
-        records = []
-        for idx, row in df.iterrows():
-            if idx < 3:  # Skip header rows
-                continue
-
-            province = row[0] if pd.notna(row[0]) else None
-            city = row[1] if pd.notna(row[1]) else None
-
-            if not province or not city:
-                continue
-
-            record_data = {
-                "province": str(province),
-                "city": str(city),
-                "city_alias": str(city) if city != row[1] else None,
-                "upper_limit": int(row[2]) if pd.notna(row[2]) else 0,
-                "lower_limit": int(row[3]) if pd.notna(row[3]) else 0,
-                "calc_base": int(row[4]) if pd.notna(row[4]) else 0,
-                "injury_base": int(row[5]) if pd.notna(row[5]) else None,
-                "corp_pension_rate": float(row[6]) if pd.notna(row[6]) else None,
-                "corp_medical_rate": float(row[7]) if pd.notna(row[7]) else None,
-                "corp_injury_rate": float(row[8]) if pd.notna(row[8]) else None,
-                "corp_maternity_rate": float(row[9]) if pd.notna(row[9]) else None,
-                "corp_unemployment_rate": float(row[10]) if pd.notna(row[10]) else None,
-                "corp_disability_rate": float(row[11]) if pd.notna(row[11]) else None,
-                "corp_fund_rate": float(row[13]) if pd.notna(row[13]) else None,
-                "indiv_pension_rate": float(row[14]) if pd.notna(row[14]) else None,
-                "indiv_medical_rate": float(row[15]) if pd.notna(row[15]) else None,
-                "indiv_injury_rate": float(row[16]) if pd.notna(row[16]) else None,
-                "indiv_maternity_rate": float(row[17]) if pd.notna(row[17]) else None,
-                "indiv_unemployment_rate": float(row[18]) if pd.notna(row[18]) else None,
-                "indiv_fund_rate": float(row[19]) if pd.notna(row[19]) else None,
-                "is_active": True
-            }
-            records.append(record_data)
+        if not records:
+            raise HTTPException(status_code=400, detail="未识别到可导入的城市社保数据")
 
         # Clear existing data
         db.query(CitySocialInsurance).delete()
