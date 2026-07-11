@@ -133,6 +133,13 @@
                   <span class="input-prefix">¥</span>
                   <input v-model.number="row.salary" class="row-input" type="number" @input="onSalaryChange(index)" />
                 </div>
+                <div
+                  v-if="row.salarySource && row.salarySource !== 'exact' && row.salarySource !== 'manual'"
+                  class="salary-source-hint"
+                  :title="getSalarySourceTitle(row)"
+                >
+                  参考值{{ row.salarySourceCity ? `（${row.salarySourceCity}）` : '' }}
+                </div>
               </div>
               <div class="col-salary">
                 <div class="input-with-prefix">
@@ -180,21 +187,32 @@
             <div class="header-left">
               <span class="material-symbols-outlined card-icon">tune</span>
               <h3 class="card-title">
-                灵活人力成本（月度）
-                <span class="card-title-amount">{{ formatCurrency(riskCostMonthly) }}</span>
+                其他成本构成（月度）
+                <span class="card-title-amount">{{ formatCurrency(otherCostMonthly) }}</span>
               </h3>
             </div>
             <div class="header-right">
-              <div class="global-mode-switch">
-                <label class="switch-label">全局调整</label>
-                <label class="switch">
-                  <input type="checkbox" v-model="flexCostGlobalMode" />
-                  <span class="slider"></span>
-                </label>
+              <div class="other-cost-actions">
+                <button
+                  class="add-row-btn suggest-value-btn"
+                  :class="{ active: suggestedValuesApplied }"
+                  :title="suggestedValuesApplied ? '再次点击清空所有建议值' : '点击填充所有建议值'"
+                  @click="toggleSuggestedOtherCostValues"
+                >
+                  <span class="material-symbols-outlined">auto_fix_high</span>
+                  应用建议值
+                </button>
+                <div class="global-mode-switch">
+                  <label class="switch-label">全局调整</label>
+                  <label class="switch">
+                    <input type="checkbox" v-model="otherCostGlobalMode" />
+                    <span class="slider"></span>
+                  </label>
+                </div>
               </div>
               <div class="row-filter">
                 <label class="filter-label">筛选岗位序号:</label>
-                <select v-model="selectedFlexRowIndex" class="filter-select">
+                <select v-model="selectedOtherCostRowIndex" class="filter-select">
                   <option v-for="(row, index) in positionRows" :key="row.id" :value="index">
                     序号 {{ index + 1 }} - {{ row.city ? getCityName(row.city) : '请选择' }}
                   </option>
@@ -202,49 +220,83 @@
               </div>
             </div>
           </div>
-          <table class="mgmt-table">
-            <thead>
-              <tr>
-                <th>科目</th>
-                <th>税前月薪</th>
-                <th>比例</th>
-                <th>金额</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td class="mgmt-name-cell">风险金</td>
-                <td class="mgmt-salary-cell">{{ formatCurrency(selectedFlexRowSalary) }}</td>
-                <td class="mgmt-rate-cell">
-                  <div class="rate-input-wrapper">
-                    <input
-                      v-model.number="selectedFlexRowRiskRatio"
-                      class="rate-input"
-                      type="number"
-                      step="0.1"
-                      min="0"
-                    />
-                    <span class="rate-symbol">%</span>
-                  </div>
-                </td>
-                <td class="mgmt-amount-cell">{{ formatCurrency(selectedFlexRowRiskAmount) }}</td>
-              </tr>
-            </tbody>
-            <tfoot>
-              <tr class="mgmt-total-row">
-                <td>灵活人力成本小计（当前岗位月度）</td>
-                <td>-</td>
-                <td>-</td>
-                <td class="mgmt-total-amount">{{ formatCurrency(selectedFlexRowRiskAmount) }}</td>
-              </tr>
-              <tr class="mgmt-total-row">
-                <td>灵活人力成本小计（全部岗位总计）</td>
-                <td>-</td>
-                <td>-</td>
-                <td class="mgmt-total-amount">{{ formatCurrency(riskCostMonthly) }}</td>
-              </tr>
-            </tfoot>
-          </table>
+          <div class="other-cost-groups">
+            <section
+              v-for="group in selectedRowOtherCostGroups"
+              :key="group.category"
+              class="other-cost-group"
+              :class="{ collapsed: isOtherCostGroupCollapsed(group.category) }"
+            >
+              <div class="other-cost-group-header">
+                <div class="other-cost-group-title">
+                  <button
+                    class="collapse-toggle-btn"
+                    type="button"
+                    :aria-label="isOtherCostGroupCollapsed(group.category) ? `展开${group.category}` : `折叠${group.category}`"
+                    :title="isOtherCostGroupCollapsed(group.category) ? '展开明细' : '折叠明细'"
+                    @click="toggleOtherCostGroup(group.category)"
+                  >
+                    <span class="material-symbols-outlined">
+                      {{ isOtherCostGroupCollapsed(group.category) ? 'keyboard_arrow_right' : 'keyboard_arrow_down' }}
+                    </span>
+                  </button>
+                  <h4>{{ group.category }}</h4>
+                </div>
+                <span>{{ formatCurrency(group.total) }}</span>
+              </div>
+              <table v-show="!isOtherCostGroupCollapsed(group.category)" class="mgmt-table other-cost-table">
+                <thead>
+                  <tr>
+                    <th>成本项目</th>
+                    <th>计算方式</th>
+                    <th>测算依据</th>
+                    <th>输入值/比例</th>
+                    <th>月度金额/人</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="entry in group.items" :key="`${entry.item.category}-${entry.item.name}`">
+                    <td class="mgmt-name-cell">{{ entry.item.name }}</td>
+                    <td class="mgmt-salary-cell">{{ entry.item.calculation }}</td>
+                    <td class="mgmt-salary-cell">{{ entry.item.basis }}</td>
+                    <td class="mgmt-rate-cell">
+                      <div class="rate-input-wrapper">
+                        <input
+                          :value="entry.item.value"
+                          @input="onOtherCostValueChange(entry.index, ($event.target as HTMLInputElement).value)"
+                          class="rate-input"
+                          type="number"
+                          :step="getOtherCostStep(entry.item)"
+                        />
+                        <span class="rate-symbol">{{ getOtherCostValueSuffix(entry.item) }}</span>
+                      </div>
+                    </td>
+                    <td class="mgmt-amount-cell">{{ formatCurrency(entry.item.amount) }}</td>
+                  </tr>
+                </tbody>
+                <tfoot>
+                  <tr class="mgmt-total-row">
+                    <td>{{ group.category }}小计（当前岗位月度）</td>
+                    <td>-</td>
+                    <td>-</td>
+                    <td>-</td>
+                    <td class="mgmt-total-amount">{{ formatCurrency(group.total) }}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </section>
+
+            <div class="other-cost-grand-total">
+              <div>
+                <span>其他成本小计（当前岗位月度）</span>
+                <strong>{{ formatCurrency(selectedRowOtherCostTotal) }}</strong>
+              </div>
+              <div>
+                <span>其他成本小计（全部岗位月度）</span>
+                <strong>{{ formatCurrency(otherCostMonthly) }}</strong>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Section 3: Rules & Config -->
@@ -454,7 +506,7 @@
         </div>
 
         <!-- Section 4: Optional Cost -->
-        <div class="card optional-cost-card">
+        <div v-if="false" class="card optional-cost-card">
           <div class="card-header rules-header">
             <div class="header-left">
               <span class="material-symbols-outlined card-icon">add_circle</span>
@@ -696,6 +748,7 @@
                     v-model.number="globalParams.paymentCycle"
                     class="param-input"
                     type="number"
+                    @input="calculateAll"
                   />
                   <span class="input-suffix">天</span>
                 </div>
@@ -853,6 +906,10 @@ interface PositionRow {
   city: string
   position: string
   salary: number
+  // 薪资来源：exact=城市精确命中 / provincial_capital=省会参考 / national_baseline=全国基准 / manual=手动输入
+  salarySource?: string
+  salarySourceCity?: string
+  salaryManuallyEdited?: boolean
   afterTaxSalary: number
   personnelCount: number
   cycleUnit: 'month' | 'year' | 'day'
@@ -869,6 +926,7 @@ interface PositionRow {
   opsCosts: OpsCostItem[]
   onDemandCosts: OnDemandCostItem[]
   contingencyCosts: ContingencyCostItem[]
+  otherCosts: OtherCostItem[]
 }
 
 // Social rule item
@@ -879,6 +937,8 @@ interface SocialRuleItem {
   corpRate: number
   indivRate: number
   calcBase: number
+  // 工伤保险专用：城市独立工伤基数（无则按月薪封顶取值）
+  injuryBaseFixed?: number
 }
 
 // Fund rule item
@@ -891,11 +951,36 @@ interface FundRuleItem {
   calcBase: number
 }
 
+interface CityHardCostRules {
+  socialRules: SocialRuleItem[]
+  fundRules: FundRuleItem[]
+  injuryBase: number
+}
+
 // Management rule item
 interface MgmtRuleItem {
   name: string
   rateValue: number
   rate: string
+  amount: number
+}
+
+type OtherCostFormula =
+  | 'fixed'
+  | 'salaryRate'
+  | 'fixedMonthlySpread'
+  | 'benchReserve'
+  | 'fundingOccupancy'
+  | 'badDebtReserve'
+  | 'laborDisputeReserve'
+
+interface OtherCostItem {
+  category: string
+  name: string
+  formula: OtherCostFormula
+  calculation: string
+  basis: string
+  value: number
   amount: number
 }
 
@@ -979,6 +1064,47 @@ const getDefaultContingencyCosts = (): ContingencyCostItem[] => [
   { name: '休假备份成本', turnoverRate: 0, days: 0, personnel: 0, unitPrice: 0, amount: 0 }
 ]
 
+const OTHER_COST_MONTHLY_FACTOR = 1.33
+
+// 2025 版驻场服务其他成本模板，对应 Excel「实际报价测算」成本构成 rows 35-78。
+const getDefaultOtherCosts = (): OtherCostItem[] => [
+  { category: '直接人力成本', name: '月度福利费', formula: 'fixed', calculation: '固定金额', basis: '餐补', value: 0, amount: 0 },
+  { category: '直接人力成本', name: '通讯交通补贴', formula: 'fixed', calculation: '固定金额', basis: '通讯、交通等补贴', value: 0, amount: 0 },
+  { category: '直接人力成本', name: '商业保险/雇主责任险（医疗10W，身故100W，身残按照比例支付）', formula: 'fixed', calculation: '固定金额', basis: '每人每月', value: 0, amount: 0 },
+  { category: '直接人力成本', name: '商业保险/意外险10W', formula: 'fixed', calculation: '固定金额', basis: '每人每月', value: 0, amount: 0 },
+  { category: '直接人力成本', name: '体检费摊销', formula: 'fixed', calculation: '年度体检费/12', basis: '年度体检费600，按12个月摊销', value: 0, amount: 0 },
+  { category: '直接人力成本', name: '节日福利摊销', formula: 'fixed', calculation: '年度节日福利/12', basis: '中秋/端午/春节等全年累加后摊销', value: 0, amount: 0 },
+  { category: '直接人力成本', name: '加班费', formula: 'fixed', calculation: '根据项目实际情况按工时计算', basis: '每人每月', value: 0, amount: 0 },
+  { category: '直接人力成本', name: '其他员工福利/补贴', formula: 'fixed', calculation: '固定金额', basis: '每人每月', value: 0, amount: 0 },
+  { category: '人员获取成本', name: '招聘成本摊销', formula: 'salaryRate', calculation: '税前工资×招聘成本比例系数', basis: '建议1.5%，取值范围1.5%-5%', value: 0, amount: 0 },
+  { category: '人员获取成本', name: '内推奖金摊销', formula: 'fixed', calculation: '内推奖金/摊销月数/项目人数', basis: '无则填0，建议12个月', value: 0, amount: 0 },
+  { category: '人员获取成本', name: '入职体检费用摊销', formula: 'fixedMonthlySpread', calculation: '个人入职单次体检费用/12', basis: '无则填0，建议摊销12个月', value: 0, amount: 0 },
+  { category: '人员稳定成本', name: '人员替换/空档风险', formula: 'salaryRate', calculation: '税前工资×空档风险比例系数', basis: '建议2%，取值范围2%-5%', value: 0, amount: 0 },
+  { category: '人员稳定成本', name: '待岗成本储备', formula: 'benchReserve', calculation: '税前工资×待岗概率×2/12', basis: '默认待岗概率5%、待岗2个月、项目周期12个月', value: 0, amount: 0 },
+  { category: '人员稳定成本', name: '项目交接期成本/TT期成本人员成本', formula: 'fixed', calculation: '计划总费用/人数/摊销月数', basis: '每人每月', value: 0, amount: 0 },
+  { category: '人员稳定成本', name: '培训成本摊销', formula: 'salaryRate', calculation: '税前工资×培训比例系数', basis: '建议1%，取值范围0.5%-5%', value: 0, amount: 0 },
+  { category: '交付管理成本', name: 'PM/交付管理分摊', formula: 'salaryRate', calculation: '税前工资×系数', basis: '建议1.5%-8%', value: 0, amount: 0 },
+  { category: '交付管理成本', name: '质量管理成本', formula: 'salaryRate', calculation: '税前工资×质量管理比例系数', basis: '建议0.5%-1.5%', value: 0, amount: 0 },
+  { category: '交付管理成本', name: 'SLA/KPI管理成本', formula: 'fixed', calculation: '根据实际项目计算', basis: '每人每月', value: 0, amount: 0 },
+  { category: '后台职能成本', name: 'HR分摊', formula: 'salaryRate', calculation: '税前工资×HR比例系数', basis: '建议1.5%，取值范围1%-3%', value: 0, amount: 0 },
+  { category: '后台职能成本', name: '财务分摊', formula: 'salaryRate', calculation: '税前工资×财务比例系数', basis: '建议0.05%，取值范围0.05%-1%', value: 0, amount: 0 },
+  { category: '后台职能成本', name: '法务分摊', formula: 'salaryRate', calculation: '税前工资×法务比例系数', basis: '建议0.05%，取值范围0.05%-1%', value: 0, amount: 0 },
+  { category: '后台职能成本', name: '行政分摊', formula: 'salaryRate', calculation: '税前工资×行政比例系数', basis: '建议0.05%，取值范围0.05%-1%', value: 0, amount: 0 },
+  { category: '后台职能成本', name: 'IT系统/OA/账号/邮箱分摊', formula: 'fixed', calculation: '固定金额', basis: '每人每月', value: 0, amount: 0 },
+  { category: '后台职能成本', name: '总部综合管理费', formula: 'salaryRate', calculation: '税前工资×总部管理费比例', basis: '建议0.05%，取值范围0.05%-1%', value: 0, amount: 0 },
+  { category: '商务客户成本', name: '销售/客户维护分摊', formula: 'salaryRate', calculation: '税前工资×摊销系数', basis: '建议0.5%，可按项目计入销售成本', value: 0, amount: 0 },
+  { category: '设备办公成本', name: '电脑折旧', formula: 'fixed', calculation: '电脑金额/折旧月数', basis: '一般24-36个月', value: 0, amount: 0 },
+  { category: '设备办公成本', name: '软件授权', formula: 'fixed', calculation: '月度授权费', basis: '软件授权月费', value: 0, amount: 0 },
+  { category: '设备办公成本', name: '办公用品', formula: 'fixed', calculation: '月摊销', basis: '办公用品月摊销', value: 0, amount: 0 },
+  { category: '设备办公成本', name: '工位/办公场地', formula: 'fixed', calculation: '月摊销', basis: '客户提供工位可填0', value: 0, amount: 0 },
+  { category: '差旅异地成本', name: '差旅摊销（交通、食宿、差旅补贴）', formula: 'fixed', calculation: '项目差旅总预算/人数/摊销月数', basis: '每人每月', value: 0, amount: 0 },
+  { category: '差旅异地成本', name: '团建员工关怀摊销', formula: 'fixed', calculation: '费用总预算/人数/摊销月数', basis: '每人每月', value: 0, amount: 0 },
+  { category: '资金风险成本', name: '资金占用成本', formula: 'fundingOccupancy', calculation: '月成本×账期×年化利率/12', basis: '填0不计入，填大于0时按全局账期和资金成本率自动计算', value: 0, amount: 0 },
+  { category: '资金风险成本', name: '坏账风险准备', formula: 'badDebtReserve', calculation: '月成本×坏账比例', basis: '建议0.5%，取值范围0.5%-3%', value: 0, amount: 0 },
+  { category: '资金风险成本', name: '劳动纠纷风险准备', formula: 'laborDisputeReserve', calculation: '税前工资×劳动风险比例', basis: '建议8.33%，取值范围8.33%-16.6%', value: 0, amount: 0 },
+  { category: '资金风险成本', name: '赔付/违约风险准备', formula: 'salaryRate', calculation: '阶段成本×违约风险比例', basis: '无则填0，按实际项目计算', value: 0, amount: 0 }
+]
+
 // Position rows (multi-line support)
 const positionRows = ref<PositionRow[]>([
   {
@@ -998,7 +1124,8 @@ const positionRows = ref<PositionRow[]>([
     riskRatio: 8.6,
     opsCosts: getDefaultOpsCosts(),
     onDemandCosts: getDefaultOnDemandCosts(),
-    contingencyCosts: getDefaultContingencyCosts()
+    contingencyCosts: getDefaultContingencyCosts(),
+    otherCosts: getDefaultOtherCosts()
   }
 ])
 
@@ -1010,19 +1137,21 @@ const selectedFlexRowIndex = ref(0)
 
 // Selected row index for optional cost (可选人力成本)
 const selectedOptionalRowIndex = ref(0)
+const selectedOtherCostRowIndex = ref(0)
 
 // Global mode switches for each section (全局模式开关)
 // When enabled, changes apply to all positions instead of just the selected one
 const flexCostGlobalMode = ref(false)  // 灵活人力成本全局模式
 const hardCostGlobalMode = ref(false)  // 人力硬成本全局模式
 const optionalCostGlobalMode = ref(false)  // 可选人力成本全局模式
+const otherCostGlobalMode = ref(false)  // 其他成本全局模式
 
 // Global parameters (VAT rate and payment cycle)
 const globalParams = ref({
   vatRate: 6,
-  paymentCycle: 0,
+  paymentCycle: 90,
   profitRate: 0,
-  fundingCostRate: 3  // 年化资金成本率，默认 3%
+  fundingCostRate: 3.5  // 年化资金成本率，默认 3.5%
 })
 
 // City options - fetched from backend
@@ -1194,11 +1323,19 @@ function onPositionBlur(row: PositionRow, rowId: string) {
   if (searchQuery) {
     // Check if it matches any position option
     const matchedPos = availablePositions.value.find(p => p.name === searchQuery || p.id === searchQuery)
+    const oldPosition = row.position
     if (matchedPos) {
       row.position = matchedPos.id
     } else {
       // Use custom input as the position value
       row.position = searchQuery
+    }
+    // 命中标准岗位且发生变化时联动取薪
+    if (matchedPos && oldPosition !== row.position) {
+      const index = positionRows.value.findIndex(r => r.id === row.id)
+      if (index !== -1) {
+        onRowPositionChange(index)
+      }
     }
   }
   closeDropdown(rowId, 'position')
@@ -1224,8 +1361,7 @@ let nextRowId = 2
 const activeTab = ref('social')
 const ruleTabs = [
   { key: 'social', label: '社保规则' },
-  { key: 'fund', label: '公积金规则' },
-  { key: 'mgmt', label: '管理分摊' }
+  { key: 'fund', label: '公积金规则' }
 ]
 
 // Optional cost tabs
@@ -1455,6 +1591,81 @@ const allRowsMgmtTotal = computed(() => {
   }, 0)
 })
 
+const selectedRowOtherCosts = computed(() => {
+  const row = positionRows.value[selectedOtherCostRowIndex.value]
+  if (!row) return getDefaultOtherCosts()
+  recalculateOtherCostsForRow(row)
+  return row.otherCosts || getDefaultOtherCosts()
+})
+
+const otherCostCategoryOrder = [
+  '直接人力成本',
+  '人员获取成本',
+  '人员稳定成本',
+  '交付管理成本',
+  '后台职能成本',
+  '商务客户成本',
+  '设备办公成本',
+  '差旅异地成本',
+  '资金风险成本'
+]
+
+const collapsedOtherCostGroups = ref<Record<string, boolean>>(
+  Object.fromEntries(otherCostCategoryOrder.map(category => [category, true]))
+)
+
+const otherCostSuggestedValues: Record<string, number> = {
+  招聘成本摊销: 1.5,
+  '人员替换/空档风险': 2,
+  培训成本摊销: 1,
+  HR分摊: 1,
+  '销售/客户维护分摊': 0.5,
+  坏账风险准备: 0.5,
+  劳动纠纷风险准备: 8.33
+}
+
+function isOtherCostGroupCollapsed(category: string): boolean {
+  return collapsedOtherCostGroups.value[category] !== false
+}
+
+function toggleOtherCostGroup(category: string) {
+  collapsedOtherCostGroups.value[category] = !isOtherCostGroupCollapsed(category)
+}
+
+const selectedRowOtherCostGroups = computed(() => {
+  const entries = selectedRowOtherCosts.value.map((item, index) => ({ item, index }))
+  return otherCostCategoryOrder
+    .map(category => {
+      const items = entries.filter(entry => entry.item.category === category)
+      const total = items.reduce((sum, entry) => sum + (Number(entry.item.amount) || 0), 0)
+      return { category, items, total }
+    })
+    .filter(group => group.items.length > 0)
+})
+
+const selectedRowOtherCostTotal = computed(() => {
+  const row = positionRows.value[selectedOtherCostRowIndex.value]
+  if (!row) return 0
+  return getOtherCostTotalForRow(row)
+})
+
+const otherCostMonthly = computed(() => {
+  return positionRows.value.reduce((sum, row) => sum + getOtherCostTotalForRow(row), 0)
+})
+
+const otherCostTotal = computed(() => {
+  return positionRows.value.reduce((sum, row) => {
+    return sum + getOtherCostTotalForRow(row) * (row.personnelCount || 1) * getServiceMonths(row)
+  }, 0)
+})
+
+function getOtherCostCategoryTotalForRow(row: PositionRow, category: string): number {
+  recalculateOtherCostsForRow(row)
+  return (row.otherCosts || [])
+    .filter(item => item.category === category)
+    .reduce((sum, item) => sum + (Number(item.amount) || 0), 0)
+}
+
 // Reset hard cost to default values for the selected row
 async function resetHardCostToDefault() {
   const row = positionRows.value[selectedRowIndex.value]
@@ -1469,57 +1680,16 @@ async function resetHardCostToDefault() {
   if (city) {
     // Clear the cache for this city to force reload from backend
     delete citySocialRulesCache.value[city]
-    
-    // Reload from backend
-    const cityName = getCityName(city)
-    try {
-      const response = await axios.get(`${API_URL}/city-social-insurance/`, {
-        params: { city: cityName }
-      })
 
-      let data = null
-      if (response.data && response.data.length > 0) {
-        data = response.data[0]
-      } else {
-        // If city not found, try to get the default city's data
-        const defaultResponse = await axios.get(`${API_URL}/city-social-insurance/`, {
-          params: { city: '默认' }
-        })
-        if (defaultResponse.data && defaultResponse.data.length > 0) {
-          data = defaultResponse.data[0]
-        }
-      }
+    try {
+      const data = await fetchCitySocialInsuranceData(city)
 
       if (data) {
-        const injuryBase = data.injury_base || salary
-
-        // Helper function to round rate
-        const roundRate = (rate: number | null | undefined, defaultValue: number) => {
-          if (rate === null || rate === undefined) return defaultValue
-          return Math.round(rate * 100 * 100) / 100
-        }
-
-        // Restore social rules from backend data
-        row.socialRules = [
-          { type: '养老保险', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_pension_rate, 16), indivRate: roundRate(data.indiv_pension_rate, 8), calcBase: salary },
-          { type: '医疗保险', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_medical_rate, 10), indivRate: roundRate(data.indiv_medical_rate, 2), calcBase: salary },
-          { type: '失业保险', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_unemployment_rate, 0.5), indivRate: roundRate(data.indiv_unemployment_rate, 0.5), calcBase: salary },
-          { type: '工伤保险', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_injury_rate, 0.16), indivRate: 0, calcBase: injuryBase },
-          { type: '生育保险', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_maternity_rate, 1), indivRate: 0, calcBase: salary },
-          { type: '残保金', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_disability_rate, 1.5), indivRate: 0, calcBase: salary }
-        ]
-
-        // Restore fund rules from backend data
-        row.fundRules = [
-          { type: '住房公积金', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_fund_rate, 7), indivRate: roundRate(data.indiv_fund_rate, 7), calcBase: salary }
-        ]
+        const rules = buildCityHardCostRules(data, salary)
+        applyHardCostRulesToRow(row, rules)
 
         // Update cache
-        citySocialRulesCache.value[city] = {
-          socialRules: row.socialRules,
-          fundRules: row.fundRules,
-          injuryBase: injuryBase
-        }
+        citySocialRulesCache.value[city] = rules
 
         ElMessage.success('已恢复为默认值')
       }
@@ -1529,7 +1699,7 @@ async function resetHardCostToDefault() {
     }
   } else {
     // No city selected, use hardcoded defaults
-    const injuryBase = salary > 0 ? salary : 0
+    const injuryBase = clampBase(salary, 7310, 36549)
     row.socialRules = [
       { type: '养老保险', minBase: 7310, maxBase: 36549, corpRate: 16, indivRate: 8, calcBase: salary },
       { type: '医疗保险', minBase: 7310, maxBase: 36549, corpRate: 10, indivRate: 2, calcBase: salary },
@@ -1550,12 +1720,6 @@ async function resetHardCostToDefault() {
 
 // Reset hard cost to default values for ALL rows
 async function resetAllHardCostToDefault() {
-  // Helper function to round rate
-  const roundRate = (rate: number | null | undefined, defaultValue: number) => {
-    if (rate === null || rate === undefined) return defaultValue
-    return Math.round(rate * 100 * 100) / 100
-  }
-
   // Clear all city cache to force reload from backend
   citySocialRulesCache.value = {}
 
@@ -1572,49 +1736,15 @@ async function resetAllHardCostToDefault() {
 
     if (city) {
       // Reload from backend
-      const cityName = getCityName(city)
       try {
-        const response = await axios.get(`${API_URL}/city-social-insurance/`, {
-          params: { city: cityName }
-        })
-
-        let data = null
-        if (response.data && response.data.length > 0) {
-          data = response.data[0]
-        } else {
-          // If city not found, try to get the default city's data
-          const defaultResponse = await axios.get(`${API_URL}/city-social-insurance/`, {
-            params: { city: '默认' }
-          })
-          if (defaultResponse.data && defaultResponse.data.length > 0) {
-            data = defaultResponse.data[0]
-          }
-        }
+        const data = await fetchCitySocialInsuranceData(city)
 
         if (data) {
-          const injuryBase = data.injury_base || salary
-
-          // Restore social rules from backend data
-          row.socialRules = [
-            { type: '养老保险', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_pension_rate, 16), indivRate: roundRate(data.indiv_pension_rate, 8), calcBase: salary },
-            { type: '医疗保险', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_medical_rate, 10), indivRate: roundRate(data.indiv_medical_rate, 2), calcBase: salary },
-            { type: '失业保险', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_unemployment_rate, 0.5), indivRate: roundRate(data.indiv_unemployment_rate, 0.5), calcBase: salary },
-            { type: '工伤保险', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_injury_rate, 0.16), indivRate: 0, calcBase: injuryBase },
-            { type: '生育保险', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_maternity_rate, 1), indivRate: 0, calcBase: salary },
-            { type: '残保金', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_disability_rate, 1.5), indivRate: 0, calcBase: salary }
-          ]
-
-          // Restore fund rules from backend data
-          row.fundRules = [
-            { type: '住房公积金', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_fund_rate, 7), indivRate: roundRate(data.indiv_fund_rate, 7), calcBase: salary }
-          ]
+          const rules = buildCityHardCostRules(data, salary)
+          applyHardCostRulesToRow(row, rules)
 
           // Update cache
-          citySocialRulesCache.value[city] = {
-            socialRules: row.socialRules,
-            fundRules: row.fundRules,
-            injuryBase: injuryBase
-          }
+          citySocialRulesCache.value[city] = rules
 
           successCount++
         }
@@ -1624,7 +1754,7 @@ async function resetAllHardCostToDefault() {
       }
     } else {
       // No city selected, use hardcoded defaults
-      const injuryBase = salary > 0 ? salary : 0
+      const injuryBase = clampBase(salary, 7310, 36549)
       row.socialRules = [
         { type: '养老保险', minBase: 7310, maxBase: 36549, corpRate: 16, indivRate: 8, calcBase: salary },
         { type: '医疗保险', minBase: 7310, maxBase: 36549, corpRate: 10, indivRate: 2, calcBase: salary },
@@ -1770,6 +1900,78 @@ function onMgmtRateChange(index: number) {
   calculateAll()
 }
 
+function getOtherCostValueSuffix(item: OtherCostItem): string {
+  if ([
+    'salaryRate',
+    'benchReserve',
+    'badDebtReserve',
+    'laborDisputeReserve'
+  ].includes(item.formula)) {
+    return '%'
+  }
+  if (item.formula === 'fundingOccupancy') {
+    return '自动'
+  }
+  return '元'
+}
+
+function getOtherCostStep(item: OtherCostItem): string {
+  return getOtherCostValueSuffix(item) === '%' ? '0.01' : '0.01'
+}
+
+function onOtherCostValueChange(index: number, value: string) {
+  const currentRow = positionRows.value[selectedOtherCostRowIndex.value]
+  if (!currentRow || !currentRow.otherCosts[index]) return
+
+  const amount = Number(value)
+  currentRow.otherCosts[index].value = Number.isFinite(amount) ? amount : 0
+  recalculateOtherCostsForRow(currentRow)
+  currentRow.subtotal = calculateRowSubtotal(currentRow)
+
+  if (otherCostGlobalMode.value) {
+    positionRows.value.forEach(row => {
+      if (row.id !== currentRow.id && row.otherCosts?.[index]) {
+        row.otherCosts[index].value = currentRow.otherCosts[index].value
+        recalculateOtherCostsForRow(row)
+        row.subtotal = calculateRowSubtotal(row)
+      }
+    })
+  }
+}
+
+// 建议值开关状态：点亮=已填充建议值，再次点击清空并熄灭
+const suggestedValuesApplied = ref(false)
+
+function toggleSuggestedOtherCostValues() {
+  const currentRow = positionRows.value[selectedOtherCostRowIndex.value]
+  if (!currentRow?.otherCosts) return
+
+  const applying = !suggestedValuesApplied.value
+
+  const applyToRow = (row: PositionRow) => {
+    row.otherCosts?.forEach(item => {
+      if (Object.prototype.hasOwnProperty.call(otherCostSuggestedValues, item.name)) {
+        item.value = applying ? otherCostSuggestedValues[item.name] : 0
+      }
+    })
+    recalculateOtherCostsForRow(row)
+    row.subtotal = calculateRowSubtotal(row)
+  }
+
+  applyToRow(currentRow)
+
+  if (otherCostGlobalMode.value) {
+    positionRows.value.forEach(row => {
+      if (row.id !== currentRow.id) {
+        applyToRow(row)
+      }
+    })
+  }
+
+  suggestedValuesApplied.value = applying
+  calculateAll()
+}
+
 // Handle selected row change event
 function onSelectedRowChange() {
   updateSelectedRowCalcBase()
@@ -1791,52 +1993,16 @@ function updateSelectedRowCalcBase() {
   // Update social rules calcBase
   row.socialRules.forEach((item: any) => {
     if (item.type === '工伤保险') {
-      // If salary is 0, set injury calcBase to 0 as well
-      if (salary === 0) {
-        item.calcBase = 0
-      } else if (row.city) {
-        // Load injury_base from city data only when city is selected
-        loadCityInjuryBase(row.city).then(injuryBase => {
-          item.calcBase = injuryBase || salary
-        })
-      } else {
-        // If no city selected, use salary as fallback
-        item.calcBase = salary
-      }
+      item.calcBase = injuryCalcBase(item, salary)
     } else {
-      item.calcBase = salary
+      item.calcBase = clampBase(salary, item.minBase, item.maxBase)
     }
   })
 
   // Update fund rules calcBase
   row.fundRules.forEach((item: any) => {
-    item.calcBase = salary
+    item.calcBase = clampBase(salary, item.minBase, item.maxBase)
   })
-}
-
-// Load injury_base for a city
-async function loadCityInjuryBase(city: string): Promise<number> {
-  const cityName = getCityName(city)
-  try {
-    const response = await axios.get(`${API_URL}/city-social-insurance/`, {
-      params: { city: cityName }
-    })
-    if (response.data && response.data.length > 0) {
-      return response.data[0].injury_base || 0
-    } else {
-      // If city not found, try to get the default city's injury_base
-      console.log(`City "${cityName}" not found for injury_base, using default values`)
-      const defaultResponse = await axios.get(`${API_URL}/city-social-insurance/`, {
-        params: { city: '默认' }
-      })
-      if (defaultResponse.data && defaultResponse.data.length > 0) {
-        return defaultResponse.data[0].injury_base || 0
-      }
-    }
-  } catch (error) {
-    console.error('Failed to load injury_base:', error)
-  }
-  return 0
 }
 
 // On-demand cost data (kept for backward compatibility)
@@ -2128,9 +2294,9 @@ const selectedFlexRowRiskAmount = computed(() => {
   return salary * riskRatio
 })
 
-// Hard cost monthly: sum of (socialCostCorp + fundCostCorp + mgmtCost) for each row (per-person per-month)
+// Hard cost monthly: sum of (socialCostCorp + fundCostCorp) for each row (per-person per-month)
 // Not affected by personnelCount or serviceCycle
-// Uses item.calcBase to match the UI display (社保成本小计 + 公积金成本小计 + 管理分摊合计)
+// Uses item.calcBase to match the UI display (社保成本小计 + 公积金成本小计)
 const hardCostMonthly = computed(() => {
   return positionRows.value.reduce((sum, row) => {
     // Calculate social insurance cost (company only) - use item.calcBase
@@ -2143,13 +2309,8 @@ const hardCostMonthly = computed(() => {
       return s + calculateSocialCost(item.calcBase, item.corpRate)
     }, 0)
 
-    // Management cost total
-    const mgmtTotal = (row.mgmtRules || []).reduce((s: number, item: any) => {
-      return s + item.amount
-    }, 0)
-
-    // Monthly cost per person (社保+公积金+管理费用)
-    return sum + (socialCorpTotal + fundCorpTotal + mgmtTotal)
+    // Monthly cost per person (社保+公积金)
+    return sum + (socialCorpTotal + fundCorpTotal)
   }, 0)
 })
 
@@ -2161,23 +2322,21 @@ const optionalCostMonthly = computed(() => {
 })
 
 // Computed - Total project amount (without tax and profit)
-// Formula: 岗位小计测算合计 + 风险金成本 + 运营成本小计 + 按需成本小计 + 机动成本小计
+// Formula: 单人月成本（工资+社保公司+公积金公司+其他成本）× 人数 × 周期
 const totalSubtotal = computed(() => {
-  return baseSubtotal.value + riskCostMonthly.value + opsCostTotal.value + onDemandCostTotal.value + contingencyCostTotal.value
+  return baseSubtotal.value
 })
 
-// Computed - Position subtotal (sum of all row subtotals, with VAT only, no profit)
+// Computed - Position subtotal (sum of all row subtotals, without tax and profit)
 const positionSubtotal = computed(() => {
-  const vatMultiplier = 1 + (globalParams.value.vatRate ?? 6) / 100
-  return baseSubtotal.value * vatMultiplier
+  return baseSubtotal.value
 })
 
-// Computed - Base project amount (without funding cost)
-// Formula: totalSubtotal × (1 + 利润率) × (1 + 增值税率)
+// Computed - Base project amount (without VAT)
+// Formula: totalSubtotal × (1 + 利润率)
 const baseProjectAmount = computed(() => {
   const profitMultiplier = 1 + (globalParams.value.profitRate || 0) / 100
-  const vatMultiplier = 1 + (globalParams.value.vatRate ?? 6) / 100
-  return totalSubtotal.value * profitMultiplier * vatMultiplier
+  return totalSubtotal.value * profitMultiplier
 })
 
 // Computed - Funding cost rate for the payment cycle
@@ -2188,20 +2347,18 @@ const fundingCostRateForCycle = computed(() => {
   return fundingCostRate * (paymentCycle / 365)
 })
 
-// Computed - Final project amount (including funding cost)
-// 由于账期成本 = 项目总额 × 账期成本率，存在循环依赖
-// 数学推导：P = B + P × r => P = B / (1 - r)
-// 其中 P = 最终项目总额，B = 基础项目金额，r = 账期成本率
+// Computed - Final project amount
+// Formula: 未税报价 × (1 + 增值税率)
 const finalProjectAmount = computed(() => {
-  const rate = fundingCostRateForCycle.value
-  if (rate >= 1) return baseProjectAmount.value // 防止除以0或负数
-  return baseProjectAmount.value / (1 - rate)
+  const vatMultiplier = 1 + (globalParams.value.vatRate ?? 6) / 100
+  return baseProjectAmount.value * vatMultiplier
 })
 
-// Computed - Funding cost (账期成本)
-// Formula: finalProjectAmount × 年化资金成本率 × (账期天数 / 365)
+// Computed - Funding cost now lives inside the 2025 other-cost template.
 const fundingCost = computed(() => {
-  return finalProjectAmount.value * fundingCostRateForCycle.value
+  return positionRows.value.reduce((sum, row) => {
+    return sum + getOtherCostCategoryTotalForRow(row, '资金风险成本') * (row.personnelCount || 1) * getServiceMonths(row)
+  }, 0)
 })
 
 // Computed - Total personnel
@@ -2217,12 +2374,11 @@ const totalCycles = computed(() => {
   return cycles.join(' + ')
 })
 
-// Computed - Total gross profit (with tax and profit)
-// Formula: totalSubtotal × 利润率 × (1 + 增值税率)
+// Computed - Total gross profit (without VAT)
+// Formula: totalSubtotal × 利润率
 const totalGrossProfit = computed(() => {
   const profitRate = (globalParams.value.profitRate || 0) / 100
-  const vatMultiplier = 1 + (globalParams.value.vatRate ?? 6) / 100
-  return totalSubtotal.value * profitRate * vatMultiplier
+  return totalSubtotal.value * profitRate
 })
 
 // Computed - Total margin percentage (using global profit rate parameter)
@@ -2232,44 +2388,34 @@ const totalMargin = computed(() => {
 
 // Computed - Total deal amount (with VAT)
 const totalDealAmount = computed(() => {
-  const vatRate = (globalParams.value.vatRate || 0) / 100
-  return totalSubtotal.value * (1 + vatRate)
+  return finalProjectAmount.value
 })
 
 // Cost breakdown
 // 计算公式：各部分金额 / 项目总额 × 100
 // 使用项目总额作为分母，所有项占比之和为 100%
 const costBreakdown = computed(() => {
-  const vatMultiplier = 1 + (globalParams.value.vatRate ?? 6) / 100
   const projectTotal = finalProjectAmount.value
-
-  // 1. 人力管理成本 = 岗位小计测算合计 × (1+增值税率)
-  const hardCostAmount = baseSubtotal.value * vatMultiplier
-  const hardCostPercent = projectTotal > 0 ? Math.round(hardCostAmount / projectTotal * 100) : 0
-
-  // 2. 按需运营机动成本 = 可选人力成本合计 × (1+增值税率)
-  const optionalCostAmount = (opsCostTotal.value + onDemandCostTotal.value + contingencyCostTotal.value) * vatMultiplier
-  const opsMgmtPercent = projectTotal > 0 ? Math.round(optionalCostAmount / projectTotal * 100) : 0
-
-  // 3. 风险金 = 风险金成本 × (1+增值税率)
-  const riskAmount = riskCostMonthly.value * vatMultiplier
-  const riskPercent = projectTotal > 0 ? Math.round(riskAmount / projectTotal * 100) : 0
-
-  // 4. 账期成本 = 项目总额 × 年化资金成本率 × (账期天数 / 365)
-  const fundingCostAmount = fundingCost.value
-  const fundingCostPercent = projectTotal > 0 ? Math.round(fundingCostAmount / projectTotal * 100) : 0
-
-  // 5. 预估总毛利 = 成本总额 × 利润率 × (1+增值税率)
+  const salaryAmount = positionRows.value.reduce((sum, row) => {
+    return sum + (row.salary || 0) * (row.personnelCount || 1) * getServiceMonths(row)
+  }, 0)
+  const socialFundAmount = positionRows.value.reduce((sum, row) => {
+    const social = (row.socialRules || []).reduce((s: number, item: any) => s + calculateSocialCost(item.calcBase, item.corpRate), 0)
+    const fund = (row.fundRules || []).reduce((s: number, item: any) => s + calculateSocialCost(item.calcBase, item.corpRate), 0)
+    return sum + (social + fund) * (row.personnelCount || 1) * getServiceMonths(row)
+  }, 0)
+  const otherAmount = otherCostTotal.value
   const profitAmount = totalGrossProfit.value
-  // 使用补足法确保总和为 100%
-  const profitPercent = projectTotal > 0 ? (100 - hardCostPercent - opsMgmtPercent - riskPercent - fundingCostPercent) : 0
+  const taxAmount = finalProjectAmount.value - baseProjectAmount.value
+
+  const percent = (amount: number) => projectTotal > 0 ? Math.round(amount / projectTotal * 100) : 0
 
   return [
-    { name: '人力管理成本', percent: hardCostPercent, amount: hardCostAmount, color: '#3b82f6' },
-    { name: '按需运营机动成本', percent: opsMgmtPercent, amount: optionalCostAmount, color: '#a855f7' },
-    { name: '风险金', percent: riskPercent, amount: riskAmount, color: '#eab308' },
-    { name: '账期成本', percent: fundingCostPercent, amount: fundingCostAmount, color: '#22c55e' },
-    { name: '预估总毛利', percent: profitPercent, amount: profitAmount, color: '#10b981' }
+    { name: '税前工资', percent: percent(salaryAmount), amount: salaryAmount, color: '#3b82f6' },
+    { name: '社保公积金（公司）', percent: percent(socialFundAmount), amount: socialFundAmount, color: '#14b8a6' },
+    { name: '其他成本构成', percent: percent(otherAmount), amount: otherAmount, color: '#a855f7' },
+    { name: '预估总毛利', percent: percent(profitAmount), amount: profitAmount, color: '#10b981' },
+    { name: '增值税', percent: percent(taxAmount), amount: taxAmount, color: '#f59e0b' }
   ]
 })
 
@@ -2313,14 +2459,14 @@ const socialTotal = computed(() => {
 // Computed - Total housing fund cost for company
 const fundCostCorpTotal = computed(() => {
   return fundRules.value.reduce((sum, item) => {
-    return sum + (item.calcBase * item.corpRate)
+    return sum + calculateSocialCost(item.calcBase, item.corpRate)
   }, 0)
 })
 
 // Computed - Total housing fund cost for individual
 const fundCostIndivTotal = computed(() => {
   return fundRules.value.reduce((sum, item) => {
-    return sum + (item.calcBase * item.indivRate)
+    return sum + calculateSocialCost(item.calcBase, item.indivRate)
   }, 0)
 })
 
@@ -2366,6 +2512,87 @@ function getCurrentCityName(): string {
   return ''
 }
 
+function roundBackendRate(rate: number | null | undefined, defaultValue: number) {
+  if (rate === null || rate === undefined) return defaultValue
+  const normalized = Math.abs(rate) <= 1 ? rate * 100 : rate
+  return Math.round(normalized * 100) / 100
+}
+
+function getFundLowerLimit(data: any) {
+  return data.fund_lower_limit ?? data.lower_limit
+}
+
+function getFundUpperLimit(data: any) {
+  return data.fund_upper_limit ?? data.upper_limit
+}
+
+function getFundDefaultRate(data: any, defaultValue = 7) {
+  return roundBackendRate(data.fund_default_rate ?? data.corp_fund_rate ?? data.indiv_fund_rate, defaultValue)
+}
+
+async function fetchCitySocialInsuranceData(city: string) {
+  const cityName = getCityName(city)
+  if (!cityName) return null
+
+  try {
+    const response = await axios.get(`${API_URL}/city-social-insurance/city/${encodeURIComponent(cityName)}`)
+    return response.data || null
+  } catch (error) {
+    try {
+      const response = await axios.get(`${API_URL}/city-social-insurance/`, {
+        params: { city: cityName }
+      })
+      if (response.data && response.data.length > 0) {
+        return response.data[0]
+      }
+    } catch (listError) {
+      console.error(`Failed to load city social insurance data for ${cityName}:`, listError)
+    }
+  }
+
+  try {
+    const defaultResponse = await axios.get(`${API_URL}/city-social-insurance/city/${encodeURIComponent('默认')}`)
+    return defaultResponse.data || null
+  } catch {
+    return null
+  }
+}
+
+function buildCityHardCostRules(data: any, salary: number): CityHardCostRules {
+  const socialMin = Number(data?.lower_limit) || 0
+  const socialMax = Number(data?.upper_limit) || 0
+  const socialBase = clampBase(salary, socialMin, socialMax)
+  // 工伤基数：优先取城市独立工伤基数（同样受社保上下限封顶），否则与其他险种一致用封顶后月薪
+  const injuryBaseFixed = Number(data?.injury_base) || 0
+  const injuryBase = injuryBaseFixed > 0
+    ? clampBase(injuryBaseFixed, socialMin, socialMax)
+    : socialBase
+  const fundMin = Number(getFundLowerLimit(data)) || 0
+  const fundMax = Number(getFundUpperLimit(data)) || 0
+  const fundBase = clampBase(salary, fundMin, fundMax)
+  const fundRate = getFundDefaultRate(data, 7)
+
+  return {
+    socialRules: [
+      { type: '养老保险', minBase: socialMin, maxBase: socialMax, corpRate: roundBackendRate(data?.corp_pension_rate, 16), indivRate: roundBackendRate(data?.indiv_pension_rate, 8), calcBase: socialBase },
+      { type: '医疗保险', minBase: socialMin, maxBase: socialMax, corpRate: roundBackendRate(data?.corp_medical_rate, 10), indivRate: roundBackendRate(data?.indiv_medical_rate, 2), calcBase: socialBase },
+      { type: '失业保险', minBase: socialMin, maxBase: socialMax, corpRate: roundBackendRate(data?.corp_unemployment_rate, 0.5), indivRate: roundBackendRate(data?.indiv_unemployment_rate, 0.5), calcBase: socialBase },
+      { type: '工伤保险', minBase: socialMin, maxBase: socialMax, corpRate: roundBackendRate(data?.corp_injury_rate, 0.16), indivRate: 0, calcBase: injuryBase, injuryBaseFixed },
+      { type: '生育保险', minBase: socialMin, maxBase: socialMax, corpRate: roundBackendRate(data?.corp_maternity_rate, 0), indivRate: roundBackendRate(data?.indiv_maternity_rate, 0), calcBase: socialBase },
+      { type: '残保金', minBase: socialMin, maxBase: socialMax, corpRate: roundBackendRate(data?.corp_disability_rate, 0), indivRate: roundBackendRate(data?.indiv_disability_rate, 0), calcBase: socialBase }
+    ],
+    fundRules: [
+      { type: '住房公积金', minBase: fundMin, maxBase: fundMax, corpRate: fundRate, indivRate: fundRate, calcBase: fundBase }
+    ],
+    injuryBase
+  }
+}
+
+function applyHardCostRulesToRow(row: PositionRow, rules: CityHardCostRules) {
+  row.socialRules = JSON.parse(JSON.stringify(rules.socialRules))
+  row.fundRules = JSON.parse(JSON.stringify(rules.fundRules))
+}
+
 function formatNumber(num: number): string {
   return (num || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
@@ -2391,8 +2618,73 @@ function formatCurrencyCompact(num: number): string {
   return '¥ ' + (num || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
+function getServiceMonths(row: PositionRow): number {
+  const serviceCycleCount = row.serviceCycleCount || 1
+  if (row.cycleUnit === 'year') return serviceCycleCount * 12
+  if (row.cycleUnit === 'day') return serviceCycleCount / 30
+  return serviceCycleCount
+}
+
+function clampBase(value: number, minBase: number, maxBase: number): number {
+  const salary = Number(value) || 0
+  if (salary <= 0) return 0
+  const min = Number(minBase) || 0
+  const max = Number(maxBase) || 0
+  if (max > 0) return Math.min(Math.max(salary, min), max)
+  return Math.max(salary, min)
+}
+
+// 工伤保险计算基数：优先取城市独立工伤基数，否则用月薪；两者均按社保上下限封顶
+function injuryCalcBase(item: any, salary: number): number {
+  const fixed = Number(item?.injuryBaseFixed) || 0
+  if (fixed > 0) return clampBase(fixed, item.minBase, item.maxBase)
+  return clampBase(salary, item.minBase, item.maxBase)
+}
+
+function calculateOtherCostItem(item: OtherCostItem, row: PositionRow): number {
+  const salary = row.salary || 0
+  const value = Number(item.value) || 0
+  const monthlyCost = salary * OTHER_COST_MONTHLY_FACTOR
+
+  switch (item.formula) {
+    case 'salaryRate':
+      return salary * (value / 100)
+    case 'fixedMonthlySpread':
+      return value / 12
+    case 'benchReserve':
+      return salary * (value / 100) * 2 / 12
+    case 'fundingOccupancy': {
+      if (value <= 0) return 0
+      const paymentMonths = (globalParams.value.paymentCycle || 0) / 30
+      const annualRate = (globalParams.value.fundingCostRate || 0) / 100
+      return monthlyCost * paymentMonths * annualRate / 12
+    }
+    case 'badDebtReserve':
+      return monthlyCost * (value / 100)
+    case 'laborDisputeReserve':
+      return salary * (value / 100)
+    case 'fixed':
+    default:
+      return value
+  }
+}
+
+function recalculateOtherCostsForRow(row: PositionRow) {
+  if (!row.otherCosts) {
+    row.otherCosts = getDefaultOtherCosts()
+  }
+  row.otherCosts.forEach(item => {
+    item.amount = Math.round(calculateOtherCostItem(item, row) * 100) / 100
+  })
+}
+
+function getOtherCostTotalForRow(row: PositionRow): number {
+  recalculateOtherCostsForRow(row)
+  return (row.otherCosts || []).reduce((sum, item) => sum + (Number(item.amount) || 0), 0)
+}
+
 // Calculate a single row's subtotal
-// New formula: 税前月薪 + 社保成本（公司）+ 公积金成本（公司）+ 管理分摊合计
+// New formula: 税前月薪 + 社保成本（公司）+ 公积金成本（公司）+ 其他成本合计
 // Note: Only company portion, excludes individual portion
 // Uses the row's own rules (each row can have different city and custom rates)
 function calculateRowSubtotal(row: PositionRow): number {
@@ -2401,7 +2693,6 @@ function calculateRowSubtotal(row: PositionRow): number {
   // Use the row's own rules
   const currentSocialRules = row.socialRules || getDefaultSocialRules()
   const currentFundRules = row.fundRules || getDefaultFundRules()
-  const currentMgmtRules = row.mgmtRules || getDefaultMgmtRules()
 
   // Calculate social insurance cost (company only) for this row
   const socialCorpTotalForRow = currentSocialRules.reduce((sum: number, item: any) => {
@@ -2413,27 +2704,17 @@ function calculateRowSubtotal(row: PositionRow): number {
     return sum + calculateSocialCost(item.calcBase, item.corpRate)
   }, 0)
 
-  // Management cost total - using row's own mgmt rules
-  const mgmtTotalForRow = currentMgmtRules.reduce((sum: number, item: any) => {
-    return sum + item.amount
-  }, 0)
+  const otherCostTotalForRow = getOtherCostTotalForRow(row)
 
-  // Monthly subtotal per person: 税前月薪 + 社保（公司）+ 公积金（公司）+ 管理分摊合计
-  const monthlySubtotalPerPerson = salary + socialCorpTotalForRow + fundCorpTotalForRow + mgmtTotalForRow
+  // Monthly subtotal per person: 税前月薪 + 社保（公司）+ 公积金（公司）+ 其他成本合计
+  const monthlySubtotalPerPerson = salary + socialCorpTotalForRow + fundCorpTotalForRow + otherCostTotalForRow
 
   // Round to 2 decimal places to match display precision
   const roundedMonthlySubtotal = Math.round(monthlySubtotalPerPerson * 100) / 100
 
   // Calculate total based on personnel and cycle
   const personnelCount = row.personnelCount || 1
-  const serviceCycleCount = row.serviceCycleCount || 1
-
-  let totalMonths = serviceCycleCount
-  if (row.cycleUnit === 'year') {
-    totalMonths = serviceCycleCount * 12
-  } else if (row.cycleUnit === 'day') {
-    totalMonths = serviceCycleCount / 30
-  }
+  const totalMonths = getServiceMonths(row)
 
   return roundedMonthlySubtotal * personnelCount * totalMonths
 }
@@ -2452,25 +2733,17 @@ function calculateRow(index: number, skipAfterTaxCalc = false) {
 
   // Update calcBase for this row's rules when salary changes
   row.socialRules.forEach((item: any) => {
-    if (item.type !== '工伤保险') {
-      item.calcBase = salary
+    if (item.type === '工伤保险') {
+      item.calcBase = injuryCalcBase(item, salary)
     } else {
-      // For 工伤保险, if salary is 0, set calcBase to 0
-      if (salary === 0) {
-        item.calcBase = 0
-      } else if (row.city && item.calcBase === 0) {
-        // If salary changed from 0 to non-zero and city is selected, reload injury_base
-        loadCityInjuryBase(row.city).then(injuryBase => {
-          item.calcBase = injuryBase || salary
-        })
-      }
-      // Otherwise, keep the existing value (loaded from city data)
+      item.calcBase = clampBase(salary, item.minBase, item.maxBase)
     }
   })
   row.fundRules.forEach((item: any) => {
-    item.calcBase = salary
+    item.calcBase = clampBase(salary, item.minBase, item.maxBase)
   })
 
+  recalculateOtherCostsForRow(row)
   row.subtotal = calculateRowSubtotal(row)
 
   // Auto-calculate after-tax salary if not manually editing
@@ -2495,12 +2768,23 @@ function calculateRow(index: number, skipAfterTaxCalc = false) {
 
 // Handle salary change - auto-calculate after-tax salary
 function onSalaryChange(index: number) {
+  const row = positionRows.value[index]
+  if (row) {
+    // 用户手动修改薪资后，城市/岗位联动不再自动覆盖
+    row.salaryManuallyEdited = true
+    row.salarySource = 'manual'
+    row.salarySourceCity = undefined
+  }
   calculateRow(index, false)
 }
 
 // Handle after-tax salary change - reverse calculate salary
 function onAfterTaxSalaryChange(index: number) {
   const row = positionRows.value[index]
+  // 反推税前视为手动定薪
+  row.salaryManuallyEdited = true
+  row.salarySource = 'manual'
+  row.salarySourceCity = undefined
   const afterTaxSalary = row.afterTaxSalary || 0
 
   if (afterTaxSalary <= 0) {
@@ -2536,11 +2820,11 @@ function onAfterTaxSalaryChange(index: number) {
   const newSalary = row.salary
   row.socialRules.forEach((item: any) => {
     if (item.type !== '工伤保险') {
-      item.calcBase = newSalary
+      item.calcBase = clampBase(newSalary, item.minBase, item.maxBase)
     }
   })
   row.fundRules.forEach((item: any) => {
-    item.calcBase = newSalary
+    item.calcBase = clampBase(newSalary, item.minBase, item.maxBase)
   })
 
   // Recalculate the row (skip after-tax calc to avoid loop)
@@ -2581,7 +2865,8 @@ function addPositionRow() {
     riskRatio: 8.6,
     opsCosts: getDefaultOpsCosts(),
     onDemandCosts: getDefaultOnDemandCosts(),
-    contingencyCosts: getDefaultContingencyCosts()
+    contingencyCosts: getDefaultContingencyCosts(),
+    otherCosts: getDefaultOtherCosts()
   })
 }
 
@@ -2595,6 +2880,8 @@ function removePositionRow(index: number) {
 // Handle city change for a specific row
 async function onRowCityChange(index: number) {
   const row = positionRows.value[index]
+  // 城市变化时按 岗位+城市 重新取薪（未手动改薪时）
+  await refreshRowSalary(index)
   // Load city rules into this row's own rules
   await loadCitySocialRulesForRow(row, row.city)
   // If this row is the selected one, update the display
@@ -2610,7 +2897,7 @@ async function loadCitySocialRulesForRow(row: PositionRow, city: string) {
 
   // If city is not selected, use default values
   if (!city) {
-    const injuryBase = salary > 0 ? salary : 0
+    const injuryBase = clampBase(salary, 7310, 36549)
     row.socialRules = [
       { type: '养老保险', minBase: 7310, maxBase: 36549, corpRate: 16, indivRate: 8, calcBase: salary },
       { type: '医疗保险', minBase: 7310, maxBase: 36549, corpRate: 10, indivRate: 2, calcBase: salary },
@@ -2625,52 +2912,13 @@ async function loadCitySocialRulesForRow(row: PositionRow, city: string) {
     return
   }
 
-  const cityName = getCityName(city)
-
   try {
-    const response = await axios.get(`${API_URL}/city-social-insurance/`, {
-      params: { city: cityName }
-    })
-    let data = null
-
-    if (response.data && response.data.length > 0) {
-      data = response.data[0]
-    } else {
-      // If city not found, try to get the default city's data
-      console.log(`City "${cityName}" not found, using default values`)
-      const defaultResponse = await axios.get(`${API_URL}/city-social-insurance/`, {
-        params: { city: '默认' }
-      })
-      if (defaultResponse.data && defaultResponse.data.length > 0) {
-        data = defaultResponse.data[0]
-      }
-    }
+    const data = await fetchCitySocialInsuranceData(city)
 
     if (data) {
-      // When salary is 0, injuryBase should also be 0
-      const injuryBase = (salary > 0 && data.injury_base) ? data.injury_base : salary
-
-      // Helper function to round rate to avoid floating point precision issues
-      const roundRate = (rate: number | null | undefined, defaultValue: number) => {
-        if (rate === null || rate === undefined) return defaultValue
-        return Math.round(rate * 100 * 100) / 100  // Convert to percentage and round to 2 decimal places
-      }
-
-      // Update row's social rules
-      // Note: 工伤保险和生育保险的个人比例固定为0（个人不缴纳）
-      row.socialRules = [
-        { type: '养老保险', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_pension_rate, 16), indivRate: roundRate(data.indiv_pension_rate, 8), calcBase: salary },
-        { type: '医疗保险', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_medical_rate, 10), indivRate: roundRate(data.indiv_medical_rate, 2), calcBase: salary },
-        { type: '失业保险', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_unemployment_rate, 0.5), indivRate: roundRate(data.indiv_unemployment_rate, 0.5), calcBase: salary },
-        { type: '工伤保险', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_injury_rate, 0.16), indivRate: 0, calcBase: injuryBase },
-        { type: '生育保险', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_maternity_rate, 1), indivRate: 0, calcBase: salary },
-        { type: '残保金', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_disability_rate, 1.5), indivRate: 0, calcBase: salary }
-      ]
-
-      // Update row's fund rules
-      row.fundRules = [
-        { type: '住房公积金', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: Math.round(data.corp_fund_rate * 100 * 100) / 100 || 7, indivRate: Math.round(data.indiv_fund_rate * 100 * 100) / 100 || 7, calcBase: salary }
-      ]
+      const rules = buildCityHardCostRules(data, salary)
+      applyHardCostRulesToRow(row, rules)
+      citySocialRulesCache.value[city] = rules
     }
   } catch (error) {
     console.error('Failed to load city social insurance rules:', error)
@@ -2678,13 +2926,24 @@ async function loadCitySocialRulesForRow(row: PositionRow, city: string) {
 }
 
 // Handle position change for a specific row
-function onRowPositionChange(index: number) {
+async function onRowPositionChange(index: number) {
   const row = positionRows.value[index]
   const position = availablePositions.value.find(p => p.id === row.position)
-  if (position && position.salary) {
-    row.salary = position.salary
-    calculateRow(index)
+  if (!position) return
+  // 重新选择岗位后恢复自动取薪
+  row.salaryManuallyEdited = false
+  const result = await fetchPositionSalary(position.id, row.city || '')
+  if (result && result.salary != null) {
+    row.salary = result.salary
+    row.salarySource = result.source
+    row.salarySourceCity = result.source_city || undefined
+    // 薪资变化后刷新该行社保基数
+    await loadCitySocialRulesForRow(row, row.city)
+    if (index === selectedRowIndex.value) {
+      updateSelectedRowCalcBase()
+    }
   }
+  calculateRow(index)
 }
 
 // Update the rules displayed in the "Rules & Config" section based on first row's city
@@ -2697,17 +2956,16 @@ async function updateDisplayRules(city: string) {
     // Update calcBase for each social rule
     rules.socialRules.forEach((item: any) => {
       if (item.type === '工伤保险') {
-        // Use injury_base from city data
-        item.calcBase = rules.injuryBase || salary
+        item.calcBase = injuryCalcBase(item, salary)
       } else {
         // Use salary from position row
-        item.calcBase = salary
+        item.calcBase = clampBase(salary, item.minBase, item.maxBase)
       }
     })
 
     // Update calcBase for fund rules
     rules.fundRules.forEach((item: any) => {
-      item.calcBase = salary
+      item.calcBase = clampBase(salary, item.minBase, item.maxBase)
     })
 
     socialRules.value = rules.socialRules
@@ -2717,58 +2975,17 @@ async function updateDisplayRules(city: string) {
 
 // Load social insurance rules for a city
 async function loadCitySocialRules(city: string) {
-  const cityName = getCityName(city)
-
   // Check cache first
   if (citySocialRulesCache.value[city]) {
     return citySocialRulesCache.value[city]
   }
 
   try {
-    const response = await axios.get(`${API_URL}/city-social-insurance/`, {
-      params: { city: cityName }
-    })
-
-    let data = null
-
-    if (response.data && response.data.length > 0) {
-      data = response.data[0]
-    } else {
-      // If city not found, try to get the default city's data
-      console.log(`City "${cityName}" not found, using default values`)
-      const defaultResponse = await axios.get(`${API_URL}/city-social-insurance/`, {
-        params: { city: '默认' }
-      })
-      if (defaultResponse.data && defaultResponse.data.length > 0) {
-        data = defaultResponse.data[0]
-      }
-    }
+    const data = await fetchCitySocialInsuranceData(city)
 
     if (data) {
       const salary = positionRows.value[0]?.salary || 0
-      const injuryBase = data.injury_base || salary
-
-      // Helper function to round rate to avoid floating point precision issues
-      const roundRate = (rate: number | null | undefined, defaultValue: number) => {
-        if (rate === null || rate === undefined) return defaultValue
-        return Math.round(rate * 100 * 100) / 100  // Convert to percentage and round to 2 decimal places
-      }
-
-      // Note: 工伤保险和生育保险的个人比例固定为0（个人不缴纳）
-      const rules = {
-        socialRules: [
-          { type: '养老保险', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_pension_rate, 16), indivRate: roundRate(data.indiv_pension_rate, 8), calcBase: salary },
-          { type: '医疗保险', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_medical_rate, 10), indivRate: roundRate(data.indiv_medical_rate, 2), calcBase: salary },
-          { type: '失业保险', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_unemployment_rate, 0.5), indivRate: roundRate(data.indiv_unemployment_rate, 0.5), calcBase: salary },
-          { type: '工伤保险', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_injury_rate, 0.16), indivRate: 0, calcBase: injuryBase },
-          { type: '生育保险', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_maternity_rate, 1), indivRate: 0, calcBase: salary },
-          { type: '残保金', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_disability_rate, 1.5), indivRate: 0, calcBase: salary }
-        ],
-        fundRules: [
-          { type: '住房公积金', minBase: data.lower_limit, maxBase: data.upper_limit, corpRate: roundRate(data.corp_fund_rate, 7), indivRate: roundRate(data.indiv_fund_rate, 7), calcBase: salary }
-        ],
-        injuryBase: injuryBase
-      }
+      const rules = buildCityHardCostRules(data, salary)
 
       // Cache the rules
       citySocialRulesCache.value[city] = rules
@@ -2819,35 +3036,29 @@ async function fetchCities() {
 // Fetch available positions
 async function fetchPositions() {
   try {
-    console.log('正在获取岗位职级数据...', `${API_URL}/outsourced-personnel/`)
-    const response = await axios.get(`${API_URL}/outsourced-personnel/`)
-    console.log('外包人员岗位数据响应:', response.data)
-    
+    console.log('正在获取岗位职级数据...', `${API_URL}/job-positions/options`)
+    const response = await axios.get(`${API_URL}/job-positions/options`)
+
     if (!response.data || response.data.length === 0) {
-      console.warn('外包人员岗位数据为空，请在后台"外包人员岗位"模块中导入数据')
-      ElMessage.warning('岗位职级数据为空，请在后台系统"外包人员岗位"模块中导入数据')
+      console.warn('岗位职级数据为空，请在后台"驻场人员岗位薪资"模块中导入数据')
+      ElMessage.warning('岗位职级数据为空，请在后台系统"驻场人员岗位薪资"模块中导入数据')
       return
     }
-    
+
     availablePositions.value = response.data.map((item: any) => {
-      // Build display name: 岗位-级别-子类型
-      let displayName = item.position
-      if (item.level) {
-        displayName += `-${item.level}`
-      }
-      if (item.subtype) {
-        displayName += `-${item.subtype}`
-      }
+      // Build display name: 岗位名称 - 级别
+      const displayName = `${item.position_name} - ${item.level_name}`
       return {
         id: item.id,
         name: displayName,
-        position: item.position,
-        level: item.level,
-        subtype: item.subtype,
-        salary: item.tier1_city_salary
+        position: item.position_name,
+        level: item.level_name,
+        levelRank: item.level_rank,
+        sequenceType: item.sequence_type,
+        category: item.category
       }
     })
-    
+
     console.log(`成功加载 ${availablePositions.value.length} 个岗位选项`)
   } catch (error: any) {
     console.error('获取岗位职级数据失败:', error)
@@ -2856,6 +3067,47 @@ async function fetchPositions() {
     }
     ElMessage.error('获取岗位职级数据失败，请检查后端服务是否正常运行')
   }
+}
+
+// Query salary for a position in a city (with fallback chain on backend)
+async function fetchPositionSalary(positionId: number, city: string): Promise<{ salary: number | null, source: string, source_city: string | null } | null> {
+  try {
+    const response = await axios.get(`${API_URL}/job-positions/${positionId}/salary`, {
+      params: { city: city || '' }
+    })
+    return response.data
+  } catch (error) {
+    console.error('获取岗位薪资失败:', error)
+    return null
+  }
+}
+
+// Refresh row salary based on position + city (two-factor lookup)
+async function refreshRowSalary(index: number) {
+  const row = positionRows.value[index]
+  if (!row) return
+  // 用户手动改过薪资后不再自动覆盖
+  if (row.salaryManuallyEdited) return
+  const position = availablePositions.value.find(p => p.id === row.position)
+  if (!position) return
+
+  const result = await fetchPositionSalary(position.id, row.city || '')
+  if (result && result.salary != null) {
+    row.salary = result.salary
+    row.salarySource = result.source
+    row.salarySourceCity = result.source_city || undefined
+  }
+}
+
+// Salary source hint tooltip
+function getSalarySourceTitle(row: PositionRow): string {
+  if (row.salarySource === 'provincial_capital') {
+    return `该城市暂无薪资数据，参考同省省会 ${row.salarySourceCity || ''} 的薪资`
+  }
+  if (row.salarySource === 'national_baseline') {
+    return `该城市暂无薪资数据，参考全国基准（${row.salarySourceCity || '北京/上海'} 均值）`
+  }
+  return ''
 }
 
 function showHistory() {
@@ -2880,20 +3132,23 @@ function resetForm() {
       mgmtRules: getDefaultMgmtRules(),
       riskRatio: 8.6,
       opsCosts: getDefaultOpsCosts(),
-      onDemandCosts: getDefaultOnDemandCosts()
+      onDemandCosts: getDefaultOnDemandCosts(),
+      contingencyCosts: getDefaultContingencyCosts(),
+      otherCosts: getDefaultOtherCosts()
     }
   ]
   globalParams.value = {
     vatRate: 6,
-    paymentCycle: 0,
-    riskRatio: 8.6,
+    paymentCycle: 90,
     profitRate: 0,
-    fundingCostRate: 3
+    fundingCostRate: 3.5
   }
   // Reset selected row indices
   selectedRowIndex.value = 0
   selectedFlexRowIndex.value = 0
   selectedOptionalRowIndex.value = 0
+  selectedOtherCostRowIndex.value = 0
+  suggestedValuesApplied.value = false
   calculateAll()
 }
 
@@ -2962,6 +3217,7 @@ async function startCalculation() {
         socialRules: JSON.parse(JSON.stringify(row.socialRules)),
         fundRules: JSON.parse(JSON.stringify(row.fundRules)),
         mgmtRules: JSON.parse(JSON.stringify(row.mgmtRules)),
+        otherCosts: JSON.parse(JSON.stringify(row.otherCosts || [])),
         rowRatio: rowRatio       // 该岗位在总成本中的占比
       }
     }),
@@ -2981,7 +3237,9 @@ async function startCalculation() {
       finalProjectAmount: finalProjectAmount.value,      // 项目总额（最终价格）
       baseSubtotal: baseSubtotal.value,                  // 岗位小计合计
       totalSubtotal: totalSubtotal.value,                // 总成本（含风险金等，不含利润税）
-      baseProjectAmount: baseProjectAmount.value,        // 基础项目金额（含利润税，不含账期）
+      baseProjectAmount: baseProjectAmount.value,        // 未税报价（含利润，不含增值税）
+      otherCostTotal: otherCostTotal.value,              // 其他成本合计
+      grossProfit: totalGrossProfit.value,               // 预估毛利
       vatRate: globalParams.value.vatRate ?? 6           // 增值税率
     }
   }
@@ -3155,6 +3413,18 @@ onUnmounted(() => {
   gap: 1.5rem;
   flex: 1;
   min-width: 0;
+}
+
+.left-column > .card:first-child {
+  order: 1;
+}
+
+.rules-card {
+  order: 2;
+}
+
+.flex-cost-card {
+  order: 3;
 }
 
 .right-column {
@@ -3425,6 +3695,17 @@ input[type="number"] {
   padding-left: 1.25rem;
 }
 
+.salary-source-hint {
+  margin-top: 2px;
+  font-size: 0.625rem;
+  line-height: 1.2;
+  color: #d97706;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: help;
+}
+
 .input-suffix {
   right: 0.5rem;
 }
@@ -3566,6 +3847,34 @@ input[type="number"] {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+}
+
+.other-cost-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.suggest-value-btn {
+  white-space: nowrap;
+  background-color: rgba(100, 116, 139, 0.15);
+  border-color: rgba(100, 116, 139, 0.4);
+  color: #94a3b8;
+}
+
+.suggest-value-btn:hover {
+  background-color: rgba(100, 116, 139, 0.25);
+  color: #cbd5e1;
+}
+
+.suggest-value-btn.active {
+  background-color: rgba(19, 91, 236, 0.25);
+  border-color: #135bec;
+  color: #60a5fa;
+}
+
+.suggest-value-btn.active:hover {
+  background-color: rgba(19, 91, 236, 0.35);
 }
 
 /* Global mode switch styles */
@@ -4112,6 +4421,134 @@ input:checked + .slider:before {
 .mgmt-total-amount {
   color: #135bec;
   text-align: right;
+}
+
+.other-cost-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.other-cost-group {
+  border: 1px solid #263247;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background-color: rgba(15, 23, 42, 0.35);
+}
+
+.other-cost-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  background-color: #151b26;
+  border-bottom: 1px solid #263247;
+}
+
+.other-cost-group.collapsed .other-cost-group-header {
+  border-bottom: 0;
+}
+
+.other-cost-group-title {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.collapse-toggle-btn {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 24px;
+  padding: 0;
+  border: 1px solid #30415d;
+  border-radius: 0.25rem;
+  background-color: #1d2636;
+  color: #8fb5ff;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.collapse-toggle-btn:hover {
+  border-color: #3b82f6;
+  color: #bfdbfe;
+  background-color: #23314a;
+}
+
+.collapse-toggle-btn .material-symbols-outlined {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.other-cost-group-header h4 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.other-cost-group-header span {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #60a5fa;
+  white-space: nowrap;
+}
+
+.other-cost-table th:first-child {
+  width: 180px;
+}
+
+.other-cost-table th:nth-child(2) {
+  width: 190px;
+}
+
+.other-cost-table th:nth-child(3) {
+  width: auto;
+}
+
+.other-cost-table th:nth-child(4) {
+  width: 120px;
+}
+
+.other-cost-table th:last-child {
+  width: 150px;
+}
+
+.other-cost-table td {
+  white-space: normal;
+  line-height: 1.45;
+}
+
+.other-cost-grand-total {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.other-cost-grand-total > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid #263247;
+  border-radius: 0.5rem;
+  background-color: #151b26;
+}
+
+.other-cost-grand-total span {
+  color: #92a4c9;
+  font-weight: 600;
+}
+
+.other-cost-grand-total strong {
+  color: #135bec;
+  font-size: 1rem;
+  white-space: nowrap;
 }
 
 /* On-demand Cost Table */

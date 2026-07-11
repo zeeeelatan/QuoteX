@@ -21,7 +21,7 @@ from app.models.manual_matching_override import ManualMatchingOverride  # noqa: 
 from app.models.service_personnel import ServicePersonnel  # noqa: F401
 from app.models.pricing_parameter import PricingParameter  # noqa: F401
 from app.models.single_service import SingleService  # noqa: F401
-from app.models.outsourced_personnel import OutsourcedPersonnel  # noqa: F401
+from app.models.job_position import JobPosition, JobPositionSalary  # noqa: F401
 from app.models.dispatch_service import DispatchService  # noqa: F401
 from app.models.superimposed_price import SuperimposedPrice  # noqa: F401
 from app.models.city_social_insurance import CitySocialInsurance  # noqa: F401

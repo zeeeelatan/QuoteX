@@ -320,7 +320,7 @@
 
         <!-- 驻场人员岗位及薪资管理 -->
         <div v-show="activeModule === 'outsourced'" class="module-content full-height">
-          <OutsourcedPersonnelManagement />
+          <JobPositionManagement />
         </div>
 
         <!-- 派单服务数据管理 -->
@@ -414,7 +414,7 @@ import DeviceFieldConfigManagement from '../components/admin/DeviceFieldConfigMa
 import ProductManagement from '../components/admin/ProductManagement.vue'
 import ServicePersonnelManagement from '../components/admin/ServicePersonnelManagement.vue'
 import SingleServiceManagement from '../components/admin/SingleServiceManagement.vue'
-import OutsourcedPersonnelManagement from '../components/admin/OutsourcedPersonnelManagement.vue'
+import JobPositionManagement from '../components/admin/JobPositionManagement.vue'
 import DispatchServiceManagement from '../components/admin/DispatchServiceManagement.vue'
 import SuperimposedPriceManagement from '../components/admin/SuperimposedPriceManagement.vue'
 import CitySocialInsurance from '../components/admin/CitySocialInsurance.vue'
@@ -473,7 +473,7 @@ const moduleDescriptions: Record<string, string> = {
   'semantic-dict': '管理智能匹配的设备类型/噪声词库，审核自动挖掘的候选词使其生效',
   personnel: '管理可用于项目报价的技术服务人员及其费率标准',
   'single-service': '管理单次服务报价数据，包含操作实施、安装调试、备件更换等服务项及定价标准',
-  outsourced: '管理驻场人员岗位级别、能力要求及薪资标准',
+  outsourced: '管理驻场岗位职级（技术/管理序列）及各城市薪资标准，支持Excel导入',
   'dispatch-service': '管理派单服务定价数据，包含不同工时、时间窗口、响应时效和城市等级的价格标准',
   'superimposed-price': '管理叠加单价数据，包含单价说明、收费标准及适用产品配置',
   'city-social-insurance': '管理各城市社保缴纳基数和比例，支持批量导入Excel',
