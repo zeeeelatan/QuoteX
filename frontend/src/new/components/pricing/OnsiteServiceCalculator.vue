@@ -990,7 +990,6 @@ const getDefaultSocialRules = (): SocialRuleItem[] => [
   { type: '医疗保险', minBase: 7310, maxBase: 36549, corpRate: 10, indivRate: 2, calcBase: 0 },
   { type: '失业保险', minBase: 7310, maxBase: 36549, corpRate: 0.5, indivRate: 0.5, calcBase: 0 },
   { type: '工伤保险', minBase: 7310, maxBase: 36549, corpRate: 0.16, indivRate: 0, calcBase: 0 },
-  { type: '生育保险', minBase: 7310, maxBase: 36549, corpRate: 1, indivRate: 0, calcBase: 0 },
   { type: '残保金', minBase: 7310, maxBase: 36549, corpRate: 1.5, indivRate: 0, calcBase: 0 }
 ]
 
@@ -1384,7 +1383,6 @@ const socialRules = ref([
   { type: '医疗保险', minBase: 7310, maxBase: 36549, corpRate: 10, indivRate: 2, calcBase: 0 },
   { type: '失业保险', minBase: 7310, maxBase: 36549, corpRate: 0.5, indivRate: 0.5, calcBase: 0 },
   { type: '工伤保险', minBase: 7310, maxBase: 36549, corpRate: 0.16, indivRate: 0, calcBase: 0 },
-  { type: '生育保险', minBase: 7310, maxBase: 36549, corpRate: 1, indivRate: 0, calcBase: 0 },
   { type: '残保金', minBase: 7310, maxBase: 36549, corpRate: 1.5, indivRate: 0, calcBase: 0 }
 ])
 
@@ -1705,7 +1703,6 @@ async function resetHardCostToDefault() {
       { type: '医疗保险', minBase: 7310, maxBase: 36549, corpRate: 10, indivRate: 2, calcBase: salary },
       { type: '失业保险', minBase: 7310, maxBase: 36549, corpRate: 0.5, indivRate: 0.5, calcBase: salary },
       { type: '工伤保险', minBase: 7310, maxBase: 36549, corpRate: 0.16, indivRate: 0, calcBase: injuryBase },
-      { type: '生育保险', minBase: 7310, maxBase: 36549, corpRate: 1, indivRate: 0, calcBase: salary },
       { type: '残保金', minBase: 7310, maxBase: 36549, corpRate: 1.5, indivRate: 0, calcBase: salary }
     ]
     row.fundRules = [
@@ -1760,7 +1757,6 @@ async function resetAllHardCostToDefault() {
         { type: '医疗保险', minBase: 7310, maxBase: 36549, corpRate: 10, indivRate: 2, calcBase: salary },
         { type: '失业保险', minBase: 7310, maxBase: 36549, corpRate: 0.5, indivRate: 0.5, calcBase: salary },
         { type: '工伤保险', minBase: 7310, maxBase: 36549, corpRate: 0.16, indivRate: 0, calcBase: injuryBase },
-        { type: '生育保险', minBase: 7310, maxBase: 36549, corpRate: 1, indivRate: 0, calcBase: salary },
         { type: '残保金', minBase: 7310, maxBase: 36549, corpRate: 1.5, indivRate: 0, calcBase: salary }
       ]
       row.fundRules = [
@@ -2578,7 +2574,6 @@ function buildCityHardCostRules(data: any, salary: number): CityHardCostRules {
       { type: '医疗保险', minBase: socialMin, maxBase: socialMax, corpRate: roundBackendRate(data?.corp_medical_rate, 10), indivRate: roundBackendRate(data?.indiv_medical_rate, 2), calcBase: socialBase },
       { type: '失业保险', minBase: socialMin, maxBase: socialMax, corpRate: roundBackendRate(data?.corp_unemployment_rate, 0.5), indivRate: roundBackendRate(data?.indiv_unemployment_rate, 0.5), calcBase: socialBase },
       { type: '工伤保险', minBase: socialMin, maxBase: socialMax, corpRate: roundBackendRate(data?.corp_injury_rate, 0.16), indivRate: 0, calcBase: injuryBase, injuryBaseFixed },
-      { type: '生育保险', minBase: socialMin, maxBase: socialMax, corpRate: roundBackendRate(data?.corp_maternity_rate, 0), indivRate: roundBackendRate(data?.indiv_maternity_rate, 0), calcBase: socialBase },
       { type: '残保金', minBase: socialMin, maxBase: socialMax, corpRate: roundBackendRate(data?.corp_disability_rate, 0), indivRate: roundBackendRate(data?.indiv_disability_rate, 0), calcBase: socialBase }
     ],
     fundRules: [
@@ -2903,7 +2898,6 @@ async function loadCitySocialRulesForRow(row: PositionRow, city: string) {
       { type: '医疗保险', minBase: 7310, maxBase: 36549, corpRate: 10, indivRate: 2, calcBase: salary },
       { type: '失业保险', minBase: 7310, maxBase: 36549, corpRate: 0.5, indivRate: 0.5, calcBase: salary },
       { type: '工伤保险', minBase: 7310, maxBase: 36549, corpRate: 0.16, indivRate: 0, calcBase: injuryBase },
-      { type: '生育保险', minBase: 7310, maxBase: 36549, corpRate: 1, indivRate: 0, calcBase: salary },
       { type: '残保金', minBase: 7310, maxBase: 36549, corpRate: 1.5, indivRate: 0, calcBase: salary }
     ]
     row.fundRules = [

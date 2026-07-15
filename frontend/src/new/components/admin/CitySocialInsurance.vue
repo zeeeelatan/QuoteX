@@ -218,11 +218,6 @@
         </el-row>
         <el-row :gutter="20">
           <el-col :span="8">
-            <el-form-item label="生育保险">
-              <el-input-number v-model="formData.corp_maternity_rate" :min="0" :max="1" :step="0.001" style="width: 100%" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
             <el-form-item label="失业保险">
               <el-input-number v-model="formData.corp_unemployment_rate" :min="0" :max="1" :step="0.001" style="width: 100%" />
             </el-form-item>
@@ -287,11 +282,6 @@
           </el-col>
         </el-row>
         <el-row :gutter="20">
-          <el-col :span="8">
-            <el-form-item label="生育保险">
-              <el-input-number v-model="formData.indiv_maternity_rate" :min="0" :max="1" :step="0.001" style="width: 100%" />
-            </el-form-item>
-          </el-col>
           <el-col :span="8">
             <el-form-item label="失业保险">
               <el-input-number v-model="formData.indiv_unemployment_rate" :min="0" :max="1" :step="0.001" style="width: 100%" />
@@ -359,14 +349,12 @@ interface CitySocialInsurance {
   corp_pension_rate: number | null
   corp_medical_rate: number | null
   corp_injury_rate: number | null
-  corp_maternity_rate: number | null
   corp_unemployment_rate: number | null
   corp_disability_rate: number | null
   corp_fund_rate: number | null
   indiv_pension_rate: number | null
   indiv_medical_rate: number | null
   indiv_injury_rate: number | null
-  indiv_maternity_rate: number | null
   indiv_unemployment_rate: number | null
   indiv_fund_rate: number | null
   fund_lower_limit: number | null
@@ -402,14 +390,12 @@ const formData = ref<any>({
   corp_pension_rate: null,
   corp_medical_rate: null,
   corp_injury_rate: null,
-  corp_maternity_rate: null,
   corp_unemployment_rate: null,
   corp_disability_rate: null,
   corp_fund_rate: null,
   indiv_pension_rate: null,
   indiv_medical_rate: null,
   indiv_injury_rate: null,
-  indiv_maternity_rate: null,
   indiv_unemployment_rate: null,
   indiv_fund_rate: null,
   fund_lower_limit: null,
@@ -548,14 +534,12 @@ function openAddDialog() {
     corp_pension_rate: null,
     corp_medical_rate: null,
     corp_injury_rate: null,
-    corp_maternity_rate: null,
     corp_unemployment_rate: null,
     corp_disability_rate: null,
     corp_fund_rate: null,
     indiv_pension_rate: null,
     indiv_medical_rate: null,
     indiv_injury_rate: null,
-    indiv_maternity_rate: null,
     indiv_unemployment_rate: null,
     indiv_fund_rate: null,
     fund_lower_limit: null,
