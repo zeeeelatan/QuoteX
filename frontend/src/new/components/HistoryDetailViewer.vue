@@ -594,13 +594,8 @@ function convertHtmlToPlainText(html: string): string {
   ])
 
   const manualNumberRe = /^[\s\u00A0]*\d+[.、]/
-  // 文档中存在列表外的手动编号段落（如 "1.\t服务内容"）时，说明整篇条款采用手动编号，
-  // 所有 <ol> 都视为编辑器伪影，不再自动加序号，避免出现 "2. 12." 这类双重编号
-  const hasManualNumberedParagraph = Array.from(
-    doc.body.querySelectorAll('p, div, h1, h2, h3, h4, h5, h6')
-  ).some(el => !el.closest('li') && manualNumberRe.test(el.textContent || ''))
 
-  const walk = (node: Node, listType?: 'ol' | 'ul', listIndex = 1): string => {
+  const walk = (node: Node, autoNumber: boolean, listType?: 'ol' | 'ul', listIndex = 1): string => {
     if (node.nodeType === Node.TEXT_NODE) {
       return node.nodeValue || ''
     }
@@ -615,31 +610,28 @@ function convertHtmlToPlainText(html: string): string {
       const listItems = Array.from(el.children).filter(
         child => child.tagName.toLowerCase() === 'li'
       ) as HTMLElement[]
-      // 若有序列表中任一项已以手动编号开头（如 "12. 标题"），说明编号是正文文本，
-      // 整个列表按无序处理，避免自动序号叠加出 "2. 12." 这类双重编号
-      const hasManualNumbering = tag === 'ol' && (
-        hasManualNumberedParagraph ||
-        listItems.some(li => manualNumberRe.test(li.textContent || ''))
-      )
-      const effectiveType = hasManualNumbering ? 'ul' : (tag as 'ol' | 'ul')
+      const effectiveType = autoNumber ? (tag as 'ol' | 'ul') : 'ul'
       let idx = 1
       let text = ''
       for (const li of listItems) {
-        const line = walk(li, effectiveType, idx)
+        const line = walk(li, autoNumber, effectiveType, idx)
         if (line.trim().length > 0) { text += line; idx += 1 }
       }
-      return text + (text ? '\n' : '')
+      // 不额外补换行，避免列表边界产生空行
+      return text
     }
 
     if (tag === 'li') {
-      const content = Array.from(el.childNodes).map(child => walk(child)).join('')
+      const content = Array.from(el.childNodes).map(child => walk(child, autoNumber)).join('')
       if (content.replace(/[\s\u00A0]/g, '').length === 0) return ''
       // 内容本身已以编号开头时不再追加自动序号
       const prefix = listType === 'ol' && !manualNumberRe.test(content) ? `${listIndex}. ` : ''
-      return `${prefix}${content}\n`
+      const line = `${prefix}${content}`
+      // 内容以块级元素结尾时已带换行，不再重复补，避免条目后产生空行
+      return line.endsWith('\n') ? line : `${line}\n`
     }
 
-    const content = Array.from(el.childNodes).map(child => walk(child)).join('')
+    const content = Array.from(el.childNodes).map(child => walk(child, autoNumber)).join('')
     if (blockTags.has(tag)) {
       const hasVisible = content.replace(/[\s\u00A0]/g, '').length > 0
       return (hasVisible ? content : '') + '\n'
@@ -647,14 +639,25 @@ function convertHtmlToPlainText(html: string): string {
     return content
   }
 
-  let text = ''
-  doc.body.childNodes.forEach(child => { text += walk(child) })
+  const render = (autoNumber: boolean): string => {
+    let text = ''
+    doc.body.childNodes.forEach(child => { text += walk(child, autoNumber) })
 
-  return text
-    .replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/[ \t]+\n/g, '\n').replace(/[ \t]+$/g, '')
-    .replace(/^\n+/, '').replace(/\n+$/, '')
+    return text
+      .replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/[ \t]+\n/g, '\n').replace(/[ \t]+$/g, '')
+      .replace(/^\n+/, '').replace(/\n+$/, '')
+  }
+
+  // 两遍转换：先不加自动编号，若文本中已存在手动编号行（如 "12. 标题"），
+  // 说明条款采用手动编号，直接采用该结果，避免 "2. 12." 双重编号；
+  // 完全没有手动编号时，才对 <ol> 启用自动编号
+  const plainWithoutAutoNumber = render(false)
+  if (/^[ \t\u00A0]*\d+[.、]/m.test(plainWithoutAutoNumber)) {
+    return plainWithoutAutoNumber
+  }
+  return render(true)
 }
 
 // 条款内容按行拆分（与 QuotationGeneration 的 termsContentParagraphs 一致）
