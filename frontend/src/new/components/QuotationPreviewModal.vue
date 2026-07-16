@@ -310,10 +310,10 @@
                       <div class="input-group mt-4">
                         <label class="input-label">报价单有效期</label>
                         <select v-model="validityPeriod" class="config-select">
-                          <option value="30">30 天 (默认标准)</option>
-                          <option value="15">15 天 (加急)</option>
+                          <option value="15">15 天</option>
+                          <option value="30">30 天</option>
                           <option value="60">60 天</option>
-                          <option value="90">90 天 (长期框架)</option>
+                          <option value="90">90 天</option>
                         </select>
                       </div>
                     </div>
@@ -509,7 +509,7 @@ const watermarkText = ref('内部报价 · 禁止外传')
 const watermarkOpacity = ref(15)
 const includeDetail = ref(true)
 const includeStamp = ref(false)
-const validityPeriod = ref('30')
+const validityPeriod = ref('15')
 
 // 可编辑的项目信息
 const editableProjectLabel = ref('项目信息')
