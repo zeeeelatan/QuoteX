@@ -70,7 +70,8 @@
                     :value="isDropdownOpen(row.id, 'city') ? getSearchQuery(row.id, 'city') : getCityDisplayValue(row)"
                     :title="getCityDisplayValue(row)"
                     @focus="onCityFocus(row, row.id, $event)"
-                    @input="onCityInput(row, row.id, ($event.target as HTMLInputElement).value)"
+                    @click="onCityClick(row, row.id, $event)"
+                    @input="onCityInput(row, row.id, $event)"
                     @blur="onCityBlur(row, row.id)"
                     placeholder="请选择城市"
                   />
@@ -103,7 +104,8 @@
                     :value="isDropdownOpen(row.id, 'position') ? getSearchQuery(row.id, 'position') : getPositionDisplayValue(row)"
                     :title="getPositionDisplayValue(row)"
                     @focus="onPositionFocus(row, row.id, $event)"
-                    @input="onPositionInput(row, row.id, ($event.target as HTMLInputElement).value)"
+                    @click="onPositionClick(row, row.id, $event)"
+                    @input="onPositionInput(row, row.id, $event)"
                     @blur="onPositionBlur(row, row.id)"
                     placeholder="请选择岗位"
                   />
@@ -256,9 +258,9 @@
                 </thead>
                 <tbody>
                   <tr v-for="entry in group.items" :key="`${entry.item.category}-${entry.item.name}`">
-                    <td class="mgmt-name-cell">{{ entry.item.name }}</td>
-                    <td class="mgmt-salary-cell">{{ entry.item.calculation }}</td>
-                    <td class="mgmt-salary-cell">{{ entry.item.basis }}</td>
+                    <td class="mgmt-name-cell" :title="entry.item.name">{{ entry.item.name }}</td>
+                    <td class="mgmt-salary-cell" :title="entry.item.calculation">{{ entry.item.calculation }}</td>
+                    <td class="mgmt-salary-cell" :title="entry.item.basis">{{ entry.item.basis }}</td>
                     <td class="mgmt-rate-cell">
                       <div class="rate-input-wrapper">
                         <input
@@ -276,10 +278,7 @@
                 </tbody>
                 <tfoot>
                   <tr class="mgmt-total-row">
-                    <td>{{ group.category }}小计（当前岗位月度）</td>
-                    <td>-</td>
-                    <td>-</td>
-                    <td>-</td>
+                    <td colspan="4">{{ group.category }}小计（当前岗位月度）</td>
                     <td class="mgmt-total-amount">{{ formatCurrency(group.total) }}</td>
                   </tr>
                 </tfoot>
@@ -1069,39 +1068,39 @@ const OTHER_COST_MONTHLY_FACTOR = 1.33
 const getDefaultOtherCosts = (): OtherCostItem[] => [
   { category: '直接人力成本', name: '月度福利费', formula: 'fixed', calculation: '固定金额', basis: '餐补', value: 0, amount: 0 },
   { category: '直接人力成本', name: '通讯交通补贴', formula: 'fixed', calculation: '固定金额', basis: '通讯、交通等补贴', value: 0, amount: 0 },
-  { category: '直接人力成本', name: '商业保险/雇主责任险（医疗10W，身故100W，身残按照比例支付）', formula: 'fixed', calculation: '固定金额', basis: '每人每月', value: 0, amount: 0 },
-  { category: '直接人力成本', name: '商业保险/意外险10W', formula: 'fixed', calculation: '固定金额', basis: '每人每月', value: 0, amount: 0 },
-  { category: '直接人力成本', name: '体检费摊销', formula: 'fixed', calculation: '年度体检费/12', basis: '年度体检费600，按12个月摊销', value: 0, amount: 0 },
-  { category: '直接人力成本', name: '节日福利摊销', formula: 'fixed', calculation: '年度节日福利/12', basis: '中秋/端午/春节等全年累加后摊销', value: 0, amount: 0 },
+  { category: '直接人力成本', name: '商业保险/雇主责任险（医疗10W，身故100W，身残按照比例支付）', formula: 'fixed', calculation: '固定金额', basis: '每人每月（每月固定金额根据保额计算）', value: 0, amount: 0 },
+  { category: '直接人力成本', name: '商业保险/意外险10W', formula: 'fixed', calculation: '固定金额', basis: '每人每月（每月固定金额根据保额计算）', value: 0, amount: 0 },
+  { category: '直接人力成本', name: '体检费摊销', formula: 'fixed', calculation: '年度体检费/12（年度体检费600）', basis: '按12个月摊销', value: 0, amount: 0 },
+  { category: '直接人力成本', name: '节日福利摊销', formula: 'fixed', calculation: '年度节日福利/12（中秋/端午/春节等，全年累加总金额）', basis: '按12个月摊销', value: 0, amount: 0 },
   { category: '直接人力成本', name: '加班费', formula: 'fixed', calculation: '根据项目实际情况按工时计算', basis: '每人每月', value: 0, amount: 0 },
   { category: '直接人力成本', name: '其他员工福利/补贴', formula: 'fixed', calculation: '固定金额', basis: '每人每月', value: 0, amount: 0 },
-  { category: '人员获取成本', name: '招聘成本摊销', formula: 'salaryRate', calculation: '税前工资×招聘成本比例系数', basis: '建议1.5%，取值范围1.5%-5%', value: 0, amount: 0 },
-  { category: '人员获取成本', name: '内推奖金摊销', formula: 'fixed', calculation: '内推奖金/摊销月数/项目人数', basis: '无则填0，建议12个月', value: 0, amount: 0 },
-  { category: '人员获取成本', name: '入职体检费用摊销', formula: 'fixedMonthlySpread', calculation: '个人入职单次体检费用/12', basis: '无则填0，建议摊销12个月', value: 0, amount: 0 },
-  { category: '人员稳定成本', name: '人员替换/空档风险', formula: 'salaryRate', calculation: '税前工资×空档风险比例系数', basis: '建议2%，取值范围2%-5%', value: 0, amount: 0 },
-  { category: '人员稳定成本', name: '待岗成本储备', formula: 'benchReserve', calculation: '税前工资×待岗概率×2/12', basis: '默认待岗概率5%、待岗2个月、项目周期12个月', value: 0, amount: 0 },
+  { category: '人员获取成本', name: '招聘成本摊销', formula: 'salaryRate', calculation: '税前工资×招聘成本比例系数', basis: '系数取值范围1.5%-5%，建议取值1.5%（包含背调测评费用）', value: 0, amount: 0 },
+  { category: '人员获取成本', name: '内推奖金摊销', formula: 'fixed', calculation: '内推奖金/摊销月数/项目人数', basis: '内推奖金/内推奖金摊销月数,无则填0/建议12个月', value: 0, amount: 0 },
+  { category: '人员获取成本', name: '入职体检费用摊销', formula: 'fixedMonthlySpread', calculation: '个人入职单次体检费用/12', basis: '建议摊销12个月，无则填0', value: 0, amount: 0 },
+  { category: '人员稳定成本', name: '人员替换/空档风险', formula: 'salaryRate', calculation: '税前工资×空档风险比例系数', basis: '取值范围2%-5%，建议取值2%', value: 0, amount: 0 },
+  { category: '人员稳定成本', name: '待岗成本储备', formula: 'benchReserve', calculation: '税前工资×待岗概率×2/12', basis: '待岗概率5%；待岗2月；项目周期12月（可按项目调整待岗概率及公式中月数）', value: 0, amount: 0 },
   { category: '人员稳定成本', name: '项目交接期成本/TT期成本人员成本', formula: 'fixed', calculation: '计划总费用/人数/摊销月数', basis: '每人每月', value: 0, amount: 0 },
-  { category: '人员稳定成本', name: '培训成本摊销', formula: 'salaryRate', calculation: '税前工资×培训比例系数', basis: '建议1%，取值范围0.5%-5%', value: 0, amount: 0 },
+  { category: '人员稳定成本', name: '培训成本摊销', formula: 'salaryRate', calculation: '税前工资×培训比例系数', basis: '培训系数建议取值1%，取值范围是0.5%-5%', value: 0, amount: 0 },
   { category: '交付管理成本', name: 'PM/交付管理分摊', formula: 'salaryRate', calculation: '税前工资×系数', basis: '建议1.5%-8%', value: 0, amount: 0 },
-  { category: '交付管理成本', name: '质量管理成本', formula: 'salaryRate', calculation: '税前工资×质量管理比例系数', basis: '建议0.5%-1.5%', value: 0, amount: 0 },
-  { category: '交付管理成本', name: 'SLA/KPI管理成本', formula: 'fixed', calculation: '根据实际项目计算', basis: '每人每月', value: 0, amount: 0 },
-  { category: '后台职能成本', name: 'HR分摊', formula: 'salaryRate', calculation: '税前工资×HR比例系数', basis: '建议1.5%，取值范围1%-3%', value: 0, amount: 0 },
-  { category: '后台职能成本', name: '财务分摊', formula: 'salaryRate', calculation: '税前工资×财务比例系数', basis: '建议0.05%，取值范围0.05%-1%', value: 0, amount: 0 },
-  { category: '后台职能成本', name: '法务分摊', formula: 'salaryRate', calculation: '税前工资×法务比例系数', basis: '建议0.05%，取值范围0.05%-1%', value: 0, amount: 0 },
-  { category: '后台职能成本', name: '行政分摊', formula: 'salaryRate', calculation: '税前工资×行政比例系数', basis: '建议0.05%，取值范围0.05%-1%', value: 0, amount: 0 },
+  { category: '交付管理成本', name: '质量管理成本', formula: 'salaryRate', calculation: '税前工资×质量管理比例系数', basis: '质量管理比例,质量检查、交付管理,建议取值范围0.5-1.5%（PMO）', value: 0, amount: 0 },
+  { category: '交付管理成本', name: 'SLA/KPI管理成本', formula: 'fixed', calculation: '根据实际项目计算', basis: '根据实际项目计算', value: 0, amount: 0 },
+  { category: '后台职能成本', name: 'HR分摊', formula: 'salaryRate', calculation: '税前工资×HR比例系数', basis: 'HR管理分摊比例，取值范围1-3%，建议取值1.5%', value: 0, amount: 0 },
+  { category: '后台职能成本', name: '财务分摊', formula: 'salaryRate', calculation: '税前工资×财务比例系数', basis: '财务分摊比例，取值范围0.05%-1%，建议取值0.05%', value: 0, amount: 0 },
+  { category: '后台职能成本', name: '法务分摊', formula: 'salaryRate', calculation: '税前工资×法务比例系数', basis: '法务分摊比例，风险处理，取值范围0.05%-1%，建议取值0.05%', value: 0, amount: 0 },
+  { category: '后台职能成本', name: '行政分摊', formula: 'salaryRate', calculation: '税前工资×行政比例系数', basis: '行政分摊比例，取值范围0.05%-1%，建议取值0.05%', value: 0, amount: 0 },
   { category: '后台职能成本', name: 'IT系统/OA/账号/邮箱分摊', formula: 'fixed', calculation: '固定金额', basis: '每人每月', value: 0, amount: 0 },
-  { category: '后台职能成本', name: '总部综合管理费', formula: 'salaryRate', calculation: '税前工资×总部管理费比例', basis: '建议0.05%，取值范围0.05%-1%', value: 0, amount: 0 },
-  { category: '商务客户成本', name: '销售/客户维护分摊', formula: 'salaryRate', calculation: '税前工资×摊销系数', basis: '建议0.5%，可按项目计入销售成本', value: 0, amount: 0 },
-  { category: '设备办公成本', name: '电脑折旧', formula: 'fixed', calculation: '电脑金额/折旧月数', basis: '一般24-36个月', value: 0, amount: 0 },
+  { category: '后台职能成本', name: '总部综合管理费', formula: 'salaryRate', calculation: '税前工资×总部管理费比例', basis: '总部综合管理费比例，取值范围0.05%-1%，建议取值0.05%', value: 0, amount: 0 },
+  { category: '商务客户成本', name: '销售/客户维护分摊', formula: 'salaryRate', calculation: '税前工资×摊销系数', basis: '建议取值0.5%，取值范围0.5%-5%/或此项可根据项目情况计入销售成本', value: 0, amount: 0 },
+  { category: '设备办公成本', name: '电脑折旧', formula: 'fixed', calculation: '电脑金额/折旧月数', basis: '单人电脑设备金额/一般24-36个月', value: 0, amount: 0 },
   { category: '设备办公成本', name: '软件授权', formula: 'fixed', calculation: '月度授权费', basis: '软件授权月费', value: 0, amount: 0 },
   { category: '设备办公成本', name: '办公用品', formula: 'fixed', calculation: '月摊销', basis: '办公用品月摊销', value: 0, amount: 0 },
-  { category: '设备办公成本', name: '工位/办公场地', formula: 'fixed', calculation: '月摊销', basis: '客户提供工位可填0', value: 0, amount: 0 },
+  { category: '设备办公成本', name: '工位/办公场地', formula: 'fixed', calculation: '月摊销', basis: '工位/办公场地月摊销，如客户提供工位可填0', value: 0, amount: 0 },
   { category: '差旅异地成本', name: '差旅摊销（交通、食宿、差旅补贴）', formula: 'fixed', calculation: '项目差旅总预算/人数/摊销月数', basis: '每人每月', value: 0, amount: 0 },
   { category: '差旅异地成本', name: '团建员工关怀摊销', formula: 'fixed', calculation: '费用总预算/人数/摊销月数', basis: '每人每月', value: 0, amount: 0 },
-  { category: '资金风险成本', name: '资金占用成本', formula: 'fundingOccupancy', calculation: '月成本×账期×年化利率/12', basis: '填0不计入，填大于0时按全局账期和资金成本率自动计算', value: 0, amount: 0 },
-  { category: '资金风险成本', name: '坏账风险准备', formula: 'badDebtReserve', calculation: '月成本×坏账比例', basis: '建议0.5%，取值范围0.5%-3%', value: 0, amount: 0 },
-  { category: '资金风险成本', name: '劳动纠纷风险准备', formula: 'laborDisputeReserve', calculation: '税前工资×劳动风险比例', basis: '建议8.33%，取值范围8.33%-16.6%', value: 0, amount: 0 },
-  { category: '资金风险成本', name: '赔付/违约风险准备', formula: 'salaryRate', calculation: '阶段成本×违约风险比例', basis: '无则填0，按实际项目计算', value: 0, amount: 0 }
+  { category: '资金风险成本', name: '资金占用成本', formula: 'fundingOccupancy', calculation: '月成本×账期×年化利率/12', basis: '账期3个月；年化利率3.5%', value: 0, amount: 0 },
+  { category: '资金风险成本', name: '坏账风险准备', formula: 'badDebtReserve', calculation: '月成本×坏账比例', basis: '建议取值0.5%，取值范围0.5%-3%', value: 0, amount: 0 },
+  { category: '资金风险成本', name: '劳动纠纷风险准备', formula: 'laborDisputeReserve', calculation: '税前工资×劳动风险比例', basis: '建议取值8.33%，取值范围8.33%-16.6%/月或月薪/12', value: 0, amount: 0 },
+  { category: '资金风险成本', name: '赔付/违约风险准备', formula: 'salaryRate', calculation: '阶段成本×违约风险比例', basis: '赔付/违约风险比例，无则填0，按照实际项目计算', value: 0, amount: 0 }
 ]
 
 // Position rows (multi-line support)
@@ -1168,7 +1167,7 @@ function toggleDropdown(rowId: string, field: string) {
 }
 
 // Update dropdown position
-function updateDropdownPosition(rowId: string, field: string, event: FocusEvent) {
+function updateDropdownPosition(rowId: string, field: string, event: Event) {
   const target = event.target as HTMLInputElement
   const rect = target.getBoundingClientRect()
   const key = `${rowId}-${field}`
@@ -1281,13 +1280,47 @@ function onPositionFocus(row: PositionRow, rowId: string, event: FocusEvent) {
   updateDropdownPosition(rowId, 'position', event)
 }
 
-// Handle city input - update search query
-function onCityInput(row: PositionRow, rowId: string, value: string) {
+// Handle city input click - reopen dropdown if it was closed while input kept focus
+// (e.g. after selecting an option the input may stay focused, so no focus event fires on the next click)
+function onCityClick(row: PositionRow, rowId: string, event: MouseEvent) {
+  if (isDropdownOpen(rowId, 'city')) return
+  const currentDisplay = getCityDisplayValue(row)
+  setSearchQuery(rowId, 'city', currentDisplay)
+  openDropdowns.value[`${rowId}-city`] = true
+  updateDropdownPosition(rowId, 'city', event)
+}
+
+// Handle city input - update search query.
+// If the dropdown is closed while the user edits (any missed open trigger),
+// open it first; otherwise the rerender would restore the old display value.
+function onCityInput(row: PositionRow, rowId: string, event: Event) {
+  const value = (event.target as HTMLInputElement).value
+  if (!isDropdownOpen(rowId, 'city')) {
+    openDropdowns.value[`${rowId}-city`] = true
+    updateDropdownPosition(rowId, 'city', event)
+  }
   setSearchQuery(rowId, 'city', value)
 }
 
-// Handle position input - update search query
-function onPositionInput(row: PositionRow, rowId: string, value: string) {
+// Handle position input click - reopen dropdown if it was closed while input kept focus
+// (e.g. after selecting an option the input may stay focused, so no focus event fires on the next click)
+function onPositionClick(row: PositionRow, rowId: string, event: MouseEvent) {
+  if (isDropdownOpen(rowId, 'position')) return
+  const currentDisplay = getPositionDisplayValue(row)
+  setSearchQuery(rowId, 'position', currentDisplay)
+  openDropdowns.value[`${rowId}-position`] = true
+  updateDropdownPosition(rowId, 'position', event)
+}
+
+// Handle position input - update search query.
+// If the dropdown is closed while the user edits (any missed open trigger),
+// open it first; otherwise the rerender would restore the old display value.
+function onPositionInput(row: PositionRow, rowId: string, event: Event) {
+  const value = (event.target as HTMLInputElement).value
+  if (!isDropdownOpen(rowId, 'position')) {
+    openDropdowns.value[`${rowId}-position`] = true
+    updateDropdownPosition(rowId, 'position', event)
+  }
   setSearchQuery(rowId, 'position', value)
 }
 
@@ -4492,29 +4525,48 @@ input:checked + .slider:before {
   white-space: nowrap;
 }
 
+.other-cost-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
 .other-cost-table th:first-child {
-  width: 180px;
+  width: 18%;
 }
 
 .other-cost-table th:nth-child(2) {
-  width: 190px;
+  width: 22%;
 }
 
+/* 第3列（测算依据）占用剩余宽度，覆盖 .mgmt-table 基类的固定 110px */
 .other-cost-table th:nth-child(3) {
   width: auto;
 }
 
 .other-cost-table th:nth-child(4) {
-  width: 120px;
+  width: 112px;
 }
 
 .other-cost-table th:last-child {
-  width: 150px;
+  width: 110px;
+}
+
+/* 统一左对齐；超长文字单行省略，悬停通过 title 查看全文 */
+.other-cost-table th,
+.other-cost-table td {
+  text-align: left;
 }
 
 .other-cost-table td {
-  white-space: normal;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   line-height: 1.45;
+}
+
+.other-cost-table .mgmt-amount-cell,
+.other-cost-table .mgmt-total-amount {
+  text-align: left;
 }
 
 .other-cost-grand-total {
