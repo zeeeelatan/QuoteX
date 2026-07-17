@@ -58,6 +58,23 @@ class QuoteHistoryOut(BaseModel):
         from_attributes = True
 
 
+class QuoteLiveSnapshotUpsert(BaseModel):
+    """实时报价快照 upsert（生成报价单页面推送）"""
+    data: Optional[Dict[str, Any]] = None   # { subtotal, tax_rate, total, valid_days, ... }
+    files: Optional[List[Dict[str, Any]]] = None  # [{ name, size, type, content(dataURL base64) }]
+
+
+class QuoteLiveSnapshotOut(BaseModel):
+    """实时报价快照输出"""
+    external_ref: str
+    data: Optional[Dict[str, Any]] = None
+    files: Optional[List[Dict[str, Any]]] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
 class QuoteHistoryListItem(BaseModel):
     """历史记录列表项"""
     id: int

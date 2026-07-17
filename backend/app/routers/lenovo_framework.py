@@ -238,51 +238,81 @@ def _normalize_brand(brand: Optional[str]) -> str:
     return (brand or "").strip().lower()
 
 
-def _match_end_type(
+def _build_lenovo_model_candidates(
+    db: Session,
+    model: str,
+    brand: Optional[str] = None,
+    alias_key: Optional[str] = None,
+) -> Tuple[List[str], Optional[str]]:
+    """构造联想匹配用的型号候选串，并尽量补全品牌。
+
+    候选优先级（从前到后尝试）：
+    1. 入参 model 原串
+    2. 语义抽取 core（剥离品牌/系列/配置后的核心型号，如 C4140）
+    3. 语义抽取 core_with_series（保留系列的弱信号，如 PowerEdge C4140）
+    4. 对 alias_key（原始品牌型号）再做一轮语义抽取
+
+    与标准口径共享 extract_fields，使联想框架具备同类「读懂原文再匹配」能力。
+    语义开关关闭或异常时，退化为仅使用入参 model。
+    """
+    candidates: List[str] = []
+    inferred_brand: Optional[str] = None
+
+    def _add(value: Optional[str]) -> None:
+        text = (value or "").strip()
+        if not text:
+            return
+        if text not in candidates:
+            candidates.append(text)
+
+    _add(model)
+
+    try:
+        from app.semantic import extract_fields, is_semantic_enabled
+        if is_semantic_enabled():
+            # 优先用标准口径同款品牌标准化，便于后续 brand 过滤
+            try:
+                from app.matching import normalize_manufacturer as _norm_mfr
+            except Exception:
+                _norm_mfr = None
+
+            for raw in (model, alias_key):
+                if not raw or not str(raw).strip():
+                    continue
+                fields = extract_fields(
+                    str(raw),
+                    brand or "",
+                    db=db,
+                    normalize_manufacturer=_norm_mfr,
+                )
+                if fields.core:
+                    _add(fields.core)
+                if fields.core_with_series:
+                    _add(fields.core_with_series)
+                if not inferred_brand:
+                    inferred_brand = (fields.brand_raw or fields.brand or "").strip() or None
+    except Exception:
+        # 语义层任何异常都不阻断原匹配链路
+        pass
+
+    return candidates, inferred_brand
+
+
+def _match_one_model_candidate(
     db: Session,
     device_category: str,
     brand: Optional[str],
     model: str,
-    alias_key: Optional[str] = None,
 ) -> Tuple[Optional[LenovoFrameworkModel], Optional[LenovoPatternRule], str]:
-    """端型判定：alias 快查 → 新机型库精确 → 新机型库前缀 → pattern_rule 兜底。
-
-    返回 (framework_model, pattern_rule, method)
-    method ∈ {alias, exact, prefix, pattern_fallback, none}
-
-    设计要点：
-    - **alias 快查**：用户历史确认过的「原始品牌型号 → 标准记录」对照，置信度最高，前置
-    - 主表 lenovo_framework_models（dc_inventory + classification + pattern_expanded 合并）
-    - 优先有 end_type 的记录（dc_inventory 来源的 end_type 可能为空）
-    - 严格前缀匹配替代原"双向 ilike 模糊"，降低跨型号脏命中
-    - pattern_rule 仅作 fallback，命中后 method='pattern_fallback' 提示用户加入机型库
-    """
+    """对单个型号候选执行：归一化精确 → 小写精确 → 前缀 → 归一化包含。"""
     model = (model or "").strip()
     if not model:
         return None, None, "none"
 
-    # ============ 0) Alias 快查（用户已确认过的对应关系最优先） ============
-    if alias_key:
-        key_norm = normalize_alias(alias_key)
-        if len(key_norm) >= 3:
-            # JSONB contains：aliases @> '["xxx"]'
-            row = db.query(LenovoFrameworkModel).filter(
-                LenovoFrameworkModel.device_category == device_category,
-                LenovoFrameworkModel.aliases.contains([key_norm]),
-            ).first()
-            if row:
-                return row, None, "alias"
-
-    # 用空格归一化处理 "DL580 Gen8" / "DL580Gen8" 这类
     model_lower = model.lower()
-    model_nospace = model_lower.replace(" ", "")
-
-    # 排序：有 end_type 的优先（NULL 排后面）
     end_type_priority = LenovoFrameworkModel.end_type.is_(None).asc()
 
-    # ============ 1) 归一化精确（最强匹配） ============
-    # 同时铺平 "(Model 2280)" / "（Model 2280）" / "2280" 这类字面差异，
-    # 并优先返回 end_type 不为空的记录（避免命中 dc_inventory 留空版本）
+    # 1) 归一化精确
     norm_input = _normalize_model_py(model)
     if norm_input and len(norm_input) >= 3:
         norm_base = db.query(LenovoFrameworkModel).filter(
@@ -291,18 +321,16 @@ def _match_end_type(
         )
         if brand:
             b = brand.strip().lower()
-            # 1.a) brand 包含 + 归一化精确（端型优先）
             row = norm_base.filter(
                 func.lower(LenovoFrameworkModel.brand).ilike(f"%{b}%")
             ).order_by(end_type_priority).first()
             if row:
                 return row, None, "exact"
-        # 1.b) 不带 brand 限制（端型优先）
         row = norm_base.order_by(end_type_priority).first()
         if row:
             return row, None, "exact"
 
-    # ============ 1.5) lower(model) 严格相等（仅当归一化命中不到的兜底） ============
+    # 1.5) lower(model) 严格相等
     exact_base = db.query(LenovoFrameworkModel).filter(
         LenovoFrameworkModel.device_category == device_category,
         func.lower(LenovoFrameworkModel.model) == model_lower,
@@ -318,15 +346,13 @@ def _match_end_type(
     if row:
         return row, None, "exact"
 
-    # ============ 2) 严格前缀匹配 ============
-    # 关系：DB.model 是 input 的前缀（input='DL580 Gen8' 命中 DB='DL580'）
-    # 限制 DB.model 长度 >= 4 字符，避免太短前缀误命中
+    # 2) 严格前缀：DB.model 是 input 的前缀
     prefix_base = db.query(LenovoFrameworkModel).filter(
         LenovoFrameworkModel.device_category == device_category,
         func.char_length(LenovoFrameworkModel.model) >= 4,
         literal(model_lower).ilike(func.concat(func.lower(LenovoFrameworkModel.model), "%")),
     ).order_by(
-        func.char_length(LenovoFrameworkModel.model).desc(),  # 最长前缀优先
+        func.char_length(LenovoFrameworkModel.model).desc(),
         end_type_priority,
     )
     if brand:
@@ -340,30 +366,128 @@ def _match_end_type(
     if row:
         return row, None, "prefix"
 
-    # ============ 3) Pattern 兜底（仅对 pattern 表有数据的大类） ============
-    if brand:
-        b = brand.strip().lower()
-        rules = db.query(LenovoPatternRule).filter(
-            LenovoPatternRule.device_category == device_category,
-            func.lower(LenovoPatternRule.brand).ilike(f"%{b}%"),
+    # 2.5) 归一化包含：用于 "PowerEdge C4140" ↔ "C4140"
+    # 要求双方归一化长度 ≥ 4，降低短串脏命中
+    norm_input = _normalize_model_py(model)
+    if norm_input and 4 <= len(norm_input) <= 24:
+        contain_base = db.query(LenovoFrameworkModel).filter(
+            LenovoFrameworkModel.device_category == device_category,
+            or_(
+                _model_norm_pg_expr(LenovoFrameworkModel.model).like(f"%{norm_input}%"),
+                literal(norm_input).like(
+                    func.concat("%", _model_norm_pg_expr(LenovoFrameworkModel.model), "%")
+                ),
+            ),
+            func.char_length(_model_norm_pg_expr(LenovoFrameworkModel.model)) >= 4,
         ).order_by(
-            func.char_length(LenovoPatternRule.pattern_raw).desc(),
-            LenovoPatternRule.priority.asc(),
-        ).all()
-        for rule in rules:
-            try:
-                # pattern 是基于"无空格 model"设计的，先归一化输入
-                if not re.match(rule.pattern_regex, model_nospace, re.IGNORECASE):
-                    continue
-            except re.error:
+            # 优先「库型号与输入等长/接近」，再优先有端型
+            func.abs(
+                func.char_length(_model_norm_pg_expr(LenovoFrameworkModel.model)) - len(norm_input)
+            ).asc(),
+            end_type_priority,
+        )
+        if brand:
+            b = brand.strip().lower()
+            row = contain_base.filter(
+                func.lower(LenovoFrameworkModel.brand).ilike(f"%{b}%")
+            ).first()
+            if row:
+                return row, None, "exact"
+        row = contain_base.first()
+        if row:
+            return row, None, "exact"
+
+    return None, None, "none"
+
+
+def _match_end_type(
+    db: Session,
+    device_category: str,
+    brand: Optional[str],
+    model: str,
+    alias_key: Optional[str] = None,
+) -> Tuple[Optional[LenovoFrameworkModel], Optional[LenovoPatternRule], str]:
+    """端型判定：alias 快查 → 语义候选串 × (精确/前缀/包含/pattern)。
+
+    返回 (framework_model, pattern_rule, method)
+    method ∈ {alias, exact, prefix, pattern_fallback, none}
+
+    设计要点：
+    - **alias 快查**：用户历史确认过的「原始品牌型号 → 标准记录」对照，置信度最高，前置
+    - **语义候选**：复用标准口径 extract_fields，把「dell-DELL PowerEdge C4140」
+      拆成 core=C4140 / core_with_series=PowerEdge C4140 等多候选再匹配
+    - 主表 lenovo_framework_models（dc_inventory + classification + pattern_expanded 合并）
+    - 优先有 end_type 的记录（dc_inventory 来源的 end_type 可能为空）
+    - pattern_rule 仅作 fallback，命中后 method='pattern_fallback' 提示用户加入机型库
+    """
+    model = (model or "").strip()
+    if not model and not (alias_key or "").strip():
+        return None, None, "none"
+
+    # ============ 0) Alias 快查（用户已确认过的对应关系最优先） ============
+    if alias_key:
+        key_norm = normalize_alias(alias_key)
+        if len(key_norm) >= 3:
+            row = db.query(LenovoFrameworkModel).filter(
+                LenovoFrameworkModel.device_category == device_category,
+                LenovoFrameworkModel.aliases.contains([key_norm]),
+            ).first()
+            if row:
+                return row, None, "alias"
+
+    # ============ 0.5) 语义候选串（共享标准口径抽取能力） ============
+    candidates, inferred_brand = _build_lenovo_model_candidates(
+        db, model or (alias_key or ""), brand, alias_key=alias_key
+    )
+    effective_brand = (brand or "").strip() or (inferred_brand or None)
+
+    # 先带品牌过滤尝试全部候选，再无品牌放宽一轮（避免品牌写法差异漏匹配）
+    brand_rounds: List[Optional[str]] = []
+    if effective_brand:
+        brand_rounds.append(effective_brand)
+    brand_rounds.append(None)
+
+    seen_brand_keys = set()
+    for brand_try in brand_rounds:
+        brand_key = (brand_try or "").lower()
+        if brand_key in seen_brand_keys:
+            continue
+        seen_brand_keys.add(brand_key)
+
+        # 第一轮：精确/前缀/包含（pattern 留到全部候选失败后再用）
+        for candidate in candidates:
+            cls, rule, method = _match_one_model_candidate(
+                db, device_category, brand_try, candidate
+            )
+            if cls is not None or rule is not None:
+                return cls, rule, method
+
+    # 最后再用各候选跑 pattern 兜底（仍优先带品牌）
+    for brand_try in brand_rounds:
+        for candidate in candidates:
+            model_nospace = re.sub(r"[\s()（）\-_/]+", "", (candidate or "").lower())
+            if not model_nospace or not brand_try:
                 continue
-            # 排除列表
-            if rule.notes and "除外:" in rule.notes:
-                excl_part = rule.notes.split("除外:", 1)[1].strip()
-                excl_list = [x.strip().upper() for x in re.split(r"[/、,]+", excl_part) if x.strip()]
-                if model_nospace.upper() in excl_list or model.upper() in excl_list:
+            b = brand_try.strip().lower()
+            rules = db.query(LenovoPatternRule).filter(
+                LenovoPatternRule.device_category == device_category,
+                func.lower(LenovoPatternRule.brand).ilike(f"%{b}%"),
+            ).order_by(
+                func.char_length(LenovoPatternRule.pattern_raw).desc(),
+                LenovoPatternRule.priority.asc(),
+            ).all()
+            for rule in rules:
+                try:
+                    if not re.match(rule.pattern_regex, model_nospace, re.IGNORECASE):
+                        continue
+                except re.error:
                     continue
-            return None, rule, "pattern_fallback"
+                if rule.notes and "除外:" in rule.notes:
+                    excl_part = rule.notes.split("除外:", 1)[1].strip()
+                    excl_list = [x.strip().upper() for x in re.split(r"[/、,]+", excl_part) if x.strip()]
+                    if model_nospace.upper() in excl_list or candidate.upper() in excl_list:
+                        continue
+                return None, rule, "pattern_fallback"
 
     return None, None, "none"
 

@@ -4,6 +4,7 @@ from .office_device_inventory import OfficeDeviceInventory
 from .gpu_price import GPUPrice
 from .spare_part import SparePart
 from .quote_history import QuoteHistory
+from .quote_live_snapshot import QuoteLiveSnapshot
 from .product_parameter import BaseRate, SLAConfig, HardwareDepreciation, RegionalAdjustment
 from .relocation_vehicle import RelocationVehicle
 from .china_city_tier import ChinaCityTier

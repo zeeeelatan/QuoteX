@@ -1732,6 +1732,9 @@ const goToPriceAdjustment = async () => {
     
     // 使用 nextTick 确保数据保存完成后再跳转
     await nextTick()
+
+    // 清掉本页残留提示，避免与价格调整页弹窗叠加
+    ElMessage.closeAll()
     
     // 跳转到价格调整页面
   router.push('/price-adjustment')
@@ -2163,10 +2166,14 @@ function buildLenovoQuoteRequest(row: any) {
   const device_category = p.device_category
   const sub_category = p.sub_category
 
-  // 手动锁定型号 > 输入 model 剥离品牌前缀
+  // 手动锁定型号 > 原始型号全文（供后端语义抽取）> 剥离品牌前缀兜底
+  // 后端会用标准口径同款 extract_fields 拆出 core / core_with_series 再匹配，
+  // 因此这里尽量传完整原文，而不是只传剥品牌后的短串。
   const lockedModel = row.lenovo_manual_lock_model || ''
   const lockedBrand = row.lenovo_manual_lock_brand || ''
-  const effectiveModel = lockedModel || stripBrandPrefix(row.model || '')
+  const rawModel = String(row.model || '').trim()
+  const rawBrandModel = String(row.originalBrandModel || '').trim()
+  const effectiveModel = lockedModel || rawModel || stripBrandPrefix(rawModel)
   const effectiveBrand = lockedBrand || row.manufacturer || undefined
 
   return {
@@ -2184,8 +2191,8 @@ function buildLenovoQuoteRequest(row: any) {
     includes_disk_no_return: device_category === '存储' ? p.includes_disk_no_return : undefined,
     // 用户手动锁定端型 → 跳过后端自动判定
     force_end_type: row.lenovo_manual_end_type || undefined,
-    // alias 快查键：用户上传时的「原始品牌型号」完整字符串
-    alias_key: row.originalBrandModel || undefined,
+    // alias 快查键 + 语义抽取第二路输入：完整「原始品牌型号」
+    alias_key: rawBrandModel || undefined,
   }
 }
 

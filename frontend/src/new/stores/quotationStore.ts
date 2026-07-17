@@ -5,6 +5,7 @@
  */
 
 import { reactive, shallowRef } from 'vue'
+import { clearOriginalExcelCache } from '../utils/originalExcelCache'
 
 // ========== Keys 常量（必须先定义） ==========
 
@@ -245,8 +246,11 @@ export function clearAllFlowData(): void {
   safeClear(FlowDataKeys.CONVERTED_TABLE_DATA, null)
   safeClear(FlowDataKeys.ORIGINAL_EXCEL_FILE, null)
   safeClear(FlowDataKeys.SELECTED_SHEET_NAME, null)
+  safeClear(FlowDataKeys.SELECTED_SHEET_NAMES, [])
   safeClear(FlowDataKeys.ORIGINAL_FILE_NAME, null)
   safeClear(FlowDataKeys.EXTERNAL_REF, null)
+  // 同步清理 IndexedDB 中的原始附件缓存
+  void clearOriginalExcelCache()
   console.log('[QuotationStore] Cleared all flow data')
 }
 

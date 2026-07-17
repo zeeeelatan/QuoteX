@@ -119,15 +119,21 @@
               <!-- Items Table -->
               <div class="items-table" :class="{ 'is-scrolling': !isGeneratingPDF }">
                 <div class="items-table-scroll" ref="itemsWrapperRef">
-                  <table class="quote-table">
+                  <table class="quote-table" :class="{ 'is-pdf-export': isGeneratingPDF, 'caliber-lenovo': quoteCaliber === 'lenovo' }">
                     <thead>
                       <tr>
                         <th class="col-no">序号</th>
                         <th class="col-desc">项目描述</th>
                         <th class="col-qty">数量</th>
                         <th class="col-period">服务周期</th>
-                        <th class="col-price">单价</th>
-                        <th class="col-total">总价</th>
+                        <th class="col-price">
+                          <span class="th-main">单价</span>
+                          <span class="th-sub">{{ quoteCaliber === 'lenovo' ? '(含税13%)' : '(未税)' }}</span>
+                        </th>
+                        <th class="col-total">
+                          <span class="th-main">小计</span>
+                          <span class="th-sub">{{ quoteCaliber === 'lenovo' ? '(含税13%)' : '(未税)' }}</span>
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -137,20 +143,26 @@
                         </td>
                       </tr>
                       <tr v-if="qTopPadding > 0" :style="{ height: qTopPadding + 'px' }" class="virtual-spacer"><td></td></tr>
-                      <tr v-for="(item, i) in qVisibleItems" :key="qStartIndex + i" class="item-row" :style="{ height: QUOTE_ROW_HEIGHT + 'px' }">
+                      <tr
+                        v-for="(item, i) in qVisibleItems"
+                        :key="qStartIndex + i"
+                        class="item-row"
+                        :style="isGeneratingPDF ? undefined : { height: QUOTE_ROW_HEIGHT + 'px' }"
+                      >
                         <td class="text-center col-no">{{ qStartIndex + i + 1 }}</td>
                         <td class="item-desc">
-                          <p class="item-name">{{ item.model || item.matchedModel || '未命名产品' }}</p>
+                          <p class="item-name">{{ getItemDisplayModel(item) }}</p>
                           <p class="item-detail">
-                            厂商: {{ formatManufacturer(item.matchedManufacturer || item.manufacturer) || '-' }}
-                            <span v-if="item.matchedSeries"> | 系列: {{ item.matchedSeries }}</span>
+                            厂商: {{ formatManufacturer(getItemDisplayManufacturer(item)) || '-' }}
+                            <span v-if="quoteCaliber !== 'lenovo' && item.matchedSeries"> | 系列: {{ item.matchedSeries }}</span>
                             <span v-if="item.serviceLevel"> | 服务级别: {{ item.serviceLevel }}</span>
+                            <span v-if="quoteCaliber === 'lenovo' && item.lenovo_end_type"> | 端型: {{ item.lenovo_end_type }}</span>
                           </p>
                         </td>
-                        <td class="text-center">{{ item.quantity || 1 }}</td>
-                        <td class="text-center">{{ formatServicePeriodDisplay(item) }}</td>
-                        <td class="text-right">¥{{ getItemUnitPrice(item).toFixed(2) }}</td>
-                        <td class="text-right item-total">¥{{ getItemTotalPrice(item).toFixed(2) }}</td>
+                        <td class="text-center col-qty">{{ item.quantity || 1 }}</td>
+                        <td class="text-center col-period">{{ formatServicePeriodDisplay(item) }}</td>
+                        <td class="text-right col-price">¥{{ getItemUnitPrice(item).toFixed(2) }}</td>
+                        <td class="text-right col-total item-total">¥{{ getItemTotalPrice(item).toFixed(2) }}</td>
                       </tr>
                       <tr v-if="qBottomPadding > 0" :style="{ height: qBottomPadding + 'px' }" class="virtual-spacer"><td></td></tr>
                     </tbody>
@@ -165,7 +177,7 @@
                     <span class="summary-label">设备数量</span>
                     <span class="summary-value">{{ totalDeviceCount }} 台</span>
                   </div>
-                  <div class="summary-row">
+                  <div v-if="quoteCaliber !== 'lenovo'" class="summary-row">
                     <span class="summary-label">小计</span>
                     <span class="summary-value">¥{{ subtotal.toFixed(2) }}</span>
                   </div>
@@ -236,12 +248,27 @@
             <div class="config-group">
               <label class="config-label">客户选择</label>
               <div class="select-wrapper">
-                <select v-model="selectedCustomer" class="config-select">
+                <select v-model="selectedCustomer" class="config-select" @change="onCustomerSelectChange">
                   <option :value="''">请选择客户</option>
                   <option v-for="c in customersList" :key="c.id" :value="c.id">{{ c.customer_name }}</option>
+                  <option :value="ADD_CUSTOMER_OPTION">＋ 新增客户</option>
                 </select>
                 <span class="material-symbols-outlined select-icon">expand_more</span>
               </div>
+            </div>
+
+            <div class="config-group">
+              <label class="config-label">报价口径</label>
+              <div class="select-wrapper">
+                <select v-model="quoteCaliber" class="config-select">
+                  <option value="standard">标准口径</option>
+                  <option value="lenovo">联想框架</option>
+                </select>
+                <span class="material-symbols-outlined select-icon">expand_more</span>
+              </div>
+              <p v-if="quoteCaliber === 'lenovo'" class="config-hint">
+                联想框架单价为含税13%，PDF 直接展示智能匹配「单价」及含税小计，税率固定13%
+              </p>
             </div>
 
             <div class="config-group">
@@ -250,7 +277,7 @@
                 <select v-model="priceLayout" class="config-select">
                   <option value="layout1">数量+单价(未税)+总价(未税)</option>
                   <option value="layout2">数量+单价(未税)+税率+总价(含税)</option>
-                  <option value="layout3">数量+单价(含税6%)+总价(含税6%)</option>
+                  <option value="layout3" :disabled="quoteCaliber === 'lenovo'">数量+单价(含税6%)+总价(含税6%)</option>
                   <option value="layout4">数量+单价(含税13%)+总价(含税13%)</option>
                 </select>
                 <span class="material-symbols-outlined select-icon">expand_more</span>
@@ -287,8 +314,16 @@
               <div class="toggle-item">
                 <span class="toggle-label">显示税费列</span>
                 <div v-if="showTaxColumn" class="tax-rate-inline">
-                  <label class="tax-rate-option" :class="{ active: selectedTaxRate === 0.06 }">
-                    <input type="radio" v-model="selectedTaxRate" :value="0.06" />
+                  <label
+                    class="tax-rate-option"
+                    :class="{ active: selectedTaxRate === 0.06, disabled: quoteCaliber === 'lenovo' }"
+                  >
+                    <input
+                      type="radio"
+                      v-model="selectedTaxRate"
+                      :value="0.06"
+                      :disabled="quoteCaliber === 'lenovo'"
+                    />
                     <span>6%</span>
                   </label>
                   <label class="tax-rate-option" :class="{ active: selectedTaxRate === 0.13 }">
@@ -296,8 +331,8 @@
                     <span>13%</span>
                   </label>
                 </div>
-                <label class="toggle-switch">
-                  <input type="checkbox" v-model="showTaxColumn" />
+                <label class="toggle-switch" :class="{ disabled: quoteCaliber === 'lenovo' }">
+                  <input type="checkbox" v-model="showTaxColumn" :disabled="quoteCaliber === 'lenovo'" />
                   <span class="toggle-slider"></span>
                 </label>
               </div>
@@ -451,6 +486,50 @@
 
     <!-- 产品数据库弹窗 -->
     <ProductDatabaseModal :is-open="isProductDatabaseModalOpen" @close="closeProductDatabaseModal" />
+
+    <!-- 新增客户弹窗 -->
+    <el-dialog
+      v-model="showAddCustomerDialog"
+      title="新增客户"
+      width="480px"
+      append-to-body
+      destroy-on-close
+      class="add-customer-dialog"
+      @closed="resetAddCustomerForm"
+    >
+      <div class="add-customer-form">
+        <div class="add-customer-field">
+          <label class="add-customer-label">客户名称 <span class="required">*</span></label>
+          <el-input v-model="newCustomerForm.customer_name" placeholder="例如：未来科技集团" maxlength="100" />
+        </div>
+        <div class="add-customer-field">
+          <label class="add-customer-label">联系人</label>
+          <el-input v-model="newCustomerForm.contact_person" placeholder="联系人姓名" maxlength="50" />
+        </div>
+        <div class="add-customer-field">
+          <label class="add-customer-label">联系电话</label>
+          <el-input v-model="newCustomerForm.contact_phone" placeholder="联系电话" maxlength="30" />
+        </div>
+        <div class="add-customer-field">
+          <label class="add-customer-label">客户地址</label>
+          <el-input
+            v-model="newCustomerForm.customer_address"
+            type="textarea"
+            :rows="2"
+            placeholder="办公地址"
+            maxlength="200"
+          />
+        </div>
+      </div>
+      <template #footer>
+        <div class="actions">
+          <el-button @click="showAddCustomerDialog = false">取消</el-button>
+          <el-button type="primary" :loading="isCreatingCustomer" @click="createAndSelectCustomer">
+            创建并选用
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -481,6 +560,10 @@ import {
   type SheetTableDataWithHeaders,
   type DocumentRecognitionState
 } from '../stores/quotationStore'
+import {
+  resolveOriginalExcel,
+  persistOriginalExcelCache
+} from '../utils/originalExcelCache'
 
 const router = useRouter()
 
@@ -521,10 +604,73 @@ const quoteContactPhone = ref('')  // 登录用户联系方式
 
 // 客户列表（从个人设置动态加载）与当前选中的客户 id
 const customersList = ref<{ id: number; customer_name: string; contact_person?: string; contact_phone?: string; customer_address?: string }[]>([])
-const selectedCustomer = ref<number | ''>('')  // 客户选择，对应客户 id
+const ADD_CUSTOMER_OPTION = '__add_customer__'
+const selectedCustomer = ref<number | '' | typeof ADD_CUSTOMER_OPTION>('')  // 客户选择，对应客户 id
+const lastValidCustomer = ref<number | ''>('')
+const showAddCustomerDialog = ref(false)
+const isCreatingCustomer = ref(false)
+const newCustomerForm = ref({
+  customer_name: '',
+  contact_person: '',
+  contact_phone: '',
+  customer_address: ''
+})
+
+function onCustomerSelectChange() {
+  if (selectedCustomer.value === ADD_CUSTOMER_OPTION) {
+    selectedCustomer.value = lastValidCustomer.value
+    showAddCustomerDialog.value = true
+    return
+  }
+  lastValidCustomer.value = selectedCustomer.value === '' ? '' : Number(selectedCustomer.value)
+}
+
+function resetAddCustomerForm() {
+  newCustomerForm.value = {
+    customer_name: '',
+    contact_person: '',
+    contact_phone: '',
+    customer_address: ''
+  }
+  isCreatingCustomer.value = false
+}
+
+async function createAndSelectCustomer() {
+  const name = newCustomerForm.value.customer_name.trim()
+  if (!name) {
+    ElMessage.warning('请输入客户名称')
+    return
+  }
+
+  isCreatingCustomer.value = true
+  try {
+    const created = await api.post('/user-profile/customers', {
+      customer_name: name,
+      contact_person: newCustomerForm.value.contact_person.trim() || null,
+      contact_phone: newCustomerForm.value.contact_phone.trim() || null,
+      customer_address: newCustomerForm.value.customer_address.trim() || null
+    })
+    // 刷新列表并自动选中新建客户
+    await loadCompanyAndCustomers()
+    const newId = Number(created?.id)
+    if (Number.isFinite(newId)) {
+      selectedCustomer.value = newId
+      lastValidCustomer.value = newId
+    }
+    showAddCustomerDialog.value = false
+    resetAddCustomerForm()
+    ElMessage.success('客户创建成功，已自动选用')
+  } catch (err) {
+    console.error('创建客户失败', err)
+    ElMessage.error('创建客户失败，请重试')
+  } finally {
+    isCreatingCustomer.value = false
+  }
+}
 
 // 配置选项状态
-const priceLayout = ref('layout2')  // 布局选择（默认：数量+单价(未税)+税率+总价(含税)）
+const quoteCaliber = ref<'standard' | 'lenovo'>('standard')  // 报价口径，默认标准口径
+const priceLayout = ref('layout4')  // 布局选择（默认：数量+单价(含税13%)+总价(含税13%)）
 const templateStyle = ref('system_modern')  // 模板选择
 const serviceTerms = ref('')  // 服务条款（当前选中的ID）
 const serviceTermsList = ref<any[]>([])  // 服务条款列表
@@ -532,6 +678,36 @@ const showTaxColumn = ref(true)  // 显示税费列
 const selectedTaxRate = ref(0.13)  // 税率选择，默认13%
 const showDiscount = ref(true)  // 包含折扣信息
 const showSignature = ref(false)  // 显示签字栏
+
+// 联想框架含税单价 → 未税单价（÷1.13）
+const LENOVO_TAX_RATE = 1.13
+function getLenovoPretaxUnitPrice(item: any): number {
+  const inclusive = Number(item?.lenovo_unit_price)
+  if (!Number.isFinite(inclusive) || inclusive <= 0) return 0
+  return Math.round((inclusive / LENOVO_TAX_RATE) * 100) / 100
+}
+
+/** 报价单用的未税单价：标准口径取调整后单价；联想框架取含税原单价÷1.13 */
+function getItemBaseUnitPrice(item: any): number {
+  if (quoteCaliber.value === 'lenovo') {
+    return getLenovoPretaxUnitPrice(item)
+  }
+  return Number(item?.finalPrice ?? item?.suggestedPrice ?? 0) || 0
+}
+
+watch(quoteCaliber, (mode) => {
+  if (mode === 'lenovo') {
+    selectedTaxRate.value = 0.13
+    showTaxColumn.value = true
+    if (priceLayout.value === 'layout3') {
+      priceLayout.value = 'layout4'
+    }
+    const hasAny = tableData.value.some((item: any) => Number(item?.lenovo_unit_price) > 0)
+    if (tableData.value.length > 0 && !hasAny) {
+      ElMessage.warning('当前数据暂无联想框架单价，请先在「智能匹配」切换到联想框架完成报价')
+    }
+  }
+})
 
 // 预览弹窗状态
 const showPreviewDialog = ref(false)
@@ -564,8 +740,9 @@ function normalizeLogoSource(logoUrl: string): string {
 
 // 根据「客户选择」展示的客户信息（来自个人设置客户列表）
 const selectedCustomerInfo = computed(() => {
-  const id = selectedCustomer.value === '' ? null : Number(selectedCustomer.value)
-  if (id == null) {
+  const raw = selectedCustomer.value
+  const id = (raw === '' || raw === ADD_CUSTOMER_OPTION) ? null : Number(raw)
+  if (id == null || !Number.isFinite(id)) {
     return {
       customerName: '-',
       contactPerson: '',
@@ -643,8 +820,8 @@ function buildOriginalPreviewForSheet(headers: string[], data: any[], sheetName?
     : tableData.value
 
   scopedTableData.forEach(item => {
-    const keys = [item.model, item.matchedModel, item.originalModel].filter(Boolean)
-    const price = item.finalPrice || item.suggestedPrice || 0
+    const keys = [item.model, item.matchedModel, item.originalModel, item.lenovo_matched_model].filter(Boolean)
+    const price = getItemBaseUnitPrice(item)
     keys.forEach(k => {
       const normalized = k.toString().trim().toUpperCase()
       if (normalized) priceByModel.set(normalized, price)
@@ -654,15 +831,15 @@ function buildOriginalPreviewForSheet(headers: string[], data: any[], sheetName?
   // 判断原始表和匹配表行数是否一致（一致则可安全使用行索引映射）
   const rowCountMatch = data.length === scopedTableData.length
 
-  // 根据布局选择确定价格乘数和表头名称
+  // 根据布局选择确定价格乘数和表头名称（联想框架锁定 13%，不可用 6%）
   let priceMultiplier = 1
-  let priceHeaderName = '维保单价'
-  if (priceLayout.value === 'layout3') {
+  let priceHeaderName = quoteCaliber.value === 'lenovo' ? '联想框架单价' : '维保单价'
+  if (priceLayout.value === 'layout3' && quoteCaliber.value !== 'lenovo') {
     priceMultiplier = 1.06
     priceHeaderName = '维保单价(含税6%)'
   } else if (priceLayout.value === 'layout4') {
     priceMultiplier = 1.13
-    priceHeaderName = '维保单价(含税13%)'
+    priceHeaderName = quoteCaliber.value === 'lenovo' ? '联想框架单价(含税13%)' : '维保单价(含税13%)'
   }
 
   return {
@@ -686,8 +863,7 @@ function buildOriginalPreviewForSheet(headers: string[], data: any[], sheetName?
 
       // 兜底：行数一致时按行索引获取价格
       if (basePrice === 0 && rowCountMatch && rowIndex < scopedTableData.length) {
-        const item = scopedTableData[rowIndex]
-        basePrice = item.finalPrice || item.suggestedPrice || 0
+        basePrice = getItemBaseUnitPrice(scopedTableData[rowIndex])
       }
 
       const adjustedPrice = Math.round(basePrice * priceMultiplier * 100) / 100
@@ -714,8 +890,8 @@ const previewConvertedData = computed(() => {
   // 备用映射：按型号名称匹配
   const priceByModel = new Map<string, number>()
   tableData.value.forEach(item => {
-    const keys = [item.model, item.matchedModel, item.originalModel].filter(Boolean)
-    const price = item.finalPrice || item.suggestedPrice || 0
+    const keys = [item.model, item.matchedModel, item.originalModel, item.lenovo_matched_model].filter(Boolean)
+    const price = getItemBaseUnitPrice(item)
     keys.forEach(k => {
       const normalized = k.toString().trim().toUpperCase()
       if (normalized) priceByModel.set(normalized, price)
@@ -725,11 +901,11 @@ const previewConvertedData = computed(() => {
   // 判断转换表和匹配表行数是否一致
   const rowCountMatch = data.length === tableData.value.length
 
-  // 根据布局选择确定价格乘数和表头名称
+  // 根据布局选择确定价格乘数和表头名称（联想框架锁定 13%，不可用 6%）
   let priceMultiplier = 1
   let priceHeaderName = '单价'
   let originalPriceHeader = '单价'  // 原始表头名称，用于查找原有数据
-  if (priceLayout.value === 'layout3') {
+  if (priceLayout.value === 'layout3' && quoteCaliber.value !== 'lenovo') {
     priceMultiplier = 1.06
     priceHeaderName = '单价(含税6%)'
   } else if (priceLayout.value === 'layout4') {
@@ -768,8 +944,7 @@ const previewConvertedData = computed(() => {
           }
           // 兜底：行数一致时按行索引取价
           if (basePrice === 0 && rowCountMatch && rowIndex < tableData.value.length) {
-            const item = tableData.value[rowIndex]
-            basePrice = item.finalPrice || item.suggestedPrice || 0
+            basePrice = getItemBaseUnitPrice(tableData.value[rowIndex])
           }
           // 如果仍为 0，保留原单价值
           if (basePrice === 0) {
@@ -1088,6 +1263,38 @@ onMounted(() => {
     console.log('Source file name:', sourceFileName.value)
   }
 
+  // 页面进入时尝试回源恢复原始 Excel（内存丢失时从 IndexedDB / 最近上传找回）
+  void (async () => {
+    const resolved = await resolveOriginalExcel({
+      memoryBase64: getFlowData<string>(FLOW_DATA_KEYS.ORIGINAL_EXCEL_FILE),
+      memoryFileName: getFlowData<string>(FLOW_DATA_KEYS.ORIGINAL_FILE_NAME) || sourceFileName.value,
+      memorySheetName: getFlowData<string>(FLOW_DATA_KEYS.SELECTED_SHEET_NAME),
+      memorySheetNames: getFlowData<string[]>(FLOW_DATA_KEYS.SELECTED_SHEET_NAMES)
+    })
+    if (resolved.base64 && resolved.source !== 'memory') {
+      saveFlowData(FLOW_DATA_KEYS.ORIGINAL_EXCEL_FILE, resolved.base64)
+      console.log('[Export] 已从', resolved.source, '恢复原始Excel到内存')
+    }
+    if (resolved.fileName) {
+      saveFlowData(FLOW_DATA_KEYS.ORIGINAL_FILE_NAME, resolved.fileName)
+      if (!sourceFileName.value) sourceFileName.value = resolved.fileName
+    }
+    if (resolved.selectedSheetName) {
+      saveFlowData(FLOW_DATA_KEYS.SELECTED_SHEET_NAME, resolved.selectedSheetName)
+    }
+    if (resolved.selectedSheetNames.length > 0) {
+      saveFlowData(FLOW_DATA_KEYS.SELECTED_SHEET_NAMES, resolved.selectedSheetNames)
+    }
+    if (resolved.base64 && resolved.fileName) {
+      void persistOriginalExcelCache({
+        fileName: resolved.fileName,
+        base64: resolved.base64,
+        selectedSheetName: resolved.selectedSheetName || '',
+        selectedSheetNames: resolved.selectedSheetNames
+      })
+    }
+  })()
+
   if (navigationMode === 'flow') {
     // 流程推进模式：从价格调整页面传递的最新数据
     const flowData = getFlowData<any[]>(FLOW_DATA_KEYS.ADJUSTED_DATA)
@@ -1138,15 +1345,19 @@ const validityDate = computed(() => {
   return `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日`
 })
 
-// Computed: Subtotal
+// Computed: Subtotal（行总价合计；联想框架下即为含税小计列合计）
 const subtotal = computed(() => {
   return tableData.value.reduce((sum, item) => {
     return sum + getItemTotalPrice(item)
   }, 0)
 })
 
-// Computed: Total (含税)
+// Computed: Total
+// 标准口径：小计 × (1+税率)；联想框架：单价已含税13%，总计=「小计(含税13%)」列求和
 const total = computed(() => {
+  if (quoteCaliber.value === 'lenovo') {
+    return subtotal.value
+  }
   if (showTaxColumn.value) {
     return subtotal.value * (1 + selectedTaxRate.value)
   }
@@ -1157,6 +1368,49 @@ const total = computed(() => {
 const totalDeviceCount = computed(() => {
   return tableData.value.reduce((sum, item) => sum + (parseInt(item.quantity) || 1), 0)
 })
+
+// ============ 外部系统联动：实时报价快照推送 ============
+// 若本次询价由第三方系统（如 TopSales）发起（存在 external_ref），
+// 在报价值变化时（防抖）把当前页面的实时报价结果推送到后端快照，
+// 供对方在用户点击"完成报价"前实时拉取（TopSales 侧"AI报价系统同步报价"弹窗）。
+const buildLiveSnapshotData = () => ({
+  subtotal: Math.round(subtotal.value * 100) / 100,
+  tax_rate: showTaxColumn.value ? selectedTaxRate.value : null,
+  total: Math.round(total.value * 100) / 100,
+  valid_days: validDays.value,
+  project_name: projectName.value,
+  customer_name: selectedCustomerInfo.value.customerName !== '-' ? selectedCustomerInfo.value.customerName : customerName.value,
+  quote_number: quoteNumber.value,
+  device_count: tableData.value.length,
+  service_level: tableData.value[0]?.serviceLevel || null
+})
+
+const pushLiveSnapshot = async (files?: Array<{ name: string; size: number; type: string; content: string }>) => {
+  const externalRef = getExternalRef()
+  if (!externalRef) return
+  try {
+    const payload: Record<string, any> = { data: buildLiveSnapshotData() }
+    if (files && files.length > 0) {
+      payload.files = files
+    }
+    await api.put(`/quote-history/live-by-ref/${encodeURIComponent(externalRef)}`, payload)
+    console.log('[LiveSnapshot] 实时报价快照已推送', files ? `（含 ${files.length} 个导出文件）` : '')
+  } catch (error) {
+    // 推送失败不影响本页面功能，仅记录日志
+    console.warn('[LiveSnapshot] 实时报价快照推送失败:', error)
+  }
+}
+
+let liveSnapshotTimer: ReturnType<typeof setTimeout> | null = null
+watch(
+  [subtotal, total, selectedTaxRate, showTaxColumn, validDays, () => tableData.value.length],
+  () => {
+    if (!getExternalRef()) return
+    if (liveSnapshotTimer) clearTimeout(liveSnapshotTimer)
+    liveSnapshotTimer = setTimeout(() => pushLiveSnapshot(), 800)
+  },
+  { immediate: true }
+)
 
 // 将服务条款 HTML 转为纯文本（保留段前空格与列表结构）
 function convertHtmlToPlainText(html: string): string {
@@ -1300,8 +1554,28 @@ function formatManufacturer(manufacturer: string | undefined): string {
   return manufacturer
 }
 
+function getItemDisplayModel(item: any): string {
+  if (quoteCaliber.value === 'lenovo') {
+    return item?.lenovo_matched_model || item?.model || item?.matchedModel || '未命名产品'
+  }
+  return item?.model || item?.matchedModel || '未命名产品'
+}
+
+function getItemDisplayManufacturer(item: any): string {
+  if (quoteCaliber.value === 'lenovo') {
+    return item?.lenovo_matched_brand || item?.matchedManufacturer || item?.manufacturer || ''
+  }
+  return item?.matchedManufacturer || item?.manufacturer || ''
+}
+
+/** PDF 展示单价：联想框架直接取智能匹配含税单价；标准口径取调整后未税单价 */
 function getItemUnitPrice(item: any): number {
-  return Number(item?.finalPrice ?? item?.suggestedPrice ?? 0) || 0
+  if (quoteCaliber.value === 'lenovo') {
+    const inclusive = Number(item?.lenovo_unit_price)
+    if (!Number.isFinite(inclusive) || inclusive <= 0) return 0
+    return Math.round(inclusive * 100) / 100
+  }
+  return getItemBaseUnitPrice(item)
 }
 
 function getItemQuantity(item: any): number {
@@ -1427,8 +1701,12 @@ async function downloadPDF() {
   const savedScrollX = window.scrollX
   const savedScrollY = window.scrollY
 
-  // 等待虚拟化退化为全量渲染（isGeneratingPDF 让 qVisibleItems 返回 tableData.value）
+  // 等待虚拟化退化为全量渲染，并给浏览器一轮布局时间（长表头/自动行高）
   await nextTick()
+  await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+  if (tableData.value.length > 50) {
+    await new Promise((resolve) => setTimeout(resolve, 80))
+  }
 
   try {
     const html2canvas = (await import('html2canvas')).default
@@ -1442,8 +1720,8 @@ async function downloadPDF() {
     const pageMargin = 10 // mm
     const imgWidthMm = a4Width - 2 * pageMargin
 
-    // 渲染宽度：A4 at 96dpi ≈ 794px，给出最佳 A4 页面比例
-    const renderWidth = 794
+    // 渲染宽度：略宽于标准 A4 内容区，给含税表头留足横向空间
+    const renderWidth = 860
 
     // 重置滚动位置
     window.scrollTo(0, 0)
@@ -1482,12 +1760,13 @@ async function downloadPDF() {
           height: auto;
           overflow: visible;
           display: block;
-          padding: 40px 50px;
+          padding: 36px 40px;
           background: white;
           color: #0f172a;
           box-shadow: none;
           border-radius: 0;
           position: static;
+          box-sizing: border-box;
         `
 
         // 5. 修复 terms-section：去掉 margin-top: auto，用固定间距
@@ -1501,10 +1780,71 @@ async function downloadPDF() {
           el => (el as HTMLElement).style.display = 'none'
         )
 
-        // 7. 禁用所有动画/过渡
-        const resetStyle = clonedDoc.createElement('style')
-        resetStyle.textContent = '*, *::before, *::after { animation: none !important; transition: none !important; }'
-        clonedDoc.head.appendChild(resetStyle)
+        // 7. PDF 专用表格布局：固定列宽、自动行高，避免长表头挤压/裁切
+        const pdfStyle = clonedDoc.createElement('style')
+        pdfStyle.textContent = `
+          *, *::before, *::after { animation: none !important; transition: none !important; }
+          .items-table,
+          .items-table-scroll {
+            max-height: none !important;
+            overflow: visible !important;
+            height: auto !important;
+          }
+          .quote-table {
+            width: 100% !important;
+            table-layout: fixed !important;
+            border-collapse: collapse !important;
+          }
+          .quote-table thead { position: static !important; }
+          .quote-table th {
+            text-transform: none !important;
+            letter-spacing: 0 !important;
+            white-space: normal !important;
+            word-break: keep-all !important;
+            line-height: 1.25 !important;
+            font-size: 11px !important;
+            padding: 8px 4px !important;
+            vertical-align: bottom !important;
+            overflow: visible !important;
+          }
+          .quote-table th .th-main,
+          .quote-table th .th-sub {
+            display: block !important;
+          }
+          .quote-table th .th-sub {
+            font-size: 10px !important;
+            font-weight: 600 !important;
+            margin-top: 2px !important;
+          }
+          .quote-table .col-no { width: 6% !important; }
+          .quote-table .col-desc { width: 34% !important; }
+          .quote-table .col-qty { width: 8% !important; }
+          .quote-table .col-period { width: 12% !important; }
+          .quote-table .col-price { width: 20% !important; }
+          .quote-table .col-total { width: 20% !important; }
+          .quote-table td {
+            height: auto !important;
+            padding: 10px 4px !important;
+            vertical-align: middle !important;
+            overflow: visible !important;
+            word-break: break-word !important;
+          }
+          .quote-table td.col-price,
+          .quote-table td.col-total,
+          .quote-table td.col-qty,
+          .quote-table td.col-period {
+            white-space: nowrap !important;
+            font-size: 12px !important;
+          }
+          .quote-table tr.item-row {
+            height: auto !important;
+            break-inside: auto !important;
+            page-break-inside: auto !important;
+          }
+          .item-name { font-size: 13px !important; }
+          .item-detail { font-size: 11px !important; }
+        `
+        clonedDoc.head.appendChild(pdfStyle)
       }
     })
 
@@ -1607,10 +1947,11 @@ async function downloadPDF() {
 
       if (pageIdx > 0) doc.addPage()
       // 内容在页面顶部对齐，底部可能留白（因为安全分页点比理想高度短）
+      // JPEG 大幅减小体积，避免超大 PNG 嵌入导致百兆级 PDF
       const imgHeightMm = (pageCanvas.height / pageCanvas.width) * imgWidthMm
       doc.addImage(
-        pageCanvas.toDataURL('image/png', 1.0),
-        'PNG',
+        pageCanvas.toDataURL('image/jpeg', 0.92),
+        'JPEG',
         pageMargin,
         pageMargin,
         imgWidthMm,
@@ -1671,12 +2012,57 @@ async function exportQuotationExcel() {
     // 动态导入 ExcelJS
     const ExcelJS = (await import('exceljs')).default
 
-    // 尝试获取原始Excel文件数据
-    const originalExcelBase64 = getFlowData<string>(FLOW_DATA_KEYS.ORIGINAL_EXCEL_FILE)
-    const selectedSheetName = getFlowData<string>(FLOW_DATA_KEYS.SELECTED_SHEET_NAME)
-    const selectedSheetNames = getFlowData<string[]>(FLOW_DATA_KEYS.SELECTED_SHEET_NAMES) || (selectedSheetName ? [selectedSheetName] : [])
-    const originalFileName = getFlowData<string>(FLOW_DATA_KEYS.ORIGINAL_FILE_NAME) || ''
-    console.log('[Export] originalExcelBase64:', originalExcelBase64 ? `存在(${originalExcelBase64.length}字符)` : '不存在')
+    // 尝试获取原始Excel文件数据（内存 → IndexedDB → 最近上传）
+    const resolvedOriginal = await resolveOriginalExcel({
+      memoryBase64: getFlowData<string>(FLOW_DATA_KEYS.ORIGINAL_EXCEL_FILE),
+      memoryFileName: getFlowData<string>(FLOW_DATA_KEYS.ORIGINAL_FILE_NAME) || sourceFileName.value,
+      memorySheetName: getFlowData<string>(FLOW_DATA_KEYS.SELECTED_SHEET_NAME),
+      memorySheetNames: getFlowData<string[]>(FLOW_DATA_KEYS.SELECTED_SHEET_NAMES)
+    })
+    let originalExcelBase64 = resolvedOriginal.base64
+    let selectedSheetName = resolvedOriginal.selectedSheetName
+    let selectedSheetNames = resolvedOriginal.selectedSheetNames.length > 0
+      ? resolvedOriginal.selectedSheetNames
+      : (selectedSheetName ? [selectedSheetName] : [])
+    let originalFileName = resolvedOriginal.fileName || ''
+
+    // 回写到内存 store，保证同会话后续导出可直接命中
+    if (originalExcelBase64) {
+      saveFlowData(FLOW_DATA_KEYS.ORIGINAL_EXCEL_FILE, originalExcelBase64)
+    }
+    if (originalFileName) {
+      saveFlowData(FLOW_DATA_KEYS.ORIGINAL_FILE_NAME, originalFileName)
+      if (!sourceFileName.value) sourceFileName.value = originalFileName
+    }
+    if (selectedSheetName) {
+      saveFlowData(FLOW_DATA_KEYS.SELECTED_SHEET_NAME, selectedSheetName)
+    }
+    if (selectedSheetNames.length > 0) {
+      saveFlowData(FLOW_DATA_KEYS.SELECTED_SHEET_NAMES, selectedSheetNames)
+    }
+    if (originalExcelBase64 && originalFileName) {
+      void persistOriginalExcelCache({
+        fileName: originalFileName,
+        base64: originalExcelBase64,
+        selectedSheetName: selectedSheetName || '',
+        selectedSheetNames
+      })
+    }
+
+    // 若仍缺 sheet 名，尝试从页面状态 / 多表数据推断
+    if (!selectedSheetName) {
+      const docState = restorePageState<DocumentRecognitionState>(PAGE_STATE_KEYS.DOC_RECOGNITION)
+      selectedSheetName = docState?.currentSheetName
+        || docState?.selectedSheetNames?.[0]
+        || originalSheetTables.value[0]?.sheetName
+        || null
+      if (selectedSheetName) {
+        saveFlowData(FLOW_DATA_KEYS.SELECTED_SHEET_NAME, selectedSheetName)
+        selectedSheetNames = selectedSheetNames.length > 0 ? selectedSheetNames : [selectedSheetName]
+      }
+    }
+
+    console.log('[Export] originalExcelBase64:', originalExcelBase64 ? `存在(${originalExcelBase64.length}字符)` : '不存在', 'source=', resolvedOriginal.source)
     console.log('[Export] selectedSheetName:', selectedSheetName)
     console.log('[Export] selectedSheetNames:', selectedSheetNames)
     console.log('[Export] originalFileName:', originalFileName)
@@ -1750,6 +2136,34 @@ async function exportQuotationExcel() {
       return termsRowEnd
     }
 
+    // 外部系统联动：收集本次导出的文件，导出完成后一并推送到实时快照，
+    // 供 TopSales "AI报价系统同步报价"弹窗的附件下拉框选用
+    const exportedSnapshotFiles: Array<{ name: string; size: number; type: string; content: string }> = []
+    const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    const bufferToDataUrl = (buffer: ArrayBuffer | Uint8Array) => {
+      const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
+      let binary = ''
+      const chunkSize = 0x8000
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
+      }
+      return `data:${XLSX_MIME};base64,${btoa(binary)}`
+    }
+    const collectSnapshotFile = (buffer: ArrayBuffer | Uint8Array, fileName: string) => {
+      if (!getExternalRef()) return
+      try {
+        const byteLength = buffer instanceof Uint8Array ? buffer.length : buffer.byteLength
+        exportedSnapshotFiles.push({
+          name: fileName,
+          size: byteLength,
+          type: XLSX_MIME,
+          content: bufferToDataUrl(buffer)
+        })
+      } catch (error) {
+        console.warn('[LiveSnapshot] 收集导出文件失败:', fileName, error)
+      }
+    }
+
     // 辅助函数：下载文件
     const downloadFile = (buffer: ArrayBuffer, fileName: string) => {
       const blob = new Blob([buffer], {
@@ -1763,10 +2177,10 @@ async function exportQuotationExcel() {
       window.URL.revokeObjectURL(url)
     }
 
-    // 获取价格数据映射（按行索引）—— 直接从 tableData 取价，避免间接匹配导致 0 值
-    // 根据布局选择确定价格乘数
+    // 获取价格数据映射（按行索引）—— 按当前报价口径取未税单价，再按布局乘税率
+    // 联想框架：未税单价 = lenovo_unit_price / 1.13
     let exportPriceMultiplier = 1
-    if (priceLayout.value === 'layout3') {
+    if (priceLayout.value === 'layout3' && quoteCaliber.value !== 'lenovo') {
       exportPriceMultiplier = 1.06
     } else if (priceLayout.value === 'layout4') {
       exportPriceMultiplier = 1.13
@@ -1775,7 +2189,7 @@ async function exportQuotationExcel() {
     const buildPriceDataMap = (items: any[]) => {
       const map = new Map<number, number>()
       items.forEach((item, index) => {
-        const basePrice = item.finalPrice || item.suggestedPrice || 0
+        const basePrice = getItemBaseUnitPrice(item)
         if (basePrice > 0) {
           const adjustedPrice = Math.round(basePrice * exportPriceMultiplier * 100) / 100
           map.set(index, adjustedPrice)
@@ -1789,11 +2203,11 @@ async function exportQuotationExcel() {
       ? tableData.value.filter((item: any) => item.sheetName === selectedSheetName)
       : tableData.value
     const primaryPriceDataMap = buildPriceDataMap(primarySheetItems.length > 0 ? primarySheetItems : tableData.value)
-    console.log('[Export] priceDataMap 共', priceDataMap.size, '条, tableData 共', tableData.value.length, '条')
+    console.log('[Export] quoteCaliber=', quoteCaliber.value, 'priceDataMap 共', priceDataMap.size, '条, tableData 共', tableData.value.length, '条')
 
-    // ===== 联想框架价格 =====
-    // 只要 tableData 里任意一行存在 lenovo_unit_price>0，就在最末加"联想框架单价"列；
-    // 没跑过联想报价时，行里没有这个字段，导出和现有完全一致，不追加。
+    // ===== 联想框架价格（附加列）=====
+    // 仅在「标准口径」且存在联想价时，额外追加一列含税联想单价供对照。
+    // 「联想框架」口径下主价格列已是联想价，不再重复追加。
     const LENOVO_HEADER = '联想框架单价(含税13%)'
     const buildLenovoPriceMap = (items: any[]) => {
       const map = new Map<number, number>()
@@ -1810,7 +2224,7 @@ async function exportQuotationExcel() {
     const primaryLenovoPriceDataMap = buildLenovoPriceMap(
       primarySheetItems.length > 0 ? primarySheetItems : tableData.value
     )
-    const hasLenovoData = lenovoPriceDataMap.size > 0
+    const hasLenovoData = quoteCaliber.value !== 'lenovo' && lenovoPriceDataMap.size > 0
     console.log('[Export] hasLenovoData=', hasLenovoData, ' 联想价数=', lenovoPriceDataMap.size)
 
     /** 给定输出表的一行 / 行号 / sheetName，找它在 tableData 中对应的联想单价 */
@@ -2056,10 +2470,10 @@ async function exportQuotationExcel() {
         const modelPriceMap = new Map<string, number>()
         const lenovoModelPriceMap = new Map<string, number>()
         tableData.value.forEach((item: any) => {
-          const basePrice = item.finalPrice || item.suggestedPrice || 0
+          const basePrice = getItemBaseUnitPrice(item)
           if (basePrice > 0) {
             const adjustedPrice = Math.round(basePrice * exportPriceMultiplier * 100) / 100
-            const keys = [item.model, item.matchedModel, item.originalModel].filter(Boolean)
+            const keys = [item.model, item.matchedModel, item.originalModel, item.lenovo_matched_model].filter(Boolean)
             keys.forEach((k: string) => {
               const normalized = normalizeForMatch(k)
               if (normalized && !modelPriceMap.has(normalized)) {
@@ -2309,14 +2723,109 @@ async function exportQuotationExcel() {
           }
         }
 
-        // ---- 添加服务条款（在数据行之后） ----
+        // ---- 添加服务条款（在整张表最后一行有内容的行之后） ----
         const termsContent = getServiceTermsContent()
         if (termsContent) {
-          const lastDataRowNum = dataStartRowNum + tableData.value.length - 1
-          const titleRowNum = lastDataRowNum + 3  // 空一行
+          // 扫描工作表实际最后一行"有文字内容"的行号（含共享字符串/内联文本/数值/公式），
+          // 不能按 tableData 行数推算：原始模板在数据区下方常有备注、SOW说明框等尾部内容，
+          // 按行数推算会把条款插进原表格中间，破坏原有内容呈现（出现断行/覆盖）
+          let lastContentRowNum = 0
+          for (let i = 0; i < rows.length; i++) {
+            const rn = parseInt(rows[i].getAttribute('r') || '0')
+            if (!rn || rn <= lastContentRowNum) continue
+            const cellEls = rows[i].getElementsByTagNameNS(nsResolver, 'c')
+            for (let j = 0; j < cellEls.length; j++) {
+              const vEl = cellEls[j].getElementsByTagNameNS(nsResolver, 'v')[0]
+              const fEl = cellEls[j].getElementsByTagNameNS(nsResolver, 'f')[0]
+              const isEl = cellEls[j].getElementsByTagNameNS(nsResolver, 'is')[0]
+              const hasContent =
+                (vEl && String(vEl.textContent || '').trim().length > 0) ||
+                (fEl && String(fEl.textContent || '').trim().length > 0) ||
+                (isEl && String(isEl.textContent || '').trim().length > 0)
+              if (hasContent) {
+                lastContentRowNum = rn
+                break
+              }
+            }
+          }
+          // 兜底：扫描不到内容时退回按数据行数推算
+          if (lastContentRowNum === 0) {
+            lastContentRowNum = dataStartRowNum + tableData.value.length - 1
+          }
+          // 在最后一行有内容的行的下方第二行开始插入（中间保留一行空行）
+          let titleRowNum = lastContentRowNum + 2
+          // 若已有合并单元格区域延伸到插入点之下（如模板底部的SOW大输入框 A17:R23 这类），
+          // 需要顺延到所有合并区域之后再空一行，避免把条款写进合并区内部
+          const existingMergeEls = doc.getElementsByTagNameNS(nsResolver, 'mergeCell')
+          let maxMergeEndRow = 0
+          for (let i = 0; i < existingMergeEls.length; i++) {
+            const refAttr = existingMergeEls[i].getAttribute('ref') || ''
+            const refMatch = refAttr.match(/:[A-Z]+(\d+)$/)
+            if (refMatch) {
+              maxMergeEndRow = Math.max(maxMergeEndRow, parseInt(refMatch[1]))
+            }
+          }
+          if (maxMergeEndRow + 2 > titleRowNum) {
+            titleRowNum = maxMergeEndRow + 2
+          }
           const termsRowNum = titleRowNum + 1
           const termsRowEndNum = termsRowNum + 1
           const mergeCols = Math.max(lastColIndex, 6)
+          console.log('[Export] 条款插入位置：最后内容行 =', lastContentRowNum, '，合并区最大行 =', maxMergeEndRow, '，标题行 =', titleRowNum)
+
+          // 工具：按行号获取已存在的行元素，不存在则创建并按行号升序插入
+          //（直接 appendChild 会导致行号乱序，Excel 打开时可能提示修复并破坏内容）
+          const getOrCreateRow = (rowNum: number): Element => {
+            let insertBeforeEl: Element | null = null
+            for (let i = 0; i < rows.length; i++) {
+              const rn = parseInt(rows[i].getAttribute('r') || '0')
+              if (rn === rowNum) return rows[i]
+              if (rn > rowNum && !insertBeforeEl) {
+                insertBeforeEl = rows[i]
+              }
+            }
+            const newRow = doc.createElementNS(nsResolver, 'row')
+            newRow.setAttribute('r', String(rowNum))
+            if (insertBeforeEl) {
+              sheetDataEl.insertBefore(newRow, insertBeforeEl)
+            } else {
+              sheetDataEl.appendChild(newRow)
+            }
+            return newRow
+          }
+
+          // 工具：在行内按引用获取单元格，已存在则清空复用（尾部区域可能有仅带边框样式的空单元格），
+          // 不存在则创建并按列号升序插入
+          const colLetterToIndex = (ref: string) => {
+            const letters = ref.replace(/\d+$/, '')
+            let n = 0
+            for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64)
+            return n
+          }
+          const getOrCreateCell = (rowEl: Element, cellRef: string): Element => {
+            const cellEls = rowEl.getElementsByTagNameNS(nsResolver, 'c')
+            const targetCol = colLetterToIndex(cellRef)
+            let insertBeforeCell: Element | null = null
+            for (let j = 0; j < cellEls.length; j++) {
+              const ref = cellEls[j].getAttribute('r') || ''
+              if (ref === cellRef) {
+                while (cellEls[j].firstChild) cellEls[j].removeChild(cellEls[j].firstChild)
+                cellEls[j].removeAttribute('t')
+                return cellEls[j]
+              }
+              if (colLetterToIndex(ref) > targetCol && !insertBeforeCell) {
+                insertBeforeCell = cellEls[j]
+              }
+            }
+            const newCell = doc.createElementNS(nsResolver, 'c')
+            newCell.setAttribute('r', cellRef)
+            if (insertBeforeCell) {
+              rowEl.insertBefore(newCell, insertBeforeCell)
+            } else {
+              rowEl.appendChild(newCell)
+            }
+            return newCell
+          }
 
           // 添加"条款与条件"和条款内容到 sharedStrings
           let titleSsIndex = -1
@@ -2360,42 +2869,33 @@ async function exportQuotationExcel() {
             sstEl.setAttribute('uniqueCount', String(oldUnique + 2))
           }
 
-          // 创建标题行
-          const titleRow = doc.createElementNS(nsResolver, 'row')
-          titleRow.setAttribute('r', String(titleRowNum))
+          // 创建/复用标题行（必须经 getOrCreateRow 保证行号唯一且升序，
+          // 直接 appendChild 会与模板尾部已存在的行产生重复行号，Excel 修复时会丢弃原有内容）
+          const titleRow = getOrCreateRow(titleRowNum)
           titleRow.setAttribute('ht', '22')
           titleRow.setAttribute('customHeight', '1')
-          const titleCell = doc.createElementNS(nsResolver, 'c')
-          titleCell.setAttribute('r', `A${titleRowNum}`)
+          const titleCell = getOrCreateCell(titleRow, `A${titleRowNum}`)
           titleCell.setAttribute('t', 's')
           if (boldStyleIndex) titleCell.setAttribute('s', boldStyleIndex)
           const titleV = doc.createElementNS(nsResolver, 'v')
           titleV.textContent = String(titleSsIndex)
           titleCell.appendChild(titleV)
-          titleRow.appendChild(titleCell)
-          sheetDataEl.appendChild(titleRow)
 
-          // 创建条款内容行
-          const termsRow = doc.createElementNS(nsResolver, 'row')
-          termsRow.setAttribute('r', String(termsRowNum))
+          // 创建/复用条款内容行
+          const termsRow = getOrCreateRow(termsRowNum)
           termsRow.setAttribute('ht', '230')
           termsRow.setAttribute('customHeight', '1')
-          const termsCell = doc.createElementNS(nsResolver, 'c')
-          termsCell.setAttribute('r', `A${termsRowNum}`)
+          const termsCell = getOrCreateCell(termsRow, `A${termsRowNum}`)
           termsCell.setAttribute('t', 's')
           if (wrapTextStyleIndex) termsCell.setAttribute('s', wrapTextStyleIndex)
           const termsV = doc.createElementNS(nsResolver, 'v')
           termsV.textContent = String(contentSsIndex)
           termsCell.appendChild(termsV)
-          termsRow.appendChild(termsCell)
-          sheetDataEl.appendChild(termsRow)
 
           // 第二行（合并区域的下半部分）
-          const termsRow2 = doc.createElementNS(nsResolver, 'row')
-          termsRow2.setAttribute('r', String(termsRowEndNum))
+          const termsRow2 = getOrCreateRow(termsRowEndNum)
           termsRow2.setAttribute('ht', '230')
           termsRow2.setAttribute('customHeight', '1')
-          sheetDataEl.appendChild(termsRow2)
 
           // 添加合并单元格定义
           let mergeCellsEl = doc.getElementsByTagNameNS(nsResolver, 'mergeCells')[0]
@@ -2427,6 +2927,16 @@ async function exportQuotationExcel() {
           // 更新 mergeCells count
           const existingCount = parseInt(mergeCellsEl.getAttribute('count') || '0')
           mergeCellsEl.setAttribute('count', String(existingCount + 2))
+
+          // 扩展 dimension 声明，覆盖新追加的条款行，避免 Excel 打开时提示修复
+          const dimensionEl = doc.getElementsByTagNameNS(nsResolver, 'dimension')[0]
+          if (dimensionEl) {
+            const dimRef = dimensionEl.getAttribute('ref') || ''
+            const dimMatch = dimRef.match(/^([A-Z]+\d+):([A-Z]+)(\d+)$/)
+            if (dimMatch && parseInt(dimMatch[3]) < termsRowEndNum) {
+              dimensionEl.setAttribute('ref', `${dimMatch[1]}:${dimMatch[2]}${termsRowEndNum}`)
+            }
+          }
 
           console.log('[Export] 已添加服务条款（JSZip XML 方式）')
         }
@@ -2572,7 +3082,7 @@ async function exportQuotationExcel() {
               vEl.textContent = String(priceHeaderSsIndex)
               newCell.appendChild(vEl)
             } else {
-              const basePrice = item?.finalPrice || item?.suggestedPrice || 0
+              const basePrice = item ? getItemBaseUnitPrice(item) : 0
               if (basePrice > 0) {
                 const vEl = extraDoc.createElementNS(extraNs, 'v')
                 vEl.textContent = String(Math.round(basePrice * exportPriceMultiplier * 100) / 100)
@@ -2625,17 +3135,32 @@ async function exportQuotationExcel() {
         const fileName1 = `报价单-${baseName}.xlsx`
         const buffer1 = await zip.generateAsync({ type: 'arraybuffer' })
         downloadFile(buffer1, fileName1)
+        collectSnapshotFile(buffer1, fileName1)
         console.log('[Export] 文件1导出成功（JSZip 方式，样式完整保留）:', fileName1)
 
       } catch (loadError) {
         console.error('[Export] 加载原始Excel文件失败:', loadError)
         hasOriginalFile = false
+        ElMessage.error({
+          message: `保留原格式导出失败：${(loadError as Error)?.message || '未知错误'}，将按表格数据重建（底纹/框线等格式会丢失）`,
+          duration: 8000,
+          showClose: true
+        })
       }
+    } else if (!originalExcelBase64) {
+      console.warn('[Export] 未找到原始Excel附件，将走无格式重建路径')
+    } else if (!selectedSheetName) {
+      console.warn('[Export] 已有原始Excel但缺少选中工作表名称，将走无格式重建路径')
     }
 
     // 如果没有原始文件，使用原始表格数据创建文件1
     if (!hasOriginalFile && previewOriginalData.value && previewOriginalData.value.headers) {
       console.log('[Export] 无原始文件，使用原始表格数据生成文件1')
+      ElMessage.warning({
+        message: '未找到原始需求附件，已按表格数据重建报价单，底纹/框线等原格式无法保留。请重新从「智能识别」上传附件后再导出。',
+        duration: 8000,
+        showClose: true
+      })
 
       const workbook1 = new ExcelJS.Workbook()
       workbook1.creator = 'AI报价系统'
@@ -2687,13 +3212,15 @@ async function exportQuotationExcel() {
           })
         })
 
-        addServiceTermsToWorksheet(worksheet, originalData.length + 1, originalHeaders.length)
+        // 以工作表实际最后一行为基准插入条款（titleRow = 最后内容行 + 2，即下方第二行）
+        addServiceTermsToWorksheet(worksheet, worksheet.rowCount, originalHeaders.length)
       })
 
       const fallbackBaseName = originalFileName ? originalFileName.replace(/\.xlsx?$/i, '') : (projectName.value || '设备报价单')
       const fileName1 = `报价单-${fallbackBaseName}.xlsx`
       const buffer1 = await workbook1.xlsx.writeBuffer()
       downloadFile(buffer1, fileName1)
+      collectSnapshotFile(buffer1, fileName1)
       console.log('[Export] 文件1导出成功:', fileName1)
     }
 
@@ -2722,17 +3249,17 @@ async function exportQuotationExcel() {
           if (!item.sheetName && itemIndex === rowIndex) return true
           return false
         })
-        let basePrice = matchedBySheet?.finalPrice || matchedBySheet?.suggestedPrice || 0
+        let basePrice = matchedBySheet ? getItemBaseUnitPrice(matchedBySheet) : 0
 
         if (!basePrice) {
           const modelValue = String(row['设备/软件型号'] || '').trim().toUpperCase()
           const matchedByModel = tableData.value.find(item => {
             if (item.sheetName && item.sheetName !== sheetName) return false
-            return [item.model, item.matchedModel, item.originalModel]
+            return [item.model, item.matchedModel, item.originalModel, item.lenovo_matched_model]
               .filter(Boolean)
               .some((key: string) => String(key).trim().toUpperCase() === modelValue)
           })
-          basePrice = matchedByModel?.finalPrice || matchedByModel?.suggestedPrice || 0
+          basePrice = matchedByModel ? getItemBaseUnitPrice(matchedByModel) : 0
         }
 
         return Math.round(Number(basePrice || row['单价'] || 0) * exportPriceMultiplier * 100) / 100
@@ -2797,13 +3324,15 @@ async function exportQuotationExcel() {
           }
         })
 
-        addServiceTermsToWorksheet(worksheet, sheetSource.data.length + 1, convertedHeaders.length)
+        // 以工作表实际最后一行为基准插入条款（titleRow = 最后内容行 + 2，即下方第二行）
+        addServiceTermsToWorksheet(worksheet, worksheet.rowCount, convertedHeaders.length)
       })
 
       // 生成文件名并下载
       const stdBaseName = originalFileName ? originalFileName.replace(/\.xlsx?$/i, '') : (projectName.value || '设备报价单')
       const fileName2 = `标准格式报价单-${stdBaseName}.xlsx`
       const buffer2 = await workbook2.xlsx.writeBuffer()
+      collectSnapshotFile(buffer2, fileName2)
 
       // 稍微延迟下载第二个文件，避免浏览器拦截
       setTimeout(() => {
@@ -2813,6 +3342,11 @@ async function exportQuotationExcel() {
     }
 
     console.log('[Export] 两个报价单文件导出完成')
+
+    // 外部系统联动：把本次导出的报价单文件推送到实时快照（不阻塞导出流程）
+    if (exportedSnapshotFiles.length > 0) {
+      pushLiveSnapshot(exportedSnapshotFiles)
+    }
 
     // 导出成功后关闭弹窗
     closePreviewDialog()
@@ -3425,6 +3959,7 @@ h1, h2, h3, h4, h5, h6 {
   width: 100%;
   text-align: left;
   border-collapse: collapse;
+  table-layout: fixed;
 }
 
 .quote-table thead tr {
@@ -3432,25 +3967,40 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .quote-table th {
-  padding: 0.75rem 0;
+  padding: 0.75rem 0.25rem;
   font-size: 0.75rem;
   font-weight: 700;
   color: #94a3b8;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  text-transform: none;
+  letter-spacing: 0;
+  line-height: 1.25;
+  vertical-align: bottom;
+  word-break: keep-all;
+}
+
+.quote-table th .th-main,
+.quote-table th .th-sub {
+  display: block;
+}
+
+.quote-table th .th-sub {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  margin-top: 0.125rem;
+  color: #94a3b8;
 }
 
 .col-no {
-  width: 8%;
+  width: 6%;
   text-align: center;
 }
 
 .col-desc {
-  width: 42%;
+  width: 34%;
 }
 
 .col-qty {
-  width: 10%;
+  width: 8%;
   text-align: center;
 }
 
@@ -3459,9 +4009,25 @@ h1, h2, h3, h4, h5, h6 {
   text-align: center;
 }
 
-.col-price,
-.col-total {
+.col-price {
+  width: 20%;
   text-align: right;
+}
+
+.col-total {
+  width: 20%;
+  text-align: right;
+}
+
+.quote-table td.col-price,
+.quote-table td.col-total,
+.quote-table td.col-qty,
+.quote-table td.col-period {
+  white-space: nowrap;
+}
+
+.quote-table.is-pdf-export tr.item-row {
+  height: auto !important;
 }
 
 .quote-table tbody tr {
@@ -3906,6 +4472,24 @@ h1, h2, h3, h4, h5, h6 {
   color: #135bec;
 }
 
+.tax-rate-option.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.config-hint {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: #64748b;
+}
+
+.toggle-switch.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Status Card */
 .status-card {
   background-color: #1a2332;
@@ -4341,5 +4925,34 @@ h1, h2, h3, h4, h5, h6 {
 .quotation-document .doc-footer {
   break-inside: avoid;
   page-break-inside: avoid;
+}
+
+.add-customer-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.add-customer-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.add-customer-label {
+  color: #92a4c9;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.add-customer-label .required {
+  color: #f56c6c;
+}
+
+.add-customer-dialog .actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: flex-end;
 }
 </style>

@@ -123,7 +123,11 @@
             </div>
             <div class="search-input">
               <span class="material-symbols-outlined">search</span>
-              <input type="text" placeholder="搜索型号或SKU..." />
+              <input
+                type="text"
+                v-model="modelSearchQuery"
+                placeholder="搜索型号或SKU..."
+              />
             </div>
           </div>
           <div class="table-controls-right">
@@ -166,11 +170,11 @@
                 <th class="col-actions">操作</th>
               </tr>
             </thead>
-            <tbody v-if="tableData.length > 0">
+            <tbody v-if="filteredTableData.length > 0">
               <tr v-if="topPadding > 0" :style="{ height: topPadding + 'px' }" class="virtual-spacer"><td></td></tr>
               <tr
                 v-for="(item, i) in visibleItems"
-                :key="i + startIndex"
+                :key="`${startIndex + i}-${item.model || ''}-${item.matchedModel || ''}`"
                 class="table-row"
                 :style="{ height: ROW_HEIGHT + 'px' }"
                 :class="{
@@ -258,7 +262,10 @@
               <tr>
                 <td :colspan="12" class="empty-state">
                   <span class="material-symbols-outlined">inbox</span>
-                  <p>暂无数据，请先完成智能匹配</p>
+                  <p v-if="tableData.length > 0 && modelSearchQuery.trim()">
+                    未找到匹配「{{ modelSearchQuery.trim() }}」的产品型号
+                  </p>
+                  <p v-else>暂无数据，请先完成智能匹配</p>
                 </td>
               </tr>
             </tbody>
@@ -297,7 +304,10 @@
         ></div>
 
         <div class="table-footer">
-          <span class="footer-text">显示 {{ tableData.length }} 条数据</span>
+          <span class="footer-text" v-if="modelSearchQuery.trim()">
+            显示 {{ filteredTableData.length }} / {{ tableData.length }} 条数据
+          </span>
+          <span class="footer-text" v-else>显示 {{ tableData.length }} 条数据</span>
         </div>
       </div>
     </main>
@@ -398,7 +408,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch, shallowRef, triggerRef, nextTick } from 'vue'
 import { useRouter, onBeforeRouteLeave } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { clearSequentialMessages, seqMsg } from '../utils/sequentialMessage'
 import BranchPageHeader from '../components/BranchPageHeader.vue'
 import ProductDatabaseModal from '../components/ProductDatabaseModal.vue'
 import {
@@ -435,13 +445,53 @@ const isSavingDraft = ref(false)
 const isLoadingData = ref(false)
 const periodUnitDropdownVisible = ref(false)
 const periodDropdownPosition = ref({ top: '0px', left: '0px' })
+const modelSearchQuery = ref('')
 
-// 虚拟滚动
+/** 模糊检索归一化：忽略大小写、空白与常见分隔符 */
+function normalizeModelSearch(text: string): string {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[\s\-_/\\.*·()+（）【】\[\]]+/g, '')
+}
+
+function matchProductModel(item: any, rawQuery: string): boolean {
+  const query = rawQuery.trim()
+  if (!query) return true
+  // 产品型号列主字段；SKU/匹配型号一并命中，贴合「搜索型号或SKU」文案
+  const candidates = [
+    item?.model,
+    item?.matchedModel,
+    item?.originalBrandModel,
+  ].filter(Boolean).map((v: any) => String(v))
+
+  if (candidates.length === 0) return false
+
+  const qLower = query.toLowerCase()
+  const qNorm = normalizeModelSearch(query)
+  return candidates.some((text) => {
+    if (text.toLowerCase().includes(qLower)) return true
+    return !!qNorm && normalizeModelSearch(text).includes(qNorm)
+  })
+}
+
+const filteredTableData = computed(() => {
+  const query = modelSearchQuery.value
+  if (!query.trim()) return tableData.value
+  return tableData.value.filter((item) => matchProductModel(item, query))
+})
+
+// 虚拟滚动（基于筛选后的列表）
 const tableWrapperRef = ref<HTMLElement | null>(null)
 const ROW_HEIGHT = 72
-const tableDataRef = computed(() => tableData.value)
+const filteredTableDataRef = computed(() => filteredTableData.value)
 const { visibleItems, topPadding, bottomPadding, startIndex } =
-  useVirtualList(tableDataRef, ROW_HEIGHT, tableWrapperRef)
+  useVirtualList(filteredTableDataRef, ROW_HEIGHT, tableWrapperRef)
+
+// 输入筛选时滚回顶部，避免虚拟列表停在旧偏移
+watch(modelSearchQuery, () => {
+  if (tableWrapperRef.value) tableWrapperRef.value.scrollTop = 0
+  allSelected.value = false
+})
 
 // 批量调价弹窗
 const batchAdjustDialogVisible = ref(false)
@@ -458,7 +508,7 @@ const selectedCount = computed(() => {
 function openBatchAdjustDialog(direction: 'up' | 'down') {
   const count = tableData.value.filter(item => item.selected).length
   if (count === 0) {
-    ElMessage.warning('请先勾选需要调整的数据条目')
+    seqMsg.warning('请先勾选需要调整的数据条目')
     return
   }
   batchAdjustDirection.value = direction
@@ -480,7 +530,7 @@ function closeBatchAdjustDialog() {
 function confirmBatchAdjust() {
   const percent = batchAdjustPercent.value
   if (!percent || percent <= 0) {
-    ElMessage.warning('请输入有效的调整比例')
+    seqMsg.warning('请输入有效的调整比例')
     return
   }
 
@@ -511,7 +561,7 @@ function confirmBatchAdjust() {
   syncActiveSheetGroup()
   triggerRef(tableData)
   closeBatchAdjustDialog()
-  ElMessage.success(`已${direction === 'up' ? '上调' : '下调'} ${adjustedCount} 条数据的最终报价 ${percent}%`)
+  seqMsg.success(`已${direction === 'up' ? '上调' : '下调'} ${adjustedCount} 条数据的最终报价 ${percent}%`)
 }
 
 // 产品数据库弹窗
@@ -590,6 +640,7 @@ function switchSheet(sheetName: string) {
   tableData.value = sheetGroups.value[sheetName] || []
   allSelected.value = false
   periodUnitDropdownVisible.value = false
+  modelSearchQuery.value = ''
 }
 
 // Computed: Stats
@@ -734,7 +785,7 @@ const goToQuotationGeneration = () => {
 // 存为草稿
 async function saveAsDraft() {
   if (flattenSheetGroups().length === 0) {
-    ElMessage.warning('请先完成价格调整后再保存草稿')
+    seqMsg.warning('请先完成价格调整后再保存草稿')
     return
   }
 
@@ -751,10 +802,10 @@ async function saveAsDraft() {
     // 保存草稿
     await saveDraft('price_adjustment', existingDraftId ?? undefined)
 
-    ElMessage.success('草稿保存成功')
+    seqMsg.success('草稿保存成功')
   } catch (error) {
     console.error('保存草稿失败:', error)
-    ElMessage.error('保存草稿失败，请重试')
+    seqMsg.error('保存草稿失败，请重试')
   } finally {
     isSavingDraft.value = false
   }
@@ -771,7 +822,11 @@ function handleKeyDown(event: KeyboardEvent) {
 
 // Toggle select all
 function toggleSelectAll() {
-  tableData.value.forEach(item => {
+  // 有搜索时只勾选当前筛选结果，避免误选隐藏行
+  const targets = modelSearchQuery.value.trim()
+    ? filteredTableData.value
+    : tableData.value
+  targets.forEach(item => {
     item.selected = allSelected.value
   })
   // 使用 shallowRef 时需要手动触发更新
@@ -989,7 +1044,9 @@ function calculatePrices(): Promise<void> {
 // Load data on mount (优化：分批处理大数据量)
 onMounted(async () => {
   isLoadingData.value = true
-  ElMessage.info('正在加载数据，请稍候...')
+  // 清掉上一页残留弹窗，本页改为单通道依次提示，避免叠加
+  clearSequentialMessages()
+  seqMsg.info('正在加载数据，请稍候...')
 
   try {
   // 获取导航模式
@@ -1007,7 +1064,7 @@ onMounted(async () => {
       await calculatePrices()
       setSheetGroupsFromRows(tableData.value)
       clearPageState(PAGE_STATE_KEYS.PRICE_ADJUSTMENT)
-      ElMessage.success(`成功加载 ${Object.keys(flowSheetGroups).length} 个工作表`)
+      seqMsg.success(`成功加载 ${Object.keys(flowSheetGroups).length} 个工作表`)
     } else if (flowData && flowData.length > 0) {
       console.log('Loading fresh flow data from SmartMatching:', flowData.length, 'items')
         
@@ -1053,9 +1110,9 @@ onMounted(async () => {
       // 清除旧的页面状态，确保下次加载时使用最新数据
       clearPageState(PAGE_STATE_KEYS.PRICE_ADJUSTMENT)
         
-        ElMessage.success(`成功加载 ${flowData.length} 条数据`)
+        seqMsg.success(`成功加载 ${flowData.length} 条数据`)
       } else {
-        ElMessage.warning('未找到匹配数据，请返回上一步重新匹配')
+        seqMsg.warning('未找到匹配数据，请返回上一步重新匹配')
     }
     // 清除导航模式标志
     clearNavigationMode()
@@ -1081,7 +1138,7 @@ onMounted(async () => {
         setSheetGroupsFromRows(savedState.tableData)
         await calculatePrices()
       }
-        ElMessage.success(`已恢复 ${savedState.tableData.length} 条数据`)
+        seqMsg.success(`已恢复 ${savedState.tableData.length} 条数据`)
     } else {
       // 如果没有保存的状态，尝试从流程数据加载
       const flowSheetGroups = getFlowData<Record<string, any[]>>(FLOW_DATA_KEYS.MATCHED_SHEET_GROUPS)
@@ -1092,7 +1149,7 @@ onMounted(async () => {
         tableData.value = flattenSheetGroups()
         await calculatePrices()
         setSheetGroupsFromRows(tableData.value)
-        ElMessage.success(`成功加载 ${Object.keys(flowSheetGroups).length} 个工作表`)
+        seqMsg.success(`成功加载 ${Object.keys(flowSheetGroups).length} 个工作表`)
       } else if (flowData && flowData.length > 0) {
         console.log('No saved state, loading flow data:', flowData.length, 'items')
           
@@ -1128,13 +1185,13 @@ onMounted(async () => {
         await calculatePrices()
         syncActiveSheetGroup()
         setSheetGroupsFromRows(processedData)
-          ElMessage.success(`成功加载 ${flowData.length} 条数据`)
+          seqMsg.success(`成功加载 ${flowData.length} 条数据`)
       }
     }
   }
   } catch (error) {
     console.error('加载数据失败:', error)
-    ElMessage.error('加载数据失败，请重试')
+    seqMsg.error('加载数据失败，请重试')
   } finally {
     isLoadingData.value = false
   }

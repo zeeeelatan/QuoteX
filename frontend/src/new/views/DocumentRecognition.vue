@@ -960,6 +960,7 @@ import {
   setExternalRef,
   type DocumentRecognitionState
 } from '../stores/quotationStore'
+import { persistOriginalExcelCache } from '../utils/originalExcelCache'
 import {
   saveDraft,
   getCurrentDraftId,
@@ -1830,6 +1831,17 @@ async function loadRecentUpload(record: UploadRecord) {
     currentSheetName.value = firstSheet
     loadSheetData(firstSheet)
 
+    void persistOriginalExcelCache({
+      fileName: record.fileName,
+      base64: record.fileData,
+      selectedSheetName: firstSheet,
+      selectedSheetNames: selectedSheetNames.value.slice()
+    })
+    saveFlowData(FLOW_DATA_KEYS.ORIGINAL_EXCEL_FILE, record.fileData)
+    saveFlowData(FLOW_DATA_KEYS.ORIGINAL_FILE_NAME, record.fileName)
+    saveFlowData(FLOW_DATA_KEYS.SELECTED_SHEET_NAME, firstSheet)
+    saveFlowData(FLOW_DATA_KEYS.SELECTED_SHEET_NAMES, selectedSheetNames.value.slice())
+
   } catch (error) {
     console.error('Failed to load recent upload:', error)
     alert('加载文件失败: ' + (error as Error).message)
@@ -2497,11 +2509,27 @@ const goToSmartMatching = () => {
     saveFlowData(FLOW_DATA_KEYS.CONVERTED_SHEET_TABLES, convertedSheetTables)
   }
   // 保存原始Excel文件数据（用于导出时保留原格式）
+  // 文件名与选中 sheet 始终写入，避免仅有表格数据时导出无法定位目标表
+  const selectedSheetName = selectedSheets[0]?.sheetName || currentSheetName.value || ''
+  const selectedNames = selectedSheets.map(sheet => sheet.sheetName)
+  if (selectedSheetName) {
+    saveFlowData(FLOW_DATA_KEYS.SELECTED_SHEET_NAME, selectedSheetName)
+  }
+  if (selectedNames.length > 0) {
+    saveFlowData(FLOW_DATA_KEYS.SELECTED_SHEET_NAMES, selectedNames)
+  }
+  if (currentFileName.value) {
+    saveFlowData(FLOW_DATA_KEYS.ORIGINAL_FILE_NAME, currentFileName.value)
+  }
   if (currentFileBase64.value) {
     saveFlowData(FLOW_DATA_KEYS.ORIGINAL_EXCEL_FILE, currentFileBase64.value)
-    saveFlowData(FLOW_DATA_KEYS.SELECTED_SHEET_NAME, selectedSheets[0].sheetName)
-    saveFlowData(FLOW_DATA_KEYS.SELECTED_SHEET_NAMES, selectedSheets.map(sheet => sheet.sheetName))
-    saveFlowData(FLOW_DATA_KEYS.ORIGINAL_FILE_NAME, currentFileName.value)
+    // 同步持久化到 IndexedDB，防止刷新页面后内存 store 丢失导致格式无法保留
+    void persistOriginalExcelCache({
+      fileName: currentFileName.value,
+      base64: currentFileBase64.value,
+      selectedSheetName,
+      selectedSheetNames: selectedNames
+    })
   }
   // 设置触发匹配标志，并清除SmartMatching的页面状态
   saveFlowData(FLOW_DATA_KEYS.TRIGGER_MATCHING, true)
@@ -2639,6 +2667,17 @@ function handleExcelFile(file: File) {
       const base64Data = btoa(binaryString)
       currentFileBase64.value = base64Data  // 保存当前文件的base64数据
       addToRecentUploads(file.name, base64Data, originalTableData.value.length)
+      // 上传成功即持久化，避免用户中途刷新后丢失原始附件
+      void persistOriginalExcelCache({
+        fileName: file.name,
+        base64: base64Data,
+        selectedSheetName: firstSheet,
+        selectedSheetNames: selectedSheetNames.value.slice()
+      })
+      saveFlowData(FLOW_DATA_KEYS.ORIGINAL_EXCEL_FILE, base64Data)
+      saveFlowData(FLOW_DATA_KEYS.ORIGINAL_FILE_NAME, file.name)
+      saveFlowData(FLOW_DATA_KEYS.SELECTED_SHEET_NAME, firstSheet)
+      saveFlowData(FLOW_DATA_KEYS.SELECTED_SHEET_NAMES, selectedSheetNames.value.slice())
 
     } catch (error) {
       console.error('Error reading Excel file:', error)

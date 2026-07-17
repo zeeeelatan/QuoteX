@@ -7,8 +7,16 @@ from typing import List, Optional
 
 from app.database import get_db
 from app.models.quote_history import QuoteHistory
+from app.models.quote_live_snapshot import QuoteLiveSnapshot
 from app.models.user_profile import UserProfile
-from app.schemas.quote_history import QuoteHistoryCreate, QuoteHistoryOut, QuoteHistoryListItem, QuoteHistoryUpdate
+from app.schemas.quote_history import (
+    QuoteHistoryCreate,
+    QuoteHistoryOut,
+    QuoteHistoryListItem,
+    QuoteHistoryUpdate,
+    QuoteLiveSnapshotUpsert,
+    QuoteLiveSnapshotOut,
+)
 from app.auth import get_current_user_id, get_current_user_required
 
 router = APIRouter(prefix="/quote-history", tags=["历史记录"])
@@ -128,6 +136,43 @@ def get_quote_history_by_ref(ref: str, db: Session = Depends(get_db)):
     if not history:
         raise HTTPException(status_code=404, detail="未找到对应的报价结果，请确认已在生成报价页完成保存")
     return history
+
+
+@router.put("/live-by-ref/{ref}", response_model=QuoteLiveSnapshotOut)
+def upsert_live_snapshot(ref: str, payload: QuoteLiveSnapshotUpsert, db: Session = Depends(get_db)):
+    """
+    按外部引用令牌(external_ref) upsert "生成报价单"页面的实时快照。
+
+    由本系统前端在报价值变化时（防抖）及"导出Excel"完成后推送，
+    供第三方系统（如 TopSales）在用户点击"完成报价"前实时拉取报价结果。
+    安全模型与 by-ref 一致：ref 为调用方生成的高强度随机凭证。
+    data 与 files 均为可选，只更新传入的字段（互不覆盖）。
+    """
+    if not ref or len(ref) < 8:
+        raise HTTPException(status_code=400, detail="无效的引用令牌")
+    snapshot = db.query(QuoteLiveSnapshot).filter(QuoteLiveSnapshot.external_ref == ref).first()
+    if not snapshot:
+        snapshot = QuoteLiveSnapshot(external_ref=ref)
+        db.add(snapshot)
+    if payload.data is not None:
+        snapshot.data = payload.data
+    if payload.files is not None:
+        snapshot.files = payload.files
+    snapshot.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(snapshot)
+    return snapshot
+
+
+@router.get("/live-by-ref/{ref}", response_model=QuoteLiveSnapshotOut)
+def get_live_snapshot(ref: str, db: Session = Depends(get_db)):
+    """按外部引用令牌查询实时报价快照（供第三方系统轮询/按需拉取）"""
+    if not ref or len(ref) < 8:
+        raise HTTPException(status_code=400, detail="无效的引用令牌")
+    snapshot = db.query(QuoteLiveSnapshot).filter(QuoteLiveSnapshot.external_ref == ref).first()
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="未找到实时报价数据，请确认已在生成报价单页面打开本次询价")
+    return snapshot
 
 
 @router.get("/{history_id}", response_model=QuoteHistoryOut)
