@@ -471,14 +471,45 @@
             </div>
           </div>
 
-          <div class="preview-footer">
-            <button class="preview-btn cancel" @click="closePreviewDialog">
-              取消
-            </button>
-            <button class="preview-btn confirm" @click="exportQuotationExcel" :disabled="isExporting">
-              <span class="material-symbols-outlined">{{ isExporting ? 'hourglass_empty' : 'download' }}</span>
-              {{ isExporting ? '导出中...' : '确认导出' }}
-            </button>
+          <div class="preview-footer preview-footer--edit">
+            <div class="preview-edit-panel">
+              <p class="preview-edit-tip">
+                请用本机 Excel/WPS 打开下载的文件，保存后回到此处回传；本地修改不会自动同步。
+              </p>
+              <div class="preview-edit-status" v-if="exportedDraftNames.length || uploadedEditNames.length">
+                <span v-if="exportedDraftNames.length" class="preview-edit-chip">
+                  已导出草稿：{{ exportedDraftNames.join('、') }}
+                </span>
+                <span v-if="uploadedEditNames.length" class="preview-edit-chip is-success">
+                  已回传：{{ uploadedEditNames.join('、') }}
+                </span>
+              </div>
+            </div>
+            <div class="preview-footer-actions">
+              <button class="preview-btn cancel" @click="closePreviewDialog">
+                取消
+              </button>
+              <input
+                ref="editedFileInputRef"
+                type="file"
+                accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                multiple
+                class="preview-file-input"
+                @change="handleEditedFilesSelected"
+              />
+              <button
+                class="preview-btn upload"
+                :disabled="isUploadingEditedFiles"
+                @click="triggerEditedFilePick"
+              >
+                <span class="material-symbols-outlined">{{ isUploadingEditedFiles ? 'hourglass_empty' : 'upload_file' }}</span>
+                {{ isUploadingEditedFiles ? '回传中...' : '回传已编辑文件' }}
+              </button>
+              <button class="preview-btn confirm" @click="exportQuotationExcel" :disabled="isExporting">
+                <span class="material-symbols-outlined">{{ isExporting ? 'hourglass_empty' : 'download' }}</span>
+                {{ isExporting ? '导出中...' : '导出草稿' }}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -711,6 +742,15 @@ watch(quoteCaliber, (mode) => {
 
 // 预览弹窗状态
 const showPreviewDialog = ref(false)
+
+// 导出草稿 / 本地编辑回传（仅替换快照附件，不回写页面表格金额）
+type SnapshotFileItem = { name: string; size: number; type: string; content: string }
+const XLSX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+const lastExportedSnapshotFiles = ref<SnapshotFileItem[]>([])
+const exportedDraftNames = ref<string[]>([])
+const uploadedEditNames = ref<string[]>([])
+const isUploadingEditedFiles = ref(false)
+const editedFileInputRef = ref<HTMLInputElement | null>(null)
 
 // 产品数据库弹窗
 const isProductDatabaseModalOpen = ref(false)
@@ -1997,6 +2037,94 @@ function openPreviewDialog() {
 // 关闭预览弹窗
 function closePreviewDialog() {
   showPreviewDialog.value = false
+  uploadedEditNames.value = []
+  if (editedFileInputRef.value) {
+    editedFileInputRef.value.value = ''
+  }
+}
+
+const triggerEditedFilePick = () => {
+  editedFileInputRef.value?.click()
+}
+
+const readFileAsSnapshotItem = (file: File): Promise<SnapshotFileItem> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : ''
+      if (!result.startsWith('data:')) {
+        reject(new Error(`无法读取文件：${file.name}`))
+        return
+      }
+      resolve({
+        name: file.name,
+        size: file.size,
+        type: file.type || XLSX_MIME_TYPE,
+        content: result
+      })
+    }
+    reader.onerror = () => reject(new Error(`读取文件失败：${file.name}`))
+    reader.readAsDataURL(file)
+  })
+}
+
+/** 按文件名启发式合并：标准格式 / 报价单- 前缀分别覆盖对应项；同名覆盖；其余追加 */
+const mergeSnapshotFilesByName = (
+  existing: SnapshotFileItem[],
+  incoming: SnapshotFileItem[]
+): SnapshotFileItem[] => {
+  const merged = [...existing]
+  for (const file of incoming) {
+    let idx = -1
+    if (/标准格式/.test(file.name)) {
+      idx = merged.findIndex(f => /标准格式/.test(f.name))
+    } else if (/^报价单[-_]/.test(file.name)) {
+      idx = merged.findIndex(f => /^报价单[-_]/.test(f.name) && !/标准格式/.test(f.name))
+    }
+    if (idx < 0) {
+      idx = merged.findIndex(f => f.name === file.name)
+    }
+    if (idx >= 0) {
+      merged[idx] = file
+    } else {
+      merged.push(file)
+    }
+  }
+  return merged
+}
+
+const handleEditedFilesSelected = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files || [])
+  if (files.length === 0) return
+
+  const excelFiles = files.filter(f => /\.xlsx?$/i.test(f.name))
+  if (excelFiles.length === 0) {
+    ElMessage.warning('请选择 .xlsx / .xls 格式的报价单文件')
+    input.value = ''
+    return
+  }
+
+  isUploadingEditedFiles.value = true
+  try {
+    const incoming = await Promise.all(excelFiles.map(readFileAsSnapshotItem))
+    const merged = mergeSnapshotFilesByName(lastExportedSnapshotFiles.value, incoming)
+    lastExportedSnapshotFiles.value = merged
+    uploadedEditNames.value = incoming.map(f => f.name)
+
+    if (getExternalRef()) {
+      await pushLiveSnapshot(merged)
+      ElMessage.success(`已回传 ${incoming.length} 个文件并更新同步快照，可在 TopSales 中点「同步报价结果」选用`)
+    } else {
+      ElMessage.success(`已回传 ${incoming.length} 个文件（当前非 TopSales 联动会话，仅保存在本页）`)
+    }
+  } catch (error) {
+    console.error('[ExportEdit] 回传已编辑文件失败:', error)
+    ElMessage.error('回传失败: ' + ((error as Error).message || '请重试'))
+  } finally {
+    isUploadingEditedFiles.value = false
+    input.value = ''
+  }
 }
 
 // 导出 Excel（生成两个文件：原始格式报价表 + 标准格式表格）
@@ -2136,10 +2264,9 @@ async function exportQuotationExcel() {
       return termsRowEnd
     }
 
-    // 外部系统联动：收集本次导出的文件，导出完成后一并推送到实时快照，
-    // 供 TopSales "AI报价系统同步报价"弹窗的附件下拉框选用
-    const exportedSnapshotFiles: Array<{ name: string; size: number; type: string; content: string }> = []
-    const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    // 收集本次导出的文件：始终保留在本页供「回传已编辑文件」合并覆盖；
+    // 若存在 external_ref，导出完成后一并推送到实时快照供 TopSales 选用
+    const exportedSnapshotFiles: SnapshotFileItem[] = []
     const bufferToDataUrl = (buffer: ArrayBuffer | Uint8Array) => {
       const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
       let binary = ''
@@ -2147,16 +2274,15 @@ async function exportQuotationExcel() {
       for (let i = 0; i < bytes.length; i += chunkSize) {
         binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
       }
-      return `data:${XLSX_MIME};base64,${btoa(binary)}`
+      return `data:${XLSX_MIME_TYPE};base64,${btoa(binary)}`
     }
     const collectSnapshotFile = (buffer: ArrayBuffer | Uint8Array, fileName: string) => {
-      if (!getExternalRef()) return
       try {
         const byteLength = buffer instanceof Uint8Array ? buffer.length : buffer.byteLength
         exportedSnapshotFiles.push({
           name: fileName,
           size: byteLength,
-          type: XLSX_MIME,
+          type: XLSX_MIME_TYPE,
           content: bufferToDataUrl(buffer)
         })
       } catch (error) {
@@ -3343,13 +3469,14 @@ async function exportQuotationExcel() {
 
     console.log('[Export] 两个报价单文件导出完成')
 
-    // 外部系统联动：把本次导出的报价单文件推送到实时快照（不阻塞导出流程）
+    // 保留草稿文件列表，弹窗不关闭，便于用户本地编辑后回传覆盖
     if (exportedSnapshotFiles.length > 0) {
+      lastExportedSnapshotFiles.value = exportedSnapshotFiles
+      exportedDraftNames.value = exportedSnapshotFiles.map(f => f.name)
+      uploadedEditNames.value = []
       pushLiveSnapshot(exportedSnapshotFiles)
+      ElMessage.success('草稿已导出，可用本机 Office 打开修改后，回到此处点击「回传已编辑文件」')
     }
-
-    // 导出成功后关闭弹窗
-    closePreviewDialog()
   } catch (error) {
     console.error('导出报价单失败:', error)
     alert('导出报价单失败，请重试')
@@ -4745,6 +4872,64 @@ h1, h2, h3, h4, h5, h6 {
   border-radius: 0 0 1rem 1rem;
 }
 
+.preview-footer--edit {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.75rem;
+}
+
+.preview-edit-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.preview-edit-tip {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: #94a3b8;
+}
+
+.preview-edit-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.preview-edit-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 0.25rem 0.625rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  color: #cbd5e1;
+  background: rgba(100, 116, 139, 0.18);
+  border: 1px solid #334155;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-edit-chip.is-success {
+  color: #86efac;
+  background: rgba(22, 163, 74, 0.15);
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+.preview-footer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.preview-file-input {
+  display: none;
+}
+
 .preview-btn {
   display: flex;
   align-items: center;
@@ -4757,6 +4942,11 @@ h1, h2, h3, h4, h5, h6 {
   cursor: pointer;
 }
 
+.preview-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .preview-btn.cancel {
   background: transparent;
   border: 1px solid #232f48;
@@ -4765,6 +4955,16 @@ h1, h2, h3, h4, h5, h6 {
 
 .preview-btn.cancel:hover {
   background-color: rgba(100, 116, 139, 0.1);
+}
+
+.preview-btn.upload {
+  background: transparent;
+  border: 1px solid #135bec;
+  color: #93c5fd;
+}
+
+.preview-btn.upload:hover:not(:disabled) {
+  background-color: rgba(19, 91, 236, 0.12);
 }
 
 .preview-btn.confirm {
