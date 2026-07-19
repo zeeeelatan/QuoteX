@@ -1,451 +1,111 @@
 """
-首页智能报价：调用阿里云百炼 (DashScope) 或本地 Ollama 分析用户需求与文档，
-结合系统后台数据（RAG）输出建议报价。支持流式 SSE 输出。
+首页专用智能体：DashScope Tool Calling（或 Ollama 降级），
+编排产品查询 / 维保 / 联想 / 驻场 / 搬迁等确定性后端能力。
 """
+from __future__ import annotations
+
 import os
-import io
-import re
 import json
 import logging
-from typing import Optional, List, AsyncIterator
-from decimal import Decimal
+from typing import Optional, List, Any, Dict
 
 import httpx
 from fastapi import APIRouter, HTTPException, Depends, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import text, or_
 from pydantic import BaseModel
 
 from app.database import get_db
+from app.agent.session import store, UploadedFile
+from app.agent.runtime import run_agent_stream
+from app.agent.tools import execute_tool
+from app.agent.config import REQUIRE_MATCH_CONFIRMATION
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ai-quote", tags=["AI报价"])
 
-# RAG 拉取条数上限 —— 降低以减少 token 消耗和延迟
-RAG_RATES_LIMIT = 50
-RAG_SERVICE_LEVELS_LIMIT = 20
-RAG_DEVICES_LIMIT = 60
-RAG_OFFICE_DEVICES_LIMIT = 40
-RAG_GPU_LIMIT = 30
-RAG_SPARE_PARTS_LIMIT = 30
-
-# 阿里云百炼（DashScope）配置 —— OpenAI 兼容模式
 DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
-DASHSCOPE_BASE_URL = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+DASHSCOPE_BASE_URL = os.getenv(
+    "DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
+)
 DASHSCOPE_MODEL = os.getenv("DASHSCOPE_MODEL", "qwen-plus")
-
-# 兼容旧配置：若未设置 DASHSCOPE_API_KEY，尝试回退到本地 Ollama
 OLLAMA_BASE = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_QUOTE_MODEL", "qwen:latest")
 
-MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
+MAX_FILE_SIZE = 20 * 1024 * 1024
 MAX_FILE_COUNT = 5
 
-# 复用 httpx 异步客户端（连接池）
 _http_client: Optional[httpx.AsyncClient] = None
 
 
 async def _get_http_client() -> httpx.AsyncClient:
     global _http_client
     if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.AsyncClient(timeout=httpx.Timeout(connect=10, read=180, write=10, pool=10))
+        _http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=10, read=180, write=10, pool=10)
+        )
     return _http_client
 
 
 def _use_dashscope() -> bool:
-    """判断是否使用阿里云百炼 API（有 API Key 就用百炼，否则回退 Ollama）"""
     return bool(DASHSCOPE_API_KEY)
-
-
-def _extract_text_pdf(content: bytes) -> str:
-    try:
-        from pypdf import PdfReader
-        reader = PdfReader(io.BytesIO(content))
-        return "\n".join(page.extract_text() or "" for page in reader.pages)
-    except Exception as e:
-        return f"[PDF 解析失败: {e}]"
-
-
-def _extract_text_docx(content: bytes) -> str:
-    try:
-        from docx import Document
-        doc = Document(io.BytesIO(content))
-        return "\n".join(p.text for p in doc.paragraphs)
-    except Exception as e:
-        return f"[Word 解析失败: {e}]"
-
-
-def _extract_text_xlsx(content: bytes) -> str:
-    try:
-        import pandas as pd
-        df = pd.read_excel(io.BytesIO(content), sheet_name=0, header=0)
-        return df.to_string(index=False)
-    except Exception as e:
-        return f"[Excel 解析失败: {e}]"
 
 
 def extract_text_from_file(filename: str, content: bytes) -> str:
     if len(content) > MAX_FILE_SIZE:
         return f"[文件过大，已跳过: {filename}]"
     lower = filename.lower()
-    if lower.endswith(".pdf"):
-        return _extract_text_pdf(content)
-    if lower.endswith(".docx"):
-        return _extract_text_docx(content)
-    if lower.endswith(".doc"):
-        return "[.doc 格式请另存为 .docx 后上传]"
-    if lower.endswith(".xlsx") or lower.endswith(".xls"):
-        return _extract_text_xlsx(content)
-    if lower.endswith(".txt"):
-        return content.decode("utf-8", errors="replace")
+    try:
+        if lower.endswith(".pdf"):
+            from pypdf import PdfReader
+            import io
+
+            reader = PdfReader(io.BytesIO(content))
+            return "\n".join(page.extract_text() or "" for page in reader.pages)
+        if lower.endswith(".docx"):
+            from docx import Document
+            import io
+
+            doc = Document(io.BytesIO(content))
+            return "\n".join(p.text for p in doc.paragraphs)
+        if lower.endswith(".doc"):
+            return "[.doc 格式请另存为 .docx 后上传]"
+        if lower.endswith(".xlsx") or lower.endswith(".xls"):
+            import pandas as pd
+            import io
+
+            df = pd.read_excel(io.BytesIO(content), sheet_name=0, header=0)
+            return df.to_string(index=False)
+        if lower.endswith(".txt"):
+            return content.decode("utf-8", errors="replace")
+    except Exception as e:
+        return f"[解析失败: {e}]"
     return f"[不支持的文件类型: {filename}]"
-
-
-def _extract_keywords_for_rag(user_text: str) -> List[str]:
-    """从用户描述中提取可能用于检索的关键词（品牌、型号等）。"""
-    if not user_text or not user_text.strip():
-        return []
-    known = ["戴尔", "DELL", "惠普", "HP", "HPE", "华为", "HUAWEI", "联想", "LENOVO",
-             "浪潮", "INSPUR", "新华三", "H3C", "思科", "CISCO", "PowerEdge", "ProLiant",
-             "服务器", "存储", "网络", "GPU", "备件"]
-    text_upper = user_text.upper()
-    text_lower = user_text.lower()
-    found = []
-    for k in known:
-        if k.upper() in text_upper or k.lower() in text_lower or k in user_text:
-            found.append(k)
-    for m in re.finditer(r"[\u4e00-\u9fff]+", user_text):
-        w = m.group().strip()
-        if len(w) >= 2 and w not in found:
-            found.append(w)
-    for m in re.finditer(r"[A-Za-z0-9][A-Za-z0-9\-_/]{1,30}", user_text):
-        w = m.group().strip()
-        if w.upper() not in [x.upper() for x in found]:
-            found.append(w)
-    return list(dict.fromkeys(found))[:15]
-
-
-def get_rag_context(db: Session, user_text: str) -> str:
-    """
-    从后台数据库拉取与报价相关的数据，拼成 RAG 上下文字符串。
-    供大模型严格基于「后台数据」作答；缺失项需明确说明，推断需标注。
-    """
-    from app.models import DeviceInventory, MaintenanceRate
-    from app.models.gpu_price import GPUPrice
-    from app.models.spare_part import SparePart
-
-    lines = ["## 后台数据（以下为系统真实数据，请严格据此作答）", ""]
-    keywords = _extract_keywords_for_rag(user_text)
-
-    # 1. 维保费率
-    try:
-        rates = (
-            db.query(MaintenanceRate)
-            .order_by(
-                MaintenanceRate.primary_category,
-                MaintenanceRate.secondary_category,
-                MaintenanceRate.tertiary_category,
-            )
-            .limit(RAG_RATES_LIMIT)
-            .all()
-        )
-        if rates:
-            lines.append("### 1. 维保费率（一级分类 / 二级分类 / 三级分类 → 费率）")
-            lines.append("  （维保价格计算公式：设备价格 × 费率 × 1.06，即含 6% 加成）")
-            for r in rates:
-                rate_pct = float(r.rate) * 100 if r.rate is not None else 0
-                lines.append(
-                    f"  - {r.primary_category or ''} / {r.secondary_category or ''} / {r.tertiary_category or ''} → {rate_pct:.2f}%"
-                )
-            lines.append("")
-        else:
-            lines.append("### 1. 维保费率：后台暂无数据")
-            lines.append("")
-    except Exception as e:
-        logger.warning("RAG 拉取维保费率失败: %s", e)
-        lines.append("### 1. 维保费率：拉取失败")
-        lines.append("")
-
-    # 2. 服务级别
-    try:
-        rows = db.execute(
-            text("SELECT level_code, response_time, coefficient FROM service_level ORDER BY id LIMIT :n"),
-            {"n": RAG_SERVICE_LEVELS_LIMIT},
-        ).fetchall()
-        if rows:
-            lines.append("### 2. 服务级别（级别代码 / 响应时效 / 系数）")
-            for row in rows:
-                lines.append(f"  - {row[0]} | {row[1]} | 系数 {row[2]}")
-            lines.append("")
-        else:
-            lines.append("### 2. 服务级别：后台暂无数据")
-            lines.append("")
-    except Exception as e:
-        logger.warning("RAG 拉取服务级别失败: %s", e)
-        lines.append("### 2. 服务级别：拉取失败")
-        lines.append("")
-
-    # 3. 设备库（统一查 device_inventory，按 business_scenario 标注来源）
-    try:
-        q = db.query(DeviceInventory).order_by(DeviceInventory.id)
-        if keywords:
-            or_clauses = []
-            for kw in keywords[:5]:
-                or_clauses.append(DeviceInventory.manufacturer.ilike(f"%{kw}%"))
-                or_clauses.append(DeviceInventory.manufacturer_name.ilike(f"%{kw}%"))
-                or_clauses.append(DeviceInventory.model_number.ilike(f"%{kw}%"))
-                or_clauses.append(DeviceInventory.primary_category.ilike(f"%{kw}%"))
-            q = q.filter(or_(*or_clauses))
-        all_devices = q.limit(RAG_DEVICES_LIMIT + RAG_OFFICE_DEVICES_LIMIT).all()
-        if all_devices:
-            lines.append("### 3. 设备库 - 厂商 / 型号 / 一级分类 / 参考价格（元） / 场景")
-            for d in all_devices:
-                price = float(d.device_price) if d.device_price is not None else None
-                price_str = f"{price:,.0f}" if price is not None else "无"
-                mfr = d.manufacturer_name or d.manufacturer or ''
-                scenario = d.business_scenario or '数据中心'
-                lines.append(
-                    f"  - {mfr} | {d.model_number or ''} | {d.primary_category or ''} | {price_str} | {scenario}"
-                )
-            lines.append("")
-        else:
-            lines.append("### 3. 设备库：后台暂无匹配数据")
-            lines.append("")
-    except Exception as e:
-        logger.warning("RAG 拉取设备库失败: %s", e)
-        lines.append("### 3. 设备库：拉取失败")
-        lines.append("")
-
-    # 5. GPU 价格
-    try:
-        gpus = db.query(GPUPrice).order_by(GPUPrice.id).limit(RAG_GPU_LIMIT).all()
-        if gpus:
-            lines.append("### 4. GPU 价格 - 厂商/系列/型号 | 单价(元) | 费率 | 维保服务费(元)")
-            for g in gpus:
-                price = float(g.gpu_price) if g.gpu_price is not None else None
-                rate = float(g.gpu_rate) * 100 if g.gpu_rate is not None else None
-                fee = float(g.service_fee) if g.service_fee is not None else None
-                price_s = f"{price:,.0f}" if price is not None else "无"
-                rate_s = f"{rate:.2f}%" if rate is not None else "无"
-                fee_s = f"{fee:,.0f}" if fee is not None else "无"
-                lines.append(
-                    f"  - {g.manufacturer or ''} {g.series or ''} {g.model or ''} | {price_s} | {rate_s} | {fee_s}"
-                )
-            lines.append("")
-        else:
-            lines.append("### 4. GPU 价格：后台暂无数据")
-            lines.append("")
-    except Exception as e:
-        logger.warning("RAG 拉取 GPU 价格失败: %s", e)
-        lines.append("### 4. GPU 价格：拉取失败")
-        lines.append("")
-
-    # 6. 备件
-    try:
-        parts = db.query(SparePart).order_by(SparePart.id).limit(RAG_SPARE_PARTS_LIMIT).all()
-        if parts:
-            lines.append("### 5. 备件 - 厂商 / 备件PN / 描述 / 分类 / 单价(元)")
-            for p in parts:
-                up = float(p.unit_price) if p.unit_price is not None else "无"
-                up_s = f"{up:,.0f}" if isinstance(up, (int, float)) else str(up)
-                lines.append(
-                    f"  - {p.manufacturer or ''} | {p.part_pn or ''} | {p.part_desc or ''} | {p.part_category or ''} | {up_s}"
-                )
-            lines.append("")
-        else:
-            lines.append("### 5. 备件：后台暂无数据")
-            lines.append("")
-    except Exception as e:
-        logger.warning("RAG 拉取备件失败: %s", e)
-        lines.append("### 5. 备件：拉取失败")
-        lines.append("")
-
-    lines.append("---")
-    lines.append("请仅根据以上「后台数据」给出报价建议；若某项在后台不存在，必须明确写出「后台数据中暂无该设备/品类/费率/服务级别」；若你使用自身推断或经验补充，请在该句前标注「【模型推断/经验建议】」。")
-    return "\n".join(lines)
-
-
-# ---------------------------------------------------------------------------
-# LLM 调用（非流式 —— 保留旧端点兼容）
-# ---------------------------------------------------------------------------
-
-async def call_dashscope_chat(system: str, user_content: str, model: str = DASHSCOPE_MODEL) -> str:
-    url = f"{DASHSCOPE_BASE_URL.rstrip('/')}/chat/completions"
-    headers = {"Authorization": f"Bearer {DASHSCOPE_API_KEY}", "Content-Type": "application/json"}
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_content},
-        ],
-    }
-    client = await _get_http_client()
-    try:
-        resp = await client.post(url, json=payload, headers=headers)
-        if resp.status_code == 401:
-            raise HTTPException(status_code=502, detail="百炼 API Key 无效或已过期，请检查 DASHSCOPE_API_KEY 配置")
-        if resp.status_code == 404:
-            raise HTTPException(status_code=502, detail=f"模型「{model}」不存在，请检查 DASHSCOPE_MODEL 配置")
-        if resp.status_code == 429:
-            raise HTTPException(status_code=429, detail="百炼 API 调用频率超限，请稍后重试")
-        resp.raise_for_status()
-        data = resp.json()
-        choices = data.get("choices") or []
-        if not choices:
-            raise HTTPException(status_code=502, detail="大模型返回空结果")
-        return (choices[0].get("message", {}).get("content") or "").strip()
-    except HTTPException:
-        raise
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="大模型响应超时（120s）")
-    except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"调用百炼 API 失败: {e}")
-
-
-async def call_ollama_chat(system: str, user_content: str, model: str = OLLAMA_MODEL) -> str:
-    url = f"{OLLAMA_BASE.rstrip('/')}/api/chat"
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_content},
-        ],
-        "stream": False,
-    }
-    client = await _get_http_client()
-    try:
-        resp = await client.post(url, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-        msg = data.get("message") or {}
-        return (msg.get("content") or "").strip()
-    except httpx.ConnectError:
-        raise HTTPException(
-            status_code=503,
-            detail="无法连接本地 Ollama 服务，且未配置百炼 API Key (DASHSCOPE_API_KEY)。请启动 Ollama 或配置云端 API。",
-        )
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="大模型响应超时")
-    except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"调用本地模型失败: {e}")
-
-
-async def call_llm_chat(system: str, user_content: str, model: str = "") -> str:
-    if _use_dashscope():
-        effective_model = model if model and model != OLLAMA_MODEL else DASHSCOPE_MODEL
-        return await call_dashscope_chat(system, user_content, model=effective_model)
-    else:
-        effective_model = model or OLLAMA_MODEL
-        return await call_ollama_chat(system, user_content, model=effective_model)
-
-
-# ---------------------------------------------------------------------------
-# LLM 流式调用
-# ---------------------------------------------------------------------------
-
-async def stream_dashscope_chat(system: str, user_content: str, model: str = DASHSCOPE_MODEL) -> AsyncIterator[str]:
-    """流式调用 DashScope，逐块 yield 文本增量。"""
-    url = f"{DASHSCOPE_BASE_URL.rstrip('/')}/chat/completions"
-    headers = {"Authorization": f"Bearer {DASHSCOPE_API_KEY}", "Content-Type": "application/json"}
-    payload = {
-        "model": model,
-        "stream": True,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_content},
-        ],
-    }
-    client = await _get_http_client()
-    async with client.stream("POST", url, json=payload, headers=headers) as resp:
-        if resp.status_code != 200:
-            body = await resp.aread()
-            raise HTTPException(status_code=502, detail=f"百炼 API 返回 {resp.status_code}: {body.decode()[:200]}")
-        async for line in resp.aiter_lines():
-            if not line.startswith("data:"):
-                continue
-            data_str = line[len("data:"):].strip()
-            if data_str == "[DONE]":
-                break
-            try:
-                chunk = json.loads(data_str)
-                delta = (chunk.get("choices") or [{}])[0].get("delta", {})
-                content = delta.get("content", "")
-                if content:
-                    yield content
-            except (json.JSONDecodeError, IndexError, KeyError):
-                continue
-
-
-async def stream_ollama_chat(system: str, user_content: str, model: str = OLLAMA_MODEL) -> AsyncIterator[str]:
-    """流式调用 Ollama，逐块 yield 文本增量。"""
-    url = f"{OLLAMA_BASE.rstrip('/')}/api/chat"
-    payload = {
-        "model": model,
-        "stream": True,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_content},
-        ],
-    }
-    client = await _get_http_client()
-    try:
-        async with client.stream("POST", url, json=payload) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                if not line.strip():
-                    continue
-                try:
-                    chunk = json.loads(line)
-                    content = (chunk.get("message") or {}).get("content", "")
-                    if content:
-                        yield content
-                except json.JSONDecodeError:
-                    continue
-    except httpx.ConnectError:
-        raise HTTPException(
-            status_code=503,
-            detail="无法连接本地 Ollama 服务，且未配置百炼 API Key。",
-        )
-
-
-async def stream_llm_chat(system: str, user_content: str, model: str = "") -> AsyncIterator[str]:
-    """统一流式入口。"""
-    if _use_dashscope():
-        effective_model = model if model and model != OLLAMA_MODEL else DASHSCOPE_MODEL
-        async for chunk in stream_dashscope_chat(system, user_content, model=effective_model):
-            yield chunk
-    else:
-        effective_model = model or OLLAMA_MODEL
-        async for chunk in stream_ollama_chat(system, user_content, model=effective_model):
-            yield chunk
-
-
-SYSTEM_PROMPT_TEMPLATE = """你是智能报价助手，必须**严格基于系统后台数据**作答。
-
-规则：
-1. 下方会提供「后台数据」区块，包含：维保费率、服务级别、设备库（数据中心/办公）、GPU 价格、备件等。报价中的费率、服务级别系数、设备型号与参考价格等**必须以该后台数据为准**。
-2. 若用户需求中的设备、品类、服务级别或费率在后台数据中**不存在**，你必须明确写出：「**后台数据中暂无该设备/品类/费率/服务级别**」，不得编造具体数值。
-3. 若你基于常识或经验给出补充说明（如维保周期、响应方式等非价格建议），必须在该句或该段前标注：「**【模型推断/经验建议】**」，以区分于后台数据。
-4. 回复使用中文，条理清晰；先归纳需求，再基于后台数据列出可用的费率/设备/服务级别与报价建议，最后可附模型推断类说明。便于后续生成正式报价单。
-
----
-{rag_context}
-"""
 
 
 class AnalyzeResponse(BaseModel):
     analysis: str
     suggestion: Optional[str] = None
+    session_id: Optional[str] = None
+    structured: Optional[Dict[str, Any]] = None
 
 
 class ModelsResponse(BaseModel):
     models: List[str]
 
 
+class ConfirmRequest(BaseModel):
+    session_id: str
+
+
+class ConfirmResponse(BaseModel):
+    ok: bool
+    message: str
+    structured: Optional[Dict[str, Any]] = None
+
+
 @router.get("/models", response_model=ModelsResponse)
 async def list_available_models():
-    """获取可用模型列表。百炼模式返回预置模型列表，Ollama 模式从本地拉取。"""
     if _use_dashscope():
         return ModelsResponse(models=["qwen-plus", "qwen-turbo", "qwen-max"])
     url = f"{OLLAMA_BASE.rstrip('/')}/api/tags"
@@ -455,26 +115,59 @@ async def list_available_models():
         if resp.status_code != 200:
             return ModelsResponse(models=[OLLAMA_MODEL])
         data = resp.json()
-        names = [m.get("name", "").strip() for m in (data.get("models") or []) if m.get("name")]
+        names = [
+            m.get("name", "").strip()
+            for m in (data.get("models") or [])
+            if m.get("name")
+        ]
         return ModelsResponse(models=names or [OLLAMA_MODEL])
     except Exception as e:
         logger.warning("拉取模型列表失败: %s", e)
         return ModelsResponse(models=[OLLAMA_MODEL])
 
 
-# ---------------------------------------------------------------------------
-# 解析 multipart 表单（供 /analyze 和 /analyze-stream 复用）
-# ---------------------------------------------------------------------------
+@router.get("/policy")
+async def agent_policy():
+    """前端可读的智能体策略（计划默认值）。"""
+    return {
+        "require_match_confirmation": REQUIRE_MATCH_CONFIRMATION,
+        "forbid_invented_prices": True,
+        "supported_quote_types": [
+            "product_query",
+            "maintenance",
+            "lenovo",
+            "onsite",
+            "relocation",
+        ],
+        "export_formats": ["excel", "pdf"],
+        "model_provider": "dashscope" if _use_dashscope() else "ollama",
+        "default_model": DASHSCOPE_MODEL if _use_dashscope() else OLLAMA_MODEL,
+    }
 
-async def _parse_analyze_form(request: Request) -> tuple:
-    """解析 analyze 请求表单，返回 (requirement, model_name, user_content)。"""
+
+async def _parse_agent_form(request: Request):
     content_type = request.headers.get("content-type") or ""
     if "multipart/form-data" not in content_type:
         raise HTTPException(status_code=400, detail="请使用 multipart/form-data 提交")
 
     form = await request.form()
     requirement = (form.get("requirement") or "").strip()
-    model_name = (form.get("model") or "").strip() or OLLAMA_MODEL
+    model_name = (form.get("model") or "").strip()
+    session_id = (form.get("session_id") or "").strip() or None
+    history_raw = form.get("history")
+    history: List[Dict[str, str]] = []
+    if history_raw:
+        try:
+            parsed = json.loads(str(history_raw))
+            if isinstance(parsed, list):
+                history = [
+                    {"role": m.get("role", "user"), "content": str(m.get("content") or "")}
+                    for m in parsed
+                    if isinstance(m, dict)
+                ]
+        except json.JSONDecodeError:
+            history = []
+
     file_list = form.getlist("files")
     if not isinstance(file_list, list):
         file_list = [file_list] if file_list else []
@@ -482,84 +175,61 @@ async def _parse_analyze_form(request: Request) -> tuple:
 
     if not requirement and not file_list:
         raise HTTPException(status_code=400, detail="请输入需求描述或上传需求文档")
-
-    parts = []
-    if requirement.strip():
-        parts.append("【用户描述】\n" + requirement.strip())
-
     if len(file_list) > MAX_FILE_COUNT:
         raise HTTPException(status_code=400, detail=f"最多上传 {MAX_FILE_COUNT} 个文件")
 
+    uploads: List[UploadedFile] = []
     for f in file_list:
-        content = await f.read() if hasattr(f, "read") else b""
+        content = await f.read()
         filename = getattr(f, "filename", None) or "file"
-        text_content = extract_text_from_file(filename, content)
-        if text_content and not text_content.startswith("["):
-            parts.append(f"【文档: {filename}】\n" + text_content[:30000])
-        elif text_content.startswith("["):
-            parts.append(text_content)
+        if len(content) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=400, detail=f"文件过大: {filename}")
+        text_preview = extract_text_from_file(filename, content)[:30000]
+        uploads.append(
+            UploadedFile(filename=filename, content=content, text_preview=text_preview)
+        )
 
-    user_content = "\n\n".join(parts) if parts else "（无文字内容）"
-    return requirement, model_name, user_content
+    if _use_dashscope():
+        effective_model = model_name if model_name and model_name != OLLAMA_MODEL else DASHSCOPE_MODEL
+    else:
+        effective_model = model_name or OLLAMA_MODEL
 
+    return requirement, effective_model, session_id, history, uploads
 
-# ---------------------------------------------------------------------------
-# 非流式端点（保留兼容）
-# ---------------------------------------------------------------------------
-
-@router.post("/analyze", response_model=AnalyzeResponse)
-async def analyze_requirement(request: Request, db: Session = Depends(get_db)):
-    """非流式分析端点（兼容旧前端）。"""
-    try:
-        requirement, model_name, user_content = await _parse_analyze_form(request)
-        rag_context = get_rag_context(db, requirement)
-        system_prompt = SYSTEM_PROMPT_TEMPLATE.format(rag_context=rag_context)
-        analysis = await call_llm_chat(system_prompt, user_content, model=model_name)
-        return AnalyzeResponse(analysis=analysis, suggestion=analysis)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("ai-quote/analyze 失败: %s", e)
-        raise HTTPException(status_code=500, detail=f"分析失败: {str(e)}")
-
-
-# ---------------------------------------------------------------------------
-# 流式 SSE 端点
-# ---------------------------------------------------------------------------
 
 @router.post("/analyze-stream")
 async def analyze_requirement_stream(request: Request, db: Session = Depends(get_db)):
-    """
-    流式分析端点。返回 text/event-stream (SSE)，前端可逐字接收。
-    每个 SSE event 的 data 字段为一个 JSON: {"content": "..."}
-    结束时发送 {"done": true}
-    """
+    """专用智能体流式端点（SSE）。"""
     try:
-        requirement, model_name, user_content = await _parse_analyze_form(request)
+        requirement, model_name, session_id, history, uploads = await _parse_agent_form(
+            request
+        )
     except HTTPException as e:
-        # SSE 端点在流开始前的错误用 JSON 返回
-        from fastapi.responses import JSONResponse
         return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
     except Exception as e:
-        from fastapi.responses import JSONResponse
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
-    rag_context = get_rag_context(db, requirement)
-    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(rag_context=rag_context)
+    session = store.get_or_create(session_id)
+    if uploads:
+        session.files = uploads
+        store.save(session)
+
+    client = await _get_http_client()
 
     async def event_generator():
-        try:
-            async for chunk in stream_llm_chat(system_prompt, user_content, model=model_name):
-                payload = json.dumps({"content": chunk}, ensure_ascii=False)
-                yield f"data: {payload}\n\n"
-            yield f"data: {json.dumps({'done': True})}\n\n"
-        except HTTPException as e:
-            error_payload = json.dumps({"error": e.detail}, ensure_ascii=False)
-            yield f"data: {error_payload}\n\n"
-        except Exception as e:
-            logger.exception("流式分析失败: %s", e)
-            error_payload = json.dumps({"error": f"分析失败: {str(e)}"}, ensure_ascii=False)
-            yield f"data: {error_payload}\n\n"
+        async for chunk in run_agent_stream(
+            db=db,
+            session=session,
+            user_text=requirement,
+            history=history,
+            model=model_name,
+            use_dashscope=_use_dashscope(),
+            dashscope_base_url=DASHSCOPE_BASE_URL,
+            dashscope_api_key=DASHSCOPE_API_KEY,
+            ollama_base_url=OLLAMA_BASE,
+            http_client=client,
+        ):
+            yield chunk
 
     return StreamingResponse(
         event_generator(),
@@ -567,6 +237,95 @@ async def analyze_requirement_stream(request: Request, db: Session = Depends(get
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # 禁用 nginx 缓冲
+            "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/analyze", response_model=AnalyzeResponse)
+async def analyze_requirement(request: Request, db: Session = Depends(get_db)):
+    """非流式兼容：聚合 SSE 结果。"""
+    try:
+        requirement, model_name, session_id, history, uploads = await _parse_agent_form(
+            request
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    session = store.get_or_create(session_id)
+    if uploads:
+        session.files = uploads
+        store.save(session)
+
+    client = await _get_http_client()
+    parts: List[str] = []
+    structured = None
+    sid = session.session_id
+    async for raw in run_agent_stream(
+        db=db,
+        session=session,
+        user_text=requirement,
+        history=history,
+        model=model_name,
+        use_dashscope=_use_dashscope(),
+        dashscope_base_url=DASHSCOPE_BASE_URL,
+        dashscope_api_key=DASHSCOPE_API_KEY,
+        ollama_base_url=OLLAMA_BASE,
+        http_client=client,
+    ):
+        if not raw.startswith("data:"):
+            continue
+        try:
+            payload = json.loads(raw[5:].strip())
+        except json.JSONDecodeError:
+            continue
+        if payload.get("content"):
+            parts.append(payload["content"])
+        if payload.get("structured"):
+            structured = payload["structured"]
+        if payload.get("session_id"):
+            sid = payload["session_id"]
+        if payload.get("error"):
+            raise HTTPException(status_code=502, detail=payload["error"])
+
+    analysis = "".join(parts) or "未返回分析内容"
+    return AnalyzeResponse(
+        analysis=analysis,
+        suggestion=analysis,
+        session_id=sid,
+        structured=structured,
+    )
+
+
+@router.post("/confirm", response_model=ConfirmResponse)
+async def confirm_quote(body: ConfirmRequest, db: Session = Depends(get_db)):
+    """用户确认待导出报价。"""
+    session = store.get(body.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在或已过期")
+    result = execute_tool("confirm_pending_quote", {}, db, session)
+    store.save(session)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error") or "确认失败")
+    return ConfirmResponse(
+        ok=True,
+        message=result.get("message") or "已确认",
+        structured=result.get("structured"),
+    )
+
+
+@router.get("/session/{session_id}")
+async def get_session_state(session_id: str):
+    session = store.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在或已过期")
+    return {
+        "session_id": session.session_id,
+        "quote_type": session.quote_type,
+        "pending_quote": session.pending_quote,
+        "confirmed_quote": session.confirmed_quote,
+        "slots": session.slots,
+        "file_names": [f.filename for f in session.files],
+    }

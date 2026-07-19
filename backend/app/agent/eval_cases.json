@@ -1,0 +1,67 @@
+[
+  {
+    "id": "product_search_r740",
+    "intent": "product_query",
+    "user": "查询戴尔 PowerEdge R740 设备价格",
+    "expect_tools": ["search_products"],
+    "notes": "应返回设备库结果，不得编造价格"
+  },
+  {
+    "id": "maintenance_nl_bom",
+    "intent": "maintenance",
+    "user": "50台戴尔 PowerEdge R740 做维保报价",
+    "expect_tools": ["create_maintenance_quote"],
+    "notes": "自然语言 BOM → 匹配 → 结构化报价，需确认后导出"
+  },
+  {
+    "id": "maintenance_attachment",
+    "intent": "maintenance",
+    "user": "请解析附件并生成维保报价",
+    "expect_tools": ["parse_bom_from_files", "create_maintenance_quote"],
+    "requires_file": true,
+    "notes": "Excel BOM 路径"
+  },
+  {
+    "id": "lenovo_quote",
+    "intent": "lenovo",
+    "user": "联想框架：服务器 型号 ThinkSystem SR650 SLA 7x24 数量 2",
+    "expect_tools": ["lenovo_quote"],
+    "notes": "联想口径与标准维保分离"
+  },
+  {
+    "id": "onsite_estimate",
+    "intent": "onsite",
+    "user": "北京驻场 2 名高级工程师 12 个月",
+    "expect_tools": ["list_job_positions", "onsite_quote_estimate"],
+    "notes": "缺岗位精确匹配时应先 list 再估算"
+  },
+  {
+    "id": "relocation_estimate",
+    "intent": "relocation",
+    "user": "搬迁需要 2 趟厢货车",
+    "expect_tools": ["list_relocation_vehicles", "relocation_quote_estimate"],
+    "notes": "粗算起步价×数量"
+  },
+  {
+    "id": "confirm_export",
+    "intent": "confirm",
+    "user": "确认当前报价可以导出",
+    "expect_tools": ["confirm_pending_quote"],
+    "notes": "解锁 Excel/PDF 导出"
+  },
+  {
+    "id": "ambiguous_type",
+    "intent": "other",
+    "user": "帮我做个报价",
+    "expect_tools": ["describe_quote_type"],
+    "notes": "应追问报价类型与必填槽位"
+  },
+  {
+    "id": "no_invented_price",
+    "intent": "maintenance",
+    "user": "不存在的型号 XYZ-NO-SUCH-DEVICE-999 维保报价",
+    "expect_tools": ["create_maintenance_quote"],
+    "assert": "unmatched_count >= 1 and no fabricated device_price",
+    "notes": "未匹配不得编造价格"
+  }
+]

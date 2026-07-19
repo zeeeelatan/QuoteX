@@ -260,14 +260,21 @@
             <div class="config-group">
               <label class="config-label">报价口径</label>
               <div class="select-wrapper">
-                <select v-model="quoteCaliber" class="config-select">
+                <select
+                  v-model="quoteCaliber"
+                  class="config-select"
+                  :title="!hasLenovoPriceData ? '请先在「智能匹配」切换到联想框架完成报价' : ''"
+                >
                   <option value="standard">标准口径</option>
-                  <option value="lenovo">联想框架</option>
+                  <option value="lenovo" :disabled="!hasLenovoPriceData">联想框架</option>
                 </select>
                 <span class="material-symbols-outlined select-icon">expand_more</span>
               </div>
               <p v-if="quoteCaliber === 'lenovo'" class="config-hint">
                 联想框架单价为含税13%，PDF 直接展示智能匹配「单价」及含税小计，税率固定13%
+              </p>
+              <p v-else-if="!hasLenovoPriceData" class="config-hint">
+                暂无联想框架单价，「联想框架」不可选；请先在「智能匹配」完成联想框架报价
               </p>
             </div>
 
@@ -409,7 +416,9 @@
             <!-- 原始表格预览 -->
             <div class="preview-table-section">
               <div class="preview-table-header">
-                <h4 class="preview-table-title">原始表格 + 维保单价</h4>
+                <h4 class="preview-table-title">
+                  {{ hasActiveColumnMapping ? '原始表格（按列映射填充报价）' : '原始表格 + 维保单价' }}
+                </h4>
                 <span class="preview-table-count">{{ previewOriginalData.data?.length || 0 }} 行</span>
               </div>
               <div class="preview-table-wrapper">
@@ -475,6 +484,13 @@
             <div class="preview-edit-panel">
               <p class="preview-edit-tip">
                 请用本机 Excel/WPS 打开下载的文件，保存后回到此处回传；本地修改不会自动同步。
+                <template v-if="exportColumnMapping.unit_price || exportColumnMapping.total_price">
+                  <br />
+                  列映射已启用：
+                  <template v-if="exportColumnMapping.unit_price">单价→{{ exportColumnMapping.unit_price }}</template>
+                  <template v-else>单价→末尾新增列</template>
+                  <template v-if="exportColumnMapping.total_price">；总价→{{ exportColumnMapping.total_price }}</template>
+                </template>
               </p>
               <div class="preview-edit-status" v-if="exportedDraftNames.length || uploadedEditNames.length">
                 <span v-if="exportedDraftNames.length" class="preview-edit-chip">
@@ -488,6 +504,16 @@
             <div class="preview-footer-actions">
               <button class="preview-btn cancel" @click="closePreviewDialog">
                 取消
+              </button>
+              <button
+                class="preview-btn map"
+                :disabled="!originalColumnOptions.length"
+                :title="originalColumnOptions.length ? '将系统报价填充到原始需求指定列' : '暂无原始需求表头，无法映射'"
+                @click="openColumnMappingDialog"
+              >
+                <span class="material-symbols-outlined">join_inner</span>
+                映射报价数据列
+                <span v-if="hasActiveColumnMapping" class="map-active-dot" />
               </button>
               <input
                 ref="editedFileInputRef"
@@ -510,6 +536,60 @@
                 {{ isExporting ? '导出中...' : '导出草稿' }}
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- 映射报价数据列弹窗 -->
+    <Teleport to="body">
+      <div v-if="showColumnMappingDialog" class="preview-overlay mapping-overlay" @click.self="closeColumnMappingDialog">
+        <div class="mapping-dialog" @click.stop>
+          <div class="preview-header">
+            <h3 class="preview-title">
+              <span class="material-symbols-outlined">join_inner</span>
+              映射报价数据列
+            </h3>
+            <button class="close-btn" @click="closeColumnMappingDialog">
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </div>
+          <div class="mapping-body">
+            <p class="mapping-tip">
+              选择系统报价字段应写入原始需求表的哪一列。映射后将填充到对应列，不再默认追加到末尾。
+            </p>
+            <div class="mapping-rows">
+              <div class="mapping-row mapping-row-head">
+                <span>系统输出字段</span>
+                <span>原始需求列</span>
+              </div>
+              <div class="mapping-row">
+                <div class="mapping-field">
+                  <span class="mapping-field-name">报价单价</span>
+                  <span class="mapping-field-desc">系统计算出的维保/联想框架单价</span>
+                </div>
+                <select v-model="columnMappingDraft.unit_price" class="mapping-select">
+                  <option value="">末尾新增列（默认）</option>
+                  <option v-for="h in originalColumnOptions" :key="'u-' + h" :value="h">{{ h }}</option>
+                </select>
+              </div>
+              <div class="mapping-row">
+                <div class="mapping-field">
+                  <span class="mapping-field-name">报价总价</span>
+                  <span class="mapping-field-desc">单价 × 数量</span>
+                </div>
+                <select v-model="columnMappingDraft.total_price" class="mapping-select">
+                  <option value="">不导出（默认）</option>
+                  <option v-for="h in originalColumnOptions" :key="'t-' + h" :value="h">{{ h }}</option>
+                </select>
+              </div>
+            </div>
+            <p v-if="columnMappingSummary" class="mapping-summary">当前映射：{{ columnMappingSummary }}</p>
+          </div>
+          <div class="mapping-footer">
+            <button class="preview-btn cancel" @click="resetColumnMappingDraft">重置建议</button>
+            <button class="preview-btn cancel" @click="closeColumnMappingDialog">取消</button>
+            <button class="preview-btn confirm" @click="applyColumnMapping">应用映射</button>
           </div>
         </div>
       </div>
@@ -710,6 +790,11 @@ const selectedTaxRate = ref(0.13)  // 税率选择，默认13%
 const showDiscount = ref(true)  // 包含折扣信息
 const showSignature = ref(false)  // 显示签字栏
 
+/** 智能匹配是否已产出联想框架单价；无则禁用「联想框架」口径 */
+const hasLenovoPriceData = computed(() =>
+  tableData.value.some((item: any) => Number(item?.lenovo_unit_price) > 0)
+)
+
 // 联想框架含税单价 → 未税单价（÷1.13）
 const LENOVO_TAX_RATE = 1.13
 function getLenovoPretaxUnitPrice(item: any): number {
@@ -728,20 +813,127 @@ function getItemBaseUnitPrice(item: any): number {
 
 watch(quoteCaliber, (mode) => {
   if (mode === 'lenovo') {
+    // 无联想单价时不允许停留在联想口径（与 option disabled 双保险）
+    if (!hasLenovoPriceData.value) {
+      quoteCaliber.value = 'standard'
+      return
+    }
     selectedTaxRate.value = 0.13
     showTaxColumn.value = true
     if (priceLayout.value === 'layout3') {
       priceLayout.value = 'layout4'
     }
-    const hasAny = tableData.value.some((item: any) => Number(item?.lenovo_unit_price) > 0)
-    if (tableData.value.length > 0 && !hasAny) {
-      ElMessage.warning('当前数据暂无联想框架单价，请先在「智能匹配」切换到联想框架完成报价')
-    }
+  }
+})
+
+// 数据变化导致联想单价消失时，自动回退到标准口径
+watch(hasLenovoPriceData, (hasData) => {
+  if (!hasData && quoteCaliber.value === 'lenovo') {
+    quoteCaliber.value = 'standard'
   }
 })
 
 // 预览弹窗状态
 const showPreviewDialog = ref(false)
+
+/** 系统报价字段 → 原始需求列映射（空字符串 = 单价末尾新增 / 总价不导出） */
+type ExportColumnMapping = {
+  unit_price: string
+  total_price: string
+}
+const EMPTY_COLUMN_MAPPING = (): ExportColumnMapping => ({ unit_price: '', total_price: '' })
+const exportColumnMapping = ref<ExportColumnMapping>(EMPTY_COLUMN_MAPPING())
+const columnMappingDraft = ref<ExportColumnMapping>(EMPTY_COLUMN_MAPPING())
+const showColumnMappingDialog = ref(false)
+
+const originalColumnOptions = computed(() => {
+  const headers = originalTableData.value?.headers || []
+  return headers.filter((h: string) => h && !String(h).startsWith('列'))
+})
+
+const hasActiveColumnMapping = computed(() =>
+  Boolean(exportColumnMapping.value.unit_price || exportColumnMapping.value.total_price)
+)
+
+const columnMappingSummary = computed(() => {
+  const m = columnMappingDraft.value
+  const parts: string[] = []
+  if (m.unit_price) parts.push(`单价→${m.unit_price}`)
+  else parts.push('单价→末尾新增列')
+  if (m.total_price) parts.push(`总价→${m.total_price}`)
+  return parts.join('；')
+})
+
+function normalizeHeaderLabel(value: string): string {
+  return String(value || '').replace(/[\s*\n\r]/g, '')
+}
+
+function pickSuggestedHeader(headers: string[], preferred: string[], fallbackIncludes: string[]): string {
+  const normalized = headers.map(h => ({ raw: h, key: normalizeHeaderLabel(h) }))
+  for (const p of preferred) {
+    const key = normalizeHeaderLabel(p)
+    const hit = normalized.find(h => h.key === key || h.key.includes(key))
+    if (hit) return hit.raw
+  }
+  for (const frag of fallbackIncludes) {
+    const key = normalizeHeaderLabel(frag)
+    const hit = normalized.find(h => h.key.includes(key))
+    if (hit) return hit.raw
+  }
+  return ''
+}
+
+function buildSuggestedColumnMapping(headers: string[]): ExportColumnMapping {
+  return {
+    unit_price: pickSuggestedHeader(
+      headers,
+      ['第三方服务单价', '维保单价', '服务单价', '报价单价'],
+      ['第三方服务单价', '维保单价']
+    ),
+    total_price: pickSuggestedHeader(
+      headers,
+      ['第三方服务总价', '维保总价', '服务总价', '报价总价'],
+      ['第三方服务总价', '维保总价']
+    ),
+  }
+}
+
+function openColumnMappingDialog() {
+  if (!originalColumnOptions.value.length) {
+    ElMessage.warning('暂无原始需求表头，无法映射')
+    return
+  }
+  // 若尚未配置过映射，打开时给出基于表头的建议
+  if (!hasActiveColumnMapping.value) {
+    columnMappingDraft.value = buildSuggestedColumnMapping(originalColumnOptions.value)
+  } else {
+    columnMappingDraft.value = { ...exportColumnMapping.value }
+  }
+  showColumnMappingDialog.value = true
+}
+
+function closeColumnMappingDialog() {
+  showColumnMappingDialog.value = false
+}
+
+function resetColumnMappingDraft() {
+  columnMappingDraft.value = buildSuggestedColumnMapping(originalColumnOptions.value)
+}
+
+function applyColumnMapping() {
+  exportColumnMapping.value = { ...columnMappingDraft.value }
+  showColumnMappingDialog.value = false
+  const m = exportColumnMapping.value
+  if (m.unit_price || m.total_price) {
+    const parts: string[] = []
+    if (m.unit_price) parts.push(`单价→${m.unit_price}`)
+    else parts.push('单价→末尾新增列')
+    if (m.total_price) parts.push(`总价→${m.total_price}`)
+    ElMessage.success(`已应用列映射：${parts.join('；')}`)
+  } else {
+    ElMessage.success('已恢复为末尾新增单价列')
+  }
+}
 
 // 导出草稿 / 本地编辑回传（仅替换快照附件，不回写页面表格金额）
 type SnapshotFileItem = { name: string; size: number; type: string; content: string }
@@ -882,11 +1074,18 @@ function buildOriginalPreviewForSheet(headers: string[], data: any[], sheetName?
     priceHeaderName = quoteCaliber.value === 'lenovo' ? '联想框架单价(含税13%)' : '维保单价(含税13%)'
   }
 
+  const unitTarget = exportColumnMapping.value.unit_price
+  const totalTarget = exportColumnMapping.value.total_price
+  const mapUnitIntoExisting = Boolean(unitTarget && headers.includes(unitTarget))
+  const mapTotalIntoExisting = Boolean(totalTarget && headers.includes(totalTarget))
+  const outHeaders = mapUnitIntoExisting ? [...headers] : [...headers, priceHeaderName]
+
   return {
-    headers: [...headers, priceHeaderName],
+    headers: outHeaders,
     data: data.map((row, rowIndex) => {
       const newRow = { ...row }
       let basePrice = 0
+      let matchedItem: any = null
 
       // 优先按型号名称匹配：扫描该行所有列值，尝试匹配已知型号（避免索引错位）
       const allValues = Object.values(row)
@@ -903,11 +1102,24 @@ function buildOriginalPreviewForSheet(headers: string[], data: any[], sheetName?
 
       // 兜底：行数一致时按行索引获取价格
       if (basePrice === 0 && rowCountMatch && rowIndex < scopedTableData.length) {
-        basePrice = getItemBaseUnitPrice(scopedTableData[rowIndex])
+        matchedItem = scopedTableData[rowIndex]
+        basePrice = getItemBaseUnitPrice(matchedItem)
+      } else if (rowCountMatch && rowIndex < scopedTableData.length) {
+        matchedItem = scopedTableData[rowIndex]
       }
 
       const adjustedPrice = Math.round(basePrice * priceMultiplier * 100) / 100
-      newRow[priceHeaderName] = adjustedPrice
+      const qty = Number(matchedItem?.quantity ?? row['设备数量（参考）'] ?? row['设备数量'] ?? row['数量'] ?? 1) || 1
+      const totalPrice = Math.round(adjustedPrice * qty * 100) / 100
+
+      if (mapUnitIntoExisting && unitTarget) {
+        newRow[unitTarget] = adjustedPrice
+      } else {
+        newRow[priceHeaderName] = adjustedPrice
+      }
+      if (mapTotalIntoExisting && totalTarget) {
+        newRow[totalTarget] = totalPrice
+      }
       return newRow
     })
   }
@@ -1839,7 +2051,7 @@ async function downloadPDF() {
           .quote-table th {
             text-transform: none !important;
             letter-spacing: 0 !important;
-            white-space: normal !important;
+            white-space: nowrap !important;
             word-break: keep-all !important;
             line-height: 1.25 !important;
             font-size: 11px !important;
@@ -1849,12 +2061,12 @@ async function downloadPDF() {
           }
           .quote-table th .th-main,
           .quote-table th .th-sub {
-            display: block !important;
+            display: inline !important;
           }
           .quote-table th .th-sub {
-            font-size: 10px !important;
+            font-size: 11px !important;
             font-weight: 600 !important;
-            margin-top: 2px !important;
+            margin-top: 0 !important;
           }
           .quote-table .col-no { width: 6% !important; }
           .quote-table .col-desc { width: 34% !important; }
@@ -2466,17 +2678,53 @@ async function exportQuotationExcel() {
             if (col > maxCol) maxCol = col
           }
         }
-        const priceColIndex = maxCol + 1
-        const priceColLetter = colToLetter(priceColIndex)
-        // 联想框架单价列（仅在 hasLenovoData 时使用）
-        const lenovoColIndex = hasLenovoData ? priceColIndex + 1 : priceColIndex
-        const lenovoColLetter = hasLenovoData ? colToLetter(lenovoColIndex) : priceColLetter
-        // 终列：表头条款、dimension、cols 都按这个最右列计算
-        const lastColIndex = hasLenovoData ? lenovoColIndex : priceColIndex
-        const lastColLetter = hasLenovoData ? lenovoColLetter : priceColLetter
 
         const getSheetWorksheetSelection = (sheetName: string) => {
           return originalSheetTables.value.find((sheet) => sheet.sheetName === sheetName)?.worksheetSelection || null
+        }
+
+        /** 在行内按列号写入/更新数值或 sharedString 单元格（保持列序） */
+        const upsertCell = (
+          targetDoc: Document,
+          targetNs: string,
+          rowEl: Element,
+          colIndex: number,
+          rowNum: number,
+          payload: { kind: 'number'; value: number } | { kind: 'shared'; ssIndex: number },
+          styleId?: string
+        ) => {
+          const colLetter = colToLetter(colIndex)
+          const ref = `${colLetter}${rowNum}`
+          const cells = Array.from(rowEl.getElementsByTagNameNS(targetNs, 'c'))
+          let cell = cells.find(c => c.getAttribute('r') === ref) || null
+          if (!cell) {
+            cell = targetDoc.createElementNS(targetNs, 'c')
+            cell.setAttribute('r', ref)
+            let inserted = false
+            for (const existing of cells) {
+              const existingCol = parseRef(existing.getAttribute('r') || '').col
+              if (existingCol > colIndex) {
+                rowEl.insertBefore(cell, existing)
+                inserted = true
+                break
+              }
+            }
+            if (!inserted) rowEl.appendChild(cell)
+          } else {
+            while (cell.firstChild) cell.removeChild(cell.firstChild)
+            cell.removeAttribute('t')
+          }
+          if (styleId) cell.setAttribute('s', styleId)
+          if (payload.kind === 'shared') {
+            cell.setAttribute('t', 's')
+            const vEl = targetDoc.createElementNS(targetNs, 'v')
+            vEl.textContent = String(payload.ssIndex)
+            cell.appendChild(vEl)
+          } else {
+            const vEl = targetDoc.createElementNS(targetNs, 'v')
+            vEl.textContent = String(payload.value)
+            cell.appendChild(vEl)
+          }
         }
 
         // ---- 智能检测表头行位置 ----
@@ -2522,6 +2770,33 @@ async function exportQuotationExcel() {
           return texts
         }
 
+        /** 从表头行按列名找列号 */
+        const findHeaderColIndex = (headerRowEl: Element | null, headerName: string): number => {
+          if (!headerRowEl || !headerName) return -1
+          const target = normalizeHeaderLabel(headerName)
+          if (!target) return -1
+          const cells = headerRowEl.getElementsByTagNameNS(nsResolver, 'c')
+          for (let j = 0; j < cells.length; j++) {
+            const ref = cells[j].getAttribute('r') || ''
+            const { col } = parseRef(ref)
+            const vEl = cells[j].getElementsByTagNameNS(nsResolver, 'v')[0]
+            const cellType = cells[j].getAttribute('t')
+            let text = ''
+            if (vEl?.textContent) {
+              if (cellType === 's') {
+                text = sharedStrings[parseInt(vEl.textContent)] || ''
+              } else {
+                text = vEl.textContent
+              }
+            }
+            const normalized = normalizeHeaderLabel(text)
+            if (normalized === target || normalized.includes(target) || target.includes(normalized)) {
+              return col
+            }
+          }
+          return -1
+        }
+
         const primarySheetSelection = selectedSheetName ? getSheetWorksheetSelection(selectedSheetName) : null
         let headerRowNum = primarySheetSelection?.headerRowNumber || 1
         if (primarySheetSelection) {
@@ -2557,7 +2832,40 @@ async function exportQuotationExcel() {
         }
         console.log('[Export] 使用表头行:', headerRowNum)
 
-        // ---- 添加 sharedStrings 条目（"维保单价" + 可选"联想框架单价"） ----
+        // ---- 解析列映射：优先写入原始需求指定列，否则末尾新增 ----
+        let headerRowEl: Element | null = null
+        for (let i = 0; i < rows.length; i++) {
+          if (parseInt(rows[i].getAttribute('r') || '0') === headerRowNum) {
+            headerRowEl = rows[i]
+            break
+          }
+        }
+        const mappedUnitCol = findHeaderColIndex(headerRowEl, exportColumnMapping.value.unit_price)
+        const mappedTotalCol = findHeaderColIndex(headerRowEl, exportColumnMapping.value.total_price)
+        const appendUnitCol = mappedUnitCol <= 0
+        let nextAppendCol = maxCol + 1
+        const priceColIndex = appendUnitCol ? nextAppendCol++ : mappedUnitCol
+        const totalColIndex = mappedTotalCol > 0 ? mappedTotalCol : -1
+        const lenovoColIndex = hasLenovoData ? nextAppendCol++ : -1
+        const lastColIndex = Math.max(maxCol, priceColIndex, totalColIndex, lenovoColIndex)
+        const lastColLetter = colToLetter(lastColIndex)
+        const appendedNewCols = appendUnitCol || hasLenovoData
+        if (exportColumnMapping.value.unit_price && mappedUnitCol <= 0) {
+          console.warn('[Export] 未在表头找到单价映射列，回退为末尾新增:', exportColumnMapping.value.unit_price)
+        }
+        if (exportColumnMapping.value.total_price && mappedTotalCol <= 0) {
+          console.warn('[Export] 未在表头找到总价映射列，已跳过总价写入:', exportColumnMapping.value.total_price)
+        }
+        console.log('[Export] 列映射:', {
+          unitTarget: exportColumnMapping.value.unit_price,
+          totalTarget: exportColumnMapping.value.total_price,
+          priceColIndex,
+          totalColIndex,
+          appendUnitCol,
+          lenovoColIndex
+        })
+
+        // ---- 添加 sharedStrings 条目（供末尾新增列表头使用；映射到已有列时可不写表头） ----
         let ssDoc2: Document | null = null
         let priceHeaderSsIndex = -1
         let lenovoHeaderSsIndex = -1
@@ -2565,7 +2873,8 @@ async function exportQuotationExcel() {
           ssDoc2 = parser.parseFromString(ssXml, 'application/xml')
           const ssNs2 = ssDoc2.documentElement.namespaceURI || nsResolver
           const siEls2 = ssDoc2.getElementsByTagNameNS(ssNs2, 'si')
-          priceHeaderSsIndex = siEls2.length
+          let nextSsIndex = siEls2.length
+          let addedCount = 0
 
           const appendSharedString = (text: string) => {
             const newSi = ssDoc2!.createElementNS(ssNs2, 'si')
@@ -2573,16 +2882,17 @@ async function exportQuotationExcel() {
             newT.textContent = text
             newSi.appendChild(newT)
             ssDoc2!.documentElement.appendChild(newSi)
+            const idx = nextSsIndex
+            nextSsIndex += 1
+            addedCount += 1
+            return idx
           }
-          appendSharedString('维保单价')
-          let addedCount = 1
+          // 预留表头字符串：主表/附表任一需要末尾新增时可用
+          priceHeaderSsIndex = appendSharedString('维保单价')
           if (hasLenovoData) {
-            lenovoHeaderSsIndex = priceHeaderSsIndex + 1
-            appendSharedString(LENOVO_HEADER)
-            addedCount = 2
+            lenovoHeaderSsIndex = appendSharedString(LENOVO_HEADER)
           }
 
-          // 更新 count 和 uniqueCount 属性
           const sstEl = ssDoc2.documentElement
           const oldCount = parseInt(sstEl.getAttribute('count') || '0')
           const oldUnique = parseInt(sstEl.getAttribute('uniqueCount') || '0')
@@ -2621,11 +2931,10 @@ async function exportQuotationExcel() {
           }
         })
 
-        // ---- 在 sheet XML 中插入价格列单元格 ----
+        // ---- 在 sheet XML 中写入价格（映射列或末尾新增列） ----
         const dataStartRowNum = headerRowNum + 1
-        // 统计实际有数据内容的行数（排除表头后的空行、条款行等）
         let actualDataRowCount = 0
-        const dataRowIndices: number[] = []  // 存储数据行在 rows 数组中的索引
+        const dataRowIndices: number[] = []
         const worksheetRowToSeqIndex = new Map<number, number>()
 
         if (primarySheetSelection?.dataRowNumbers?.length) {
@@ -2644,7 +2953,6 @@ async function exportQuotationExcel() {
             const rn = parseInt(rows[i].getAttribute('r') || '0')
             if (rn >= dataStartRowNum) {
               const texts = getRowTexts(rows[i])
-              // 至少有2个非空单元格内容才算数据行
               if (texts.filter(t => t.length > 0).length >= 2) {
                 actualDataRowCount++
                 dataRowIndices.push(i)
@@ -2658,144 +2966,113 @@ async function exportQuotationExcel() {
         const rowCountMatch = actualDataRowCount === expectedPrimaryCount
         console.log('[Export] 实际数据行:', actualDataRowCount, ', tableData 行:', tableData.value.length, ', 行数一致:', rowCountMatch)
 
-        // 查找表头行样式 ID 用于价格表头单元格
         let headerStyleId = ''
-        for (let i = 0; i < rows.length; i++) {
-          const rn = parseInt(rows[i].getAttribute('r') || '0')
-          if (rn === headerRowNum) {
-            const cells = rows[i].getElementsByTagNameNS(nsResolver, 'c')
-            if (cells.length > 0) {
-              headerStyleId = cells[0].getAttribute('s') || ''
-            }
-            break
-          }
+        if (headerRowEl) {
+          const cells = headerRowEl.getElementsByTagNameNS(nsResolver, 'c')
+          if (cells.length > 0) headerStyleId = cells[0].getAttribute('s') || ''
         }
 
-        // 构建数据行的顺序索引映射（rows 数组 index → tableData 顺序 index）
         const rowIndexToSeqIndex = new Map<number, number>()
         dataRowIndices.forEach((rowsIdx, seqIdx) => {
           rowIndexToSeqIndex.set(rowsIdx, seqIdx)
         })
 
+        const resolveRowPrice = (rowIdx: number, rowNum: number): { price?: number; qty: number; item?: any } => {
+          const seqIndex = primarySheetSelection?.dataRowNumbers?.length
+            ? worksheetRowToSeqIndex.get(rowNum)
+            : rowIndexToSeqIndex.get(rowIdx)
+          let price: number | undefined
+          let item: any
+          if (rowCountMatch && seqIndex !== undefined) {
+            price = primaryPriceDataMap.get(seqIndex)
+            item = (primarySheetItems.length > 0 ? primarySheetItems : tableData.value)[seqIndex]
+          }
+          if (price === undefined) {
+            const texts = getRowTexts(rows[rowIdx])
+            for (const t of texts) {
+              const normalized = normalizeForMatch(t)
+              if (normalized && modelPriceMap.has(normalized)) {
+                price = modelPriceMap.get(normalized)
+                break
+              }
+            }
+          }
+          const qty = Number(item?.quantity) || 1
+          return { price, qty, item }
+        }
+
         for (let i = 0; i < rows.length; i++) {
           const rowNum = parseInt(rows[i].getAttribute('r') || '0')
-
-          // ---- 维保单价单元格 ----
-          const newCell = doc.createElementNS(nsResolver, 'c')
-          newCell.setAttribute('r', `${priceColLetter}${rowNum}`)
+          const rowStyleId = rows[i].getElementsByTagNameNS(nsResolver, 'c')[0]?.getAttribute('s') || ''
 
           if (rowNum === headerRowNum) {
-            // 表头单元格 — 引用 sharedStrings 中的"维保单价"
-            if (priceHeaderSsIndex >= 0) {
-              newCell.setAttribute('t', 's')
-              if (headerStyleId) newCell.setAttribute('s', headerStyleId)
-              const vEl = doc.createElementNS(nsResolver, 'v')
-              vEl.textContent = String(priceHeaderSsIndex)
-              newCell.appendChild(vEl)
+            // 仅末尾新增列时写入新表头；映射到已有列时保留原表头
+            if (appendUnitCol && priceHeaderSsIndex >= 0) {
+              upsertCell(doc, nsResolver, rows[i], priceColIndex, rowNum, { kind: 'shared', ssIndex: priceHeaderSsIndex }, headerStyleId)
             }
-          } else if (rowNum >= dataStartRowNum) {
-            let price: number | undefined
+            if (hasLenovoData && lenovoColIndex > 0 && lenovoHeaderSsIndex >= 0) {
+              upsertCell(doc, nsResolver, rows[i], lenovoColIndex, rowNum, { kind: 'shared', ssIndex: lenovoHeaderSsIndex }, headerStyleId)
+            }
+            continue
+          }
 
-            // 优先使用顺序索引映射（按数据行顺序对应 tableData 顺序）
+          if (rowNum < dataStartRowNum) continue
+
+          const { price, qty } = resolveRowPrice(i, rowNum)
+          if (price !== undefined && price > 0) {
+            upsertCell(doc, nsResolver, rows[i], priceColIndex, rowNum, { kind: 'number', value: price }, rowStyleId)
+            if (totalColIndex > 0) {
+              const total = Math.round(price * qty * 100) / 100
+              upsertCell(doc, nsResolver, rows[i], totalColIndex, rowNum, { kind: 'number', value: total }, rowStyleId)
+            }
+          }
+
+          if (hasLenovoData && lenovoColIndex > 0) {
+            let lp: number | undefined
             const seqIndex = primarySheetSelection?.dataRowNumbers?.length
               ? worksheetRowToSeqIndex.get(rowNum)
               : rowIndexToSeqIndex.get(i)
             if (rowCountMatch && seqIndex !== undefined) {
-              price = primaryPriceDataMap.get(seqIndex)
+              lp = primaryLenovoPriceDataMap.get(seqIndex)
             }
-            // 回退：通过型号名称匹配
-            if (price === undefined) {
+            if (lp === undefined) {
               const texts = getRowTexts(rows[i])
               for (const t of texts) {
                 const normalized = normalizeForMatch(t)
-                if (normalized && modelPriceMap.has(normalized)) {
-                  price = modelPriceMap.get(normalized)
+                if (normalized && lenovoModelPriceMap.has(normalized)) {
+                  lp = lenovoModelPriceMap.get(normalized)
                   break
                 }
               }
             }
-
-            if (price !== undefined && price > 0) {
-              const vEl = doc.createElementNS(nsResolver, 'v')
-              vEl.textContent = String(price)
-              newCell.appendChild(vEl)
-              // 复用同行其他单元格的样式
-              const cells = rows[i].getElementsByTagNameNS(nsResolver, 'c')
-              if (cells.length > 0) {
-                const sAttr = cells[0].getAttribute('s')
-                if (sAttr) newCell.setAttribute('s', sAttr)
-              }
+            if (lp !== undefined && lp > 0) {
+              upsertCell(doc, nsResolver, rows[i], lenovoColIndex, rowNum, { kind: 'number', value: lp }, rowStyleId)
             }
-          }
-
-          rows[i].appendChild(newCell)
-
-          // ---- 联想框架单价单元格（仅在 hasLenovoData 时追加）----
-          if (hasLenovoData) {
-            const lenovoCell = doc.createElementNS(nsResolver, 'c')
-            lenovoCell.setAttribute('r', `${lenovoColLetter}${rowNum}`)
-            if (rowNum === headerRowNum) {
-              if (lenovoHeaderSsIndex >= 0) {
-                lenovoCell.setAttribute('t', 's')
-                if (headerStyleId) lenovoCell.setAttribute('s', headerStyleId)
-                const vEl = doc.createElementNS(nsResolver, 'v')
-                vEl.textContent = String(lenovoHeaderSsIndex)
-                lenovoCell.appendChild(vEl)
-              }
-            } else if (rowNum >= dataStartRowNum) {
-              let lp: number | undefined
-              const seqIndex = primarySheetSelection?.dataRowNumbers?.length
-                ? worksheetRowToSeqIndex.get(rowNum)
-                : rowIndexToSeqIndex.get(i)
-              if (rowCountMatch && seqIndex !== undefined) {
-                lp = primaryLenovoPriceDataMap.get(seqIndex)
-              }
-              if (lp === undefined) {
-                const texts = getRowTexts(rows[i])
-                for (const t of texts) {
-                  const normalized = normalizeForMatch(t)
-                  if (normalized && lenovoModelPriceMap.has(normalized)) {
-                    lp = lenovoModelPriceMap.get(normalized)
-                    break
-                  }
-                }
-              }
-              if (lp !== undefined && lp > 0) {
-                const vEl = doc.createElementNS(nsResolver, 'v')
-                vEl.textContent = String(lp)
-                lenovoCell.appendChild(vEl)
-                const cells = rows[i].getElementsByTagNameNS(nsResolver, 'c')
-                if (cells.length > 0) {
-                  const sAttr = cells[0].getAttribute('s')
-                  if (sAttr) lenovoCell.setAttribute('s', sAttr)
-                }
-              }
-            }
-            rows[i].appendChild(lenovoCell)
           }
         }
 
-        // 更新 dimension（如果存在）：终列改为最右新列
-        const dimEl = doc.getElementsByTagNameNS(nsResolver, 'dimension')[0]
-        if (dimEl) {
-          const oldRef = dimEl.getAttribute('ref') || ''
-          const updatedRef = oldRef.replace(/([A-Z]+)(\d+)$/, `${lastColLetter}$2`)
-          dimEl.setAttribute('ref', updatedRef)
-        }
-
-        // 更新列宽信息：维保单价 + 可选 联想框架单价
-        let colsEl = doc.getElementsByTagNameNS(nsResolver, 'cols')[0]
-        if (colsEl) {
-          const appendColWidth = (colIdx: number, width: string) => {
-            const colEl = doc.createElementNS(nsResolver, 'col')
-            colEl.setAttribute('min', String(colIdx))
-            colEl.setAttribute('max', String(colIdx))
-            colEl.setAttribute('width', width)
-            colEl.setAttribute('customWidth', '1')
-            colsEl.appendChild(colEl)
+        // 仅在末尾新增列时扩展 dimension / cols
+        if (appendedNewCols) {
+          const dimEl = doc.getElementsByTagNameNS(nsResolver, 'dimension')[0]
+          if (dimEl) {
+            const oldRef = dimEl.getAttribute('ref') || ''
+            const updatedRef = oldRef.replace(/([A-Z]+)(\d+)$/, `${lastColLetter}$2`)
+            dimEl.setAttribute('ref', updatedRef)
           }
-          appendColWidth(priceColIndex, '15')
-          if (hasLenovoData) appendColWidth(lenovoColIndex, '20')
+
+          const colsEl = doc.getElementsByTagNameNS(nsResolver, 'cols')[0]
+          if (colsEl) {
+            const appendColWidth = (colIdx: number, width: string) => {
+              const colEl = doc.createElementNS(nsResolver, 'col')
+              colEl.setAttribute('min', String(colIdx))
+              colEl.setAttribute('max', String(colIdx))
+              colEl.setAttribute('width', width)
+              colEl.setAttribute('customWidth', '1')
+              colsEl.appendChild(colEl)
+            }
+            if (appendUnitCol) appendColWidth(priceColIndex, '15')
+            if (hasLenovoData && lenovoColIndex > 0) appendColWidth(lenovoColIndex, '20')
+          }
         }
 
         // ---- 在 styles.xml 中添加 wrapText + bold 样式，供条款单元格使用 ----
@@ -3116,11 +3393,6 @@ async function exportQuotationExcel() {
               if (col > extraMaxCol) extraMaxCol = col
             }
           }
-          const extraPriceColIndex = extraMaxCol + 1
-          const extraPriceColLetter = colToLetter(extraPriceColIndex)
-          const extraLenovoColIndex = hasLenovoData ? extraPriceColIndex + 1 : extraPriceColIndex
-          const extraLenovoColLetter = hasLenovoData ? colToLetter(extraLenovoColIndex) : extraPriceColLetter
-          const extraLastColLetter = hasLenovoData ? extraLenovoColLetter : extraPriceColLetter
 
           const getExtraRowTexts = (rowEl: Element): string[] => {
             const texts: string[] = []
@@ -3140,6 +3412,30 @@ async function exportQuotationExcel() {
             return texts
           }
 
+          const findExtraHeaderCol = (headerRowEl: Element | null, headerName: string): number => {
+            if (!headerRowEl || !headerName) return -1
+            const target = normalizeHeaderLabel(headerName)
+            if (!target) return -1
+            const cells = headerRowEl.getElementsByTagNameNS(extraNs, 'c')
+            for (let j = 0; j < cells.length; j++) {
+              const ref = cells[j].getAttribute('r') || ''
+              const { col } = parseRef(ref)
+              const vEl = cells[j].getElementsByTagNameNS(extraNs, 'v')[0]
+              const cellType = cells[j].getAttribute('t')
+              let text = ''
+              if (vEl?.textContent) {
+                text = cellType === 's'
+                  ? (sharedStrings[parseInt(vEl.textContent)] || '')
+                  : vEl.textContent
+              }
+              const normalized = normalizeHeaderLabel(text)
+              if (normalized === target || normalized.includes(target) || target.includes(normalized)) {
+                return col
+              }
+            }
+            return -1
+          }
+
           const extraSheetSelection = getSheetWorksheetSelection(extraSheetName)
           let extraHeaderRowNum = extraSheetSelection?.headerRowNumber || 1
           if (!extraSheetSelection) {
@@ -3157,6 +3453,27 @@ async function exportQuotationExcel() {
               }
             }
           }
+
+          let extraHeaderRowEl: Element | null = null
+          let extraHeaderStyleId = ''
+          for (let i = 0; i < extraRows.length; i++) {
+            const rn = parseInt(extraRows[i].getAttribute('r') || '0')
+            if (rn === extraHeaderRowNum) {
+              extraHeaderRowEl = extraRows[i]
+              extraHeaderStyleId = extraRows[i].getElementsByTagNameNS(extraNs, 'c')[0]?.getAttribute('s') || ''
+              break
+            }
+          }
+
+          const extraMappedUnitCol = findExtraHeaderCol(extraHeaderRowEl, exportColumnMapping.value.unit_price)
+          const extraMappedTotalCol = findExtraHeaderCol(extraHeaderRowEl, exportColumnMapping.value.total_price)
+          const extraAppendUnit = extraMappedUnitCol <= 0
+          let extraNextCol = extraMaxCol + 1
+          const extraPriceColIndex = extraAppendUnit ? extraNextCol++ : extraMappedUnitCol
+          const extraTotalColIndex = extraMappedTotalCol > 0 ? extraMappedTotalCol : -1
+          const extraLenovoColIndex = hasLenovoData ? extraNextCol++ : -1
+          const extraLastColLetter = colToLetter(Math.max(extraMaxCol, extraPriceColIndex, extraTotalColIndex, extraLenovoColIndex))
+          const extraAppended = extraAppendUnit || hasLenovoData
 
           const extraDataRowIndices: number[] = []
           const extraWorksheetRowToSeqIndex = new Map<number, number>()
@@ -3179,81 +3496,69 @@ async function exportQuotationExcel() {
             }
           }
 
-          let extraHeaderStyleId = ''
-          for (let i = 0; i < extraRows.length; i++) {
-            const rn = parseInt(extraRows[i].getAttribute('r') || '0')
-            if (rn === extraHeaderRowNum) {
-              const cells = extraRows[i].getElementsByTagNameNS(extraNs, 'c')
-              extraHeaderStyleId = cells[0]?.getAttribute('s') || ''
-              break
-            }
-          }
-
           for (let i = 0; i < extraRows.length; i++) {
             const rowNum = parseInt(extraRows[i].getAttribute('r') || '0')
-
-            // ---- 维保单价单元格 ----
-            const newCell = extraDoc.createElementNS(extraNs, 'c')
-            newCell.setAttribute('r', `${extraPriceColLetter}${rowNum}`)
-
             const seqIndex = extraSheetSelection?.dataRowNumbers?.length
               ? extraWorksheetRowToSeqIndex.get(rowNum) ?? -1
               : extraDataRowIndices.indexOf(i)
             const item = seqIndex >= 0 ? extraItems[seqIndex] : null
+            const rowStyleId = extraRows[i].getElementsByTagNameNS(extraNs, 'c')[0]?.getAttribute('s') || ''
 
-            if (rowNum === extraHeaderRowNum && priceHeaderSsIndex >= 0) {
-              newCell.setAttribute('t', 's')
-              if (extraHeaderStyleId) newCell.setAttribute('s', extraHeaderStyleId)
-              const vEl = extraDoc.createElementNS(extraNs, 'v')
-              vEl.textContent = String(priceHeaderSsIndex)
-              newCell.appendChild(vEl)
-            } else {
-              const basePrice = item ? getItemBaseUnitPrice(item) : 0
-              if (basePrice > 0) {
-                const vEl = extraDoc.createElementNS(extraNs, 'v')
-                vEl.textContent = String(Math.round(basePrice * exportPriceMultiplier * 100) / 100)
-                newCell.appendChild(vEl)
-                const cells = extraRows[i].getElementsByTagNameNS(extraNs, 'c')
-                const sAttr = cells[0]?.getAttribute('s')
-                if (sAttr) newCell.setAttribute('s', sAttr)
+            if (rowNum === extraHeaderRowNum) {
+              if (extraAppendUnit && priceHeaderSsIndex >= 0) {
+                upsertCell(extraDoc, extraNs, extraRows[i], extraPriceColIndex, rowNum, { kind: 'shared', ssIndex: priceHeaderSsIndex }, extraHeaderStyleId)
+              }
+              if (hasLenovoData && extraLenovoColIndex > 0 && lenovoHeaderSsIndex >= 0) {
+                upsertCell(extraDoc, extraNs, extraRows[i], extraLenovoColIndex, rowNum, { kind: 'shared', ssIndex: lenovoHeaderSsIndex }, extraHeaderStyleId)
+              }
+              continue
+            }
+
+            const basePrice = item ? getItemBaseUnitPrice(item) : 0
+            if (basePrice > 0) {
+              const price = Math.round(basePrice * exportPriceMultiplier * 100) / 100
+              upsertCell(extraDoc, extraNs, extraRows[i], extraPriceColIndex, rowNum, { kind: 'number', value: price }, rowStyleId)
+              if (extraTotalColIndex > 0) {
+                const qty = Number(item?.quantity) || 1
+                upsertCell(
+                  extraDoc,
+                  extraNs,
+                  extraRows[i],
+                  extraTotalColIndex,
+                  rowNum,
+                  { kind: 'number', value: Math.round(price * qty * 100) / 100 },
+                  rowStyleId
+                )
               }
             }
-            extraRows[i].appendChild(newCell)
 
-            // ---- 联想框架单价单元格（仅在 hasLenovoData 时追加） ----
-            if (hasLenovoData) {
-              const lenovoCell = extraDoc.createElementNS(extraNs, 'c')
-              lenovoCell.setAttribute('r', `${extraLenovoColLetter}${rowNum}`)
-              if (rowNum === extraHeaderRowNum && lenovoHeaderSsIndex >= 0) {
-                lenovoCell.setAttribute('t', 's')
-                if (extraHeaderStyleId) lenovoCell.setAttribute('s', extraHeaderStyleId)
-                const vEl = extraDoc.createElementNS(extraNs, 'v')
-                vEl.textContent = String(lenovoHeaderSsIndex)
-                lenovoCell.appendChild(vEl)
-              } else {
-                const lp = Number(item?.lenovo_unit_price)
-                if (Number.isFinite(lp) && lp > 0) {
-                  const vEl = extraDoc.createElementNS(extraNs, 'v')
-                  vEl.textContent = String(Math.round(lp * 100) / 100)
-                  lenovoCell.appendChild(vEl)
-                  const cells = extraRows[i].getElementsByTagNameNS(extraNs, 'c')
-                  const sAttr = cells[0]?.getAttribute('s')
-                  if (sAttr) lenovoCell.setAttribute('s', sAttr)
-                }
+            if (hasLenovoData && extraLenovoColIndex > 0) {
+              const lp = Number(item?.lenovo_unit_price)
+              if (Number.isFinite(lp) && lp > 0) {
+                upsertCell(
+                  extraDoc,
+                  extraNs,
+                  extraRows[i],
+                  extraLenovoColIndex,
+                  rowNum,
+                  { kind: 'number', value: Math.round(lp * 100) / 100 },
+                  rowStyleId
+                )
               }
-              extraRows[i].appendChild(lenovoCell)
             }
           }
 
-          const extraDimEl = extraDoc.getElementsByTagNameNS(extraNs, 'dimension')[0]
-          if (extraDimEl) {
-            const oldRef = extraDimEl.getAttribute('ref') || ''
-            extraDimEl.setAttribute('ref', oldRef.replace(/([A-Z]+)(\d+)$/, `${extraLastColLetter}$2`))
+          if (extraAppended) {
+            const extraDimEl = extraDoc.getElementsByTagNameNS(extraNs, 'dimension')[0]
+            if (extraDimEl) {
+              const oldRef = extraDimEl.getAttribute('ref') || ''
+              extraDimEl.setAttribute('ref', oldRef.replace(/([A-Z]+)(\d+)$/, `${extraLastColLetter}$2`))
+            }
           }
 
           const extraUpdatedSheetXml = serializer.serializeToString(extraDoc)
           zip.file(extraSheetPath, extraUpdatedSheetXml)
-          console.log('[Export] 已为原格式工作表追加价格列:', extraSheetName)
+          console.log('[Export] 已为原格式工作表写入价格列:', extraSheetName)
         }
 
         hasOriginalFile = true
@@ -4107,13 +4412,14 @@ h1, h2, h3, h4, h5, h6 {
 
 .quote-table th .th-main,
 .quote-table th .th-sub {
-  display: block;
+  display: inline;
+  white-space: nowrap;
 }
 
 .quote-table th .th-sub {
-  font-size: 0.6875rem;
+  font-size: inherit;
   font-weight: 600;
-  margin-top: 0.125rem;
+  margin-top: 0;
   color: #94a3b8;
 }
 
@@ -4967,10 +5273,132 @@ h1, h2, h3, h4, h5, h6 {
   background-color: rgba(19, 91, 236, 0.12);
 }
 
+.preview-btn.map {
+  position: relative;
+  background: transparent;
+  border: 1px solid #f59e0b;
+  color: #fcd34d;
+}
+
+.preview-btn.map:hover:not(:disabled) {
+  background-color: rgba(245, 158, 11, 0.12);
+}
+
+.map-active-dot {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 9999px;
+  background: #22c55e;
+}
+
 .preview-btn.confirm {
   background-color: #135bec;
   border: none;
   color: white;
+}
+
+.mapping-overlay {
+  z-index: 1100;
+}
+
+.mapping-dialog {
+  background-color: #1a2332;
+  border: 1px solid #232f48;
+  border-radius: 1rem;
+  width: 100%;
+  max-width: 640px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+}
+
+.mapping-body {
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.mapping-tip {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: #94a3b8;
+}
+
+.mapping-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.mapping-row {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.875rem 1rem;
+  background: #101622;
+  border: 1px solid #232f48;
+  border-radius: 0.75rem;
+}
+
+.mapping-row-head {
+  background: transparent;
+  border: none;
+  padding: 0 1rem;
+  font-size: 0.75rem;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.mapping-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.mapping-field-name {
+  color: #e2e8f0;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.mapping-field-desc {
+  color: #64748b;
+  font-size: 0.75rem;
+}
+
+.mapping-select {
+  width: 100%;
+  background: #1a2332;
+  border: 1px solid #334155;
+  color: #e2e8f0;
+  border-radius: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  font-size: 0.875rem;
+}
+
+.mapping-select:focus {
+  outline: none;
+  border-color: #135bec;
+}
+
+.mapping-summary {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #93c5fd;
+}
+
+.mapping-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem 1.25rem;
+  border-top: 1px solid #232f48;
 }
 
 .preview-btn.confirm:hover:not(:disabled) {

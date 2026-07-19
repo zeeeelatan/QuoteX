@@ -15,10 +15,18 @@
             <span class="material-symbols-outlined">add</span>
             <span class="item-text">发起询价</span>
           </button>
-          <button class="menu-item">
+          <button class="menu-item" type="button" @click="triggerBomImport">
             <span class="material-symbols-outlined">upload</span>
             <span class="item-text">导入 BOM 清单</span>
           </button>
+          <input
+            ref="bomInputRef"
+            type="file"
+            class="file-input-hidden"
+            accept=".xlsx,.xls,.pdf,.docx,.txt"
+            multiple
+            @change="onBomImport"
+          />
           <button class="menu-item" @click="currentView = 'draft-box'" :class="{ 'nav-active': currentView === 'draft-box' }">
             <span class="material-symbols-outlined">description</span>
             <span class="item-text">草稿箱</span>
@@ -79,9 +87,11 @@
               <span class="material-symbols-outlined">search</span>
             </div>
             <input
+              v-model="headerSearchText"
               class="search-input"
               placeholder="搜索设备型号、SKU 或历史报价..."
               type="text"
+              @keydown.enter.prevent="runHeaderSearch"
             />
           </div>
         </div>
@@ -198,19 +208,49 @@
                         <div class="cmsg-ai-content" v-html="formatAnalysis(msg.content, msg.isHtml)"></div>
                       </div>
                       <div class="cmsg-actions">
-                        <button v-if="msg.structured" type="button" class="cmsg-action-btn cmsg-action-primary" @click="exportQuotation(msg.structured)">
+                        <button
+                          v-if="msg.structured && msg.structured.requires_confirmation && !msg.structured.confirmed"
+                          type="button"
+                          class="cmsg-action-btn cmsg-action-primary"
+                          @click="confirmStructuredQuote(idx)"
+                        >
+                          <span class="material-symbols-outlined">check_circle</span>
+                          确认匹配结果
+                        </button>
+                        <button
+                          v-if="msg.structured"
+                          type="button"
+                          class="cmsg-action-btn"
+                          :class="{ 'cmsg-action-primary': msg.structured.confirmed || !msg.structured.requires_confirmation }"
+                          @click="exportQuotation(msg.structured, 'excel')"
+                        >
                           <span class="material-symbols-outlined">download</span>
-                          导出报价单
+                          导出 Excel
+                        </button>
+                        <button
+                          v-if="msg.structured"
+                          type="button"
+                          class="cmsg-action-btn"
+                          @click="exportQuotation(msg.structured, 'pdf')"
+                        >
+                          <span class="material-symbols-outlined">picture_as_pdf</span>
+                          导出 PDF
                         </button>
                         <button type="button" class="cmsg-action-btn" @click="goToDocumentRecognition">
                           <span class="material-symbols-outlined">receipt_long</span>
                           去发起询价
                         </button>
-                        <button type="button" class="cmsg-action-btn">
+                        <button type="button" class="cmsg-action-btn" @click="reanalyzeLast(idx)">
                           <span class="material-symbols-outlined">refresh</span>
                           重新分析
                         </button>
                       </div>
+                      <p v-if="msg.structured?.unmatched_count" class="cmsg-warn">
+                        有 {{ msg.structured.unmatched_count }} 项未匹配，未匹配行不含编造价格。
+                      </p>
+                      <p v-if="msg.structured?.low_confidence_count" class="cmsg-warn">
+                        有 {{ msg.structured.low_confidence_count }} 项匹配率偏低，请核对后再确认导出。
+                      </p>
                     </div>
                   </div>
 
@@ -239,10 +279,10 @@
               <div class="chat-float-inner">
                 <!-- 快捷建议 -->
                 <div class="chat-suggest-row">
-                  <button type="button" class="chat-suggest-pill" @click="setExample('生成报价摘要')">生成报价摘要</button>
-                  <button type="button" class="chat-suggest-pill" @click="setExample('比较历史价格')">比较历史价格</button>
-                  <button type="button" class="chat-suggest-pill" @click="setExample('导出为报价单')">导出为报价单</button>
-                  <button type="button" class="chat-suggest-pill" @click="setExample('调整参数配置')">调整参数配置</button>
+                  <button type="button" class="chat-suggest-pill" @click="setExample('查询戴尔 PowerEdge R740 设备价格')">查产品库</button>
+                  <button type="button" class="chat-suggest-pill" @click="setExample('50台戴尔 PowerEdge 服务器做维保报价')">维保报价</button>
+                  <button type="button" class="chat-suggest-pill" @click="setExample('北京驻场 2 名高级工程师 12 个月')">驻场测算</button>
+                  <button type="button" class="chat-suggest-pill" @click="setExample('确认当前报价并说明如何导出')">确认并导出</button>
                 </div>
                 <!-- 输入卡片 -->
                 <div class="chat-input-card" :class="{ focused: chatInputFocused }">
@@ -467,6 +507,8 @@ import axios from 'axios'
 import { marked } from 'marked'
 import * as XLSX from 'xlsx'
 import { saveAs } from 'file-saver'
+import { jsPDF } from 'jspdf'
+import autoTable from 'jspdf-autotable'
 import { ElMessage } from 'element-plus'
 import { isLoggedInRef, openLoginModal, openRegisterModal, clearAuth, userProfileRef, loadUserProfile, refreshUserProfile } from '../stores/authStore'
 import { openSystemSettings, openPersonalSettings, currentSettingsDialog } from '../stores/settingsDialogStore'
@@ -514,10 +556,23 @@ const requirementText = ref('')
 const attachedFiles = ref<File[]>([])
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const chatFileInputRef = ref<HTMLInputElement | null>(null)
+const bomInputRef = ref<HTMLInputElement | null>(null)
 const isGenerating = ref(false)
 const chatInputFocused = ref(false)
 const showResultModal = ref(false)
 const aiResultAnalysis = ref('')
+const agentSessionId = ref<string>(localStorage.getItem('ai_agent_session_id') || '')
+const headerSearchText = ref('')
+
+async function runHeaderSearch() {
+  const q = headerSearchText.value.trim()
+  if (!q) return
+  requirementText.value = `查询产品库：${q}`
+  headerSearchText.value = ''
+  chatMode.value = true
+  currentView.value = 'home'
+  await handleGenerate()
+}
 
 // 交互模式与对话记录
 const chatMode = ref(false)
@@ -527,6 +582,7 @@ interface ChatMessage {
   fileNames?: string[]
   structured?: any  // 结构化报价数据
   isHtml?: boolean  // 是否为 HTML 富文本
+  toolTrace?: string[]
 }
 const chatMessages = ref<ChatMessage[]>([])
 const chatMessagesRef = ref<HTMLElement | null>(null)
@@ -535,12 +591,34 @@ const chatMessagesRef = ref<HTMLElement | null>(null)
 const availableModels = ref<string[]>(['qwen-plus'])
 const selectedModel = ref('qwen-plus')
 
+function persistSessionId(id: string) {
+  if (!id) return
+  agentSessionId.value = id
+  localStorage.setItem('ai_agent_session_id', id)
+}
+
 function triggerFileInput() {
   fileInputRef.value?.click()
 }
 
 function triggerChatFileInput() {
   chatFileInputRef.value?.click()
+}
+
+function triggerBomImport() {
+  bomInputRef.value?.click()
+}
+
+async function onBomImport(e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = input.files
+  if (!files?.length) return
+  attachedFiles.value = Array.from(files).slice(0, 5)
+  requirementText.value = requirementText.value.trim() || '请解析附件 BOM 并生成维保报价'
+  chatMode.value = true
+  currentView.value = 'home'
+  input.value = ''
+  await handleGenerate()
 }
 
 async function loadModels() {
@@ -606,18 +684,26 @@ function goToDocumentRecognition() {
   router.push('/document-recognition')
 }
 
-function exportQuotation(structured: any) {
+function assertExportAllowed(structured: any): boolean {
   if (!structured?.devices?.length) {
     ElMessage.warning('无可导出的报价数据')
-    return
+    return false
   }
+  if (structured.requires_confirmation && !structured.confirmed) {
+    ElMessage.warning('请先确认匹配结果，再导出报价单')
+    return false
+  }
+  return true
+}
+
+function buildExportRows(structured: any) {
   const rows = structured.devices.map((d: any, idx: number) => ({
     '序号': idx + 1,
     '厂商': d.manufacturer || '',
-    '匹配型号': d.matched_model || '',
+    '匹配型号': d.matched_model || d.input_model || '',
     '匹配率': `${(d.match_rate || 0).toFixed(0)}%`,
-    '设备价格(元)': d.device_price || 0,
-    '维保费率': `${((d.rate || 0) * 100).toFixed(2)}%`,
+    '设备价格(元)': d.device_price ?? '',
+    '维保费率': d.rate != null ? `${(d.rate * 100).toFixed(2)}%` : '',
     '维保单价(元)': d.price || 0,
     '数量': d.quantity || 1,
     '小计(元)': d.subtotal || 0,
@@ -626,7 +712,6 @@ function exportQuotation(structured: any) {
     '三级分类': d.tertiary_category || '',
   }))
 
-  // 添加汇总行
   rows.push({
     '序号': '',
     '厂商': '',
@@ -658,14 +743,84 @@ function exportQuotation(structured: any) {
       '三级分类': '',
     })
   }
+  return rows
+}
 
-  const ws = XLSX.utils.json_to_sheet(rows)
-  const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, ws, '维保报价')
-  const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
+function exportQuotation(structured: any, format: 'excel' | 'pdf' = 'excel') {
+  if (!assertExportAllowed(structured)) return
+  const rows = buildExportRows(structured)
   const now = new Date().toISOString().slice(0, 10)
-  saveAs(new Blob([wbout]), `维保报价_${now}.xlsx`)
-  ElMessage.success('报价单已导出')
+  const typeLabel = structured.quote_type || 'quote'
+  if (format === 'excel') {
+    const ws = XLSX.utils.json_to_sheet(rows)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, '报价明细')
+    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
+    saveAs(new Blob([wbout]), `报价单_${typeLabel}_${now}.xlsx`)
+    ElMessage.success('Excel 报价单已导出')
+    return
+  }
+
+  const doc = new jsPDF({ orientation: 'landscape' })
+  doc.setFontSize(14)
+  doc.text(`AI Quote - ${typeLabel}`, 14, 16)
+  doc.setFontSize(10)
+  doc.text(`Total: ${structured.total_adjusted ?? structured.total_base ?? 0}`, 14, 24)
+  autoTable(doc, {
+    startY: 30,
+    head: [['#', 'Mfr', 'Model', 'Match%', 'Unit', 'Qty', 'Subtotal']],
+    body: structured.devices.map((d: any, idx: number) => [
+      idx + 1,
+      d.manufacturer || '',
+      d.matched_model || d.input_model || '',
+      `${(d.match_rate || 0).toFixed(0)}%`,
+      d.price || 0,
+      d.quantity || 1,
+      d.subtotal || 0,
+    ]),
+  })
+  doc.save(`报价单_${typeLabel}_${now}.pdf`)
+  ElMessage.success('PDF 报价单已导出')
+}
+
+async function confirmStructuredQuote(msgIdx: number) {
+  const msg = chatMessages.value[msgIdx]
+  if (!msg?.structured) return
+  if (!agentSessionId.value) {
+    msg.structured.confirmed = true
+    ElMessage.success('已确认（本地）')
+    return
+  }
+  try {
+    const res = await axios.post(`${API_BASE}/ai-quote/confirm`, {
+      session_id: agentSessionId.value,
+    })
+    if (res.data?.structured) {
+      msg.structured = res.data.structured
+    } else {
+      msg.structured.confirmed = true
+    }
+    ElMessage.success(res.data?.message || '报价已确认，可以导出')
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.detail || '确认失败')
+  }
+}
+
+async function reanalyzeLast(msgIdx: number) {
+  // 找到该 assistant 前一条用户消息
+  let userMsg = ''
+  for (let i = msgIdx - 1; i >= 0; i--) {
+    if (chatMessages.value[i].role === 'user') {
+      userMsg = chatMessages.value[i].content || ''
+      break
+    }
+  }
+  if (!userMsg.trim()) {
+    ElMessage.warning('没有可重新分析的用户需求')
+    return
+  }
+  requirementText.value = userMsg
+  await handleGenerate()
 }
 
 async function handleGenerate() {
@@ -678,10 +833,9 @@ async function handleGenerate() {
   isGenerating.value = true
   aiResultAnalysis.value = ''
 
-  // 先把用户消息和一条空的 assistant 消息推入聊天，后续流式填充
   chatMessages.value.push(
     { role: 'user', content: userContent, fileNames: fileNames.length ? fileNames : undefined },
-    { role: 'assistant', content: '', isHtml: false }
+    { role: 'assistant', content: '', isHtml: false, toolTrace: [] }
   )
   chatMode.value = true
   const assistantIdx = chatMessages.value.length - 1
@@ -694,13 +848,15 @@ async function handleGenerate() {
     const form = new FormData()
     form.append('requirement', inputText.trim())
     form.append('model', selectedModel.value)
-    // 传递历史对话（不含刚推入的空 assistant 消息）
+    if (agentSessionId.value) {
+      form.append('session_id', agentSessionId.value)
+    }
     if (chatMessages.value.length > 2) {
       const history = chatMessages.value.slice(0, -2).map(m => {
         if (m.role === 'assistant' && m.structured) {
           const s = m.structured
           const devSummary = (s.devices || []).map((d: any) =>
-            `${d.manufacturer} ${d.matched_model} ×${d.quantity} 维保单价¥${d.price}`
+            `${d.manufacturer} ${d.matched_model} ×${d.quantity} 单价¥${d.price}`
           ).join('; ')
           return { role: m.role, content: `[报价结果] ${devSummary} | 总价¥${s.total_base}` }
         }
@@ -712,18 +868,13 @@ async function handleGenerate() {
       form.append('files', f)
     }
 
-    // 使用 fetch 调用流式 SSE 端点
-    console.log('[AI Stream] Sending request to:', `${API_BASE}/ai-quote/analyze-stream`)
     const resp = await fetch(`${API_BASE}/ai-quote/analyze-stream`, {
       method: 'POST',
       body: form,
     })
-    console.log('[AI Stream] Response status:', resp.status, 'content-type:', resp.headers.get('content-type'))
 
     if (!resp.ok) {
-      // 非 200 时读取 JSON 错误信息
       const errBody = await resp.text().catch(() => '')
-      console.error('[AI Stream] Error response body:', errBody)
       let detail = `HTTP ${resp.status}`
       try { detail = JSON.parse(errBody).detail || detail } catch {}
       throw new Error(detail)
@@ -737,17 +888,15 @@ async function handleGenerate() {
     let fullText = ''
     let streamDone = false
     let streamError = ''
+    let structured: any = null
 
     while (!streamDone) {
       const { done, value } = await reader.read()
       if (done) break
 
-      const rawText = decoder.decode(value, { stream: true })
-      buffer += rawText
-      console.log('[AI Stream] Raw chunk:', rawText.slice(0, 200))
-      // 解析 SSE 格式：data: {...}\n\n
+      buffer += decoder.decode(value, { stream: true })
       const lines = buffer.split('\n')
-      buffer = lines.pop() || ''  // 最后一行可能不完整，留到下次
+      buffer = lines.pop() || ''
 
       for (const line of lines) {
         if (!line.startsWith('data:')) continue
@@ -755,6 +904,9 @@ async function handleGenerate() {
         if (!dataStr) continue
         try {
           const parsed = JSON.parse(dataStr)
+          if (parsed.session_id) {
+            persistSessionId(parsed.session_id)
+          }
           if (parsed.error) {
             streamError = parsed.error
             streamDone = true
@@ -764,19 +916,27 @@ async function handleGenerate() {
             streamDone = true
             break
           }
+          if (parsed.structured) {
+            structured = parsed.structured
+            const msg = chatMessages.value[assistantIdx]
+            msg.structured = structured
+          }
+          if (parsed.tool_call?.name) {
+            const msg = chatMessages.value[assistantIdx]
+            msg.toolTrace = msg.toolTrace || []
+            msg.toolTrace.push(`调用 ${parsed.tool_call.name}`)
+          }
           if (parsed.content) {
             fullText += parsed.content
-            // 实时更新聊天消息（直接修改属性以确保 Vue 响应性）
             const msg = chatMessages.value[assistantIdx]
             msg.content = fullText
             msg.isHtml = fullText.includes('<table') || fullText.includes('<div')
           }
         } catch {
-          // 忽略解析错误
+          // ignore
         }
       }
 
-      // 自动滚动到底部
       await nextTick()
       chatMessagesRef.value?.scrollTo({ top: chatMessagesRef.value.scrollHeight })
     }
@@ -786,16 +946,22 @@ async function handleGenerate() {
     }
 
     aiResultAnalysis.value = fullText
-    // 最终更新消息（确保完整内容）
     const finalMsg = chatMessages.value[assistantIdx]
+    if (!fullText && structured) {
+      const s = structured
+      fullText = `已生成${s.quote_type || ''}报价：共 ${(s.devices || []).length} 行，合计 ¥${s.total_adjusted ?? s.total_base ?? 0}。`
+      if (s.requires_confirmation && !s.confirmed) {
+        fullText += '请确认匹配结果后再导出。'
+      }
+    }
     finalMsg.content = fullText || '未返回分析内容'
     finalMsg.isHtml = fullText.includes('<table') || fullText.includes('<div')
+    if (structured) finalMsg.structured = structured
   } catch (err: any) {
     console.error('[AI Stream] Error:', err)
     const msg = err?.message ?? '分析失败，请重试'
     ElMessage.error(msg)
-    // 如果完全没有内容，移除空的 assistant 消息
-    if (!chatMessages.value[assistantIdx]?.content) {
+    if (!chatMessages.value[assistantIdx]?.content && !chatMessages.value[assistantIdx]?.structured) {
       chatMessages.value.splice(assistantIdx - 1, 2)
     }
   } finally {
@@ -2114,6 +2280,13 @@ onUnmounted(() => {
   background: rgba(19, 91, 236, 0.2);
   border-color: rgba(19, 91, 236, 0.3);
   color: #60a5fa;
+}
+
+.cmsg-warn {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #f0b429;
+  line-height: 1.4;
 }
 
 .cmsg-action-btn.cmsg-action-primary:hover {
