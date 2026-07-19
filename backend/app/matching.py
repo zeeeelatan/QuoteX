@@ -76,7 +76,9 @@ def normalize_manufacturer(manufacturer: str, db: Optional[Session] = None) -> s
     # 1. 尝试从字典表查找（带 TTL 缓存）
     if db is not None:
         try:
-            for name, aliases in _get_cached_manufacturers(db):
+            with db.begin_nested():
+                mfr_rows = _get_cached_manufacturers(db)
+            for name, aliases in mfr_rows:
                 # 标准名匹配
                 if name.lower() == manufacturer_lower:
                     return name
@@ -302,23 +304,26 @@ def _recall_candidates(
     if not queries or not _trigram_recall_enabled():
         return None
     try:
-        seen, ids = set(), []
-        for q in queries:
-            sub = _apply_source_filter(db.query(DeviceInventory.id), source)
-            if category:
-                sub = sub.filter(DeviceInventory.primary_category == category)
-            # KNN: lower(model_number) <-> lower(:q)，命中 lower() 表达式 GiST 索引
-            dist = func.lower(DeviceInventory.model_number).op('<->')(func.lower(q))
-            for (i,) in sub.order_by(dist).limit(k).all():
-                if i not in seen:
-                    seen.add(i)
-                    ids.append(i)
+        # SAVEPOINT：pg_trgm 未安装时 <-> 会失败，回滚保存点即可，避免污染外层事务
+        with db.begin_nested():
+            seen, ids = set(), []
+            for q in queries:
+                sub = _apply_source_filter(db.query(DeviceInventory.id), source)
+                if category:
+                    sub = sub.filter(DeviceInventory.primary_category == category)
+                # KNN: lower(model_number) <-> lower(:q)，命中 lower() 表达式 GiST 索引
+                dist = func.lower(DeviceInventory.model_number).op('<->')(func.lower(q))
+                for (i,) in sub.order_by(dist).limit(k).all():
+                    if i not in seen:
+                        seen.add(i)
+                        ids.append(i)
+            recalled_ids = ids
         # category 过滤后召回为空 → 放宽不带 category 再召回（与原全量逻辑一致）
-        if not ids and category:
+        if not recalled_ids and category:
             return _recall_candidates(db, queries, source, None, k)
-        if not ids:
+        if not recalled_ids:
             return []
-        return db.query(DeviceInventory).filter(DeviceInventory.id.in_(ids)).all()
+        return db.query(DeviceInventory).filter(DeviceInventory.id.in_(recalled_ids)).all()
     except Exception:
         return None  # 召回不可用，退回全量匹配
 

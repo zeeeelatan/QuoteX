@@ -48,13 +48,18 @@ def test_maintenance_quote_and_confirm(db, seed_devices):
         "create_maintenance_quote",
         {
             "items": [
-                {"manufacturer": "戴尔", "model": "PowerEdge R740", "quantity": 2},
+                {
+                    "manufacturer": "戴尔",
+                    "model": "PowerEdge R740",
+                    "quantity": 2,
+                    "source": "datacenter",
+                },
             ]
         },
         db,
         session,
     )
-    assert result["ok"] is True
+    assert result.get("ok") is True, result.get("error")
     structured = result["structured"]
     assert structured["quote_type"] == "maintenance"
     assert structured["devices"]
