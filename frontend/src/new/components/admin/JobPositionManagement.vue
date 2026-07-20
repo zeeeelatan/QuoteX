@@ -64,6 +64,8 @@
             <th>类别</th>
             <th>岗位名称</th>
             <th>级别</th>
+            <th class="text-right">系统最低薪资</th>
+            <th class="text-right">系统最高薪资</th>
             <th class="text-center">薪资城市数</th>
             <th class="text-center">职级详情</th>
             <th class="text-center">城市薪资</th>
@@ -82,6 +84,8 @@
             <td>
               <span class="level-badge" :class="getLevelClass(item)">{{ item.level_name }}</span>
             </td>
+            <td class="text-right salary-text">{{ formatSalaryBound(item.system_salary_min) }}</td>
+            <td class="text-right salary-text">{{ formatSalaryBound(item.system_salary_max) }}</td>
             <td class="text-center">
               <span class="salary-count" :class="{ 'salary-count-empty': !item.salary_city_count }">
                 {{ item.salary_city_count }}
@@ -107,7 +111,7 @@
             </td>
           </tr>
           <tr v-if="paginatedData.length === 0">
-            <td colspan="8" class="empty-state">暂无数据，请点击「导入数据」上传《IT岗位技术与管理序列分级表》</td>
+            <td colspan="10" class="empty-state">暂无数据，请点击「导入数据」上传《IT岗位技术与管理序列分级表》</td>
           </tr>
         </tbody>
       </table>
@@ -191,6 +195,23 @@
         </el-form-item>
         <el-form-item label="级别排序">
           <el-input-number v-model="formData.level_rank" :min="1" :max="10" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="系统最低薪资">
+          <el-input-number
+            v-model="formData.system_salary_min"
+            :min="0"
+            :max="formData.system_salary_max ?? undefined"
+            :precision="0"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="系统最高薪资">
+          <el-input-number
+            v-model="formData.system_salary_max"
+            :min="formData.system_salary_min ?? 0"
+            :precision="0"
+            style="width: 100%"
+          />
         </el-form-item>
         <el-form-item label="级别核心要求">
           <el-input v-model="formData.core_requirements" type="textarea" :rows="3" />
@@ -332,6 +353,8 @@ interface JobPositionItem {
   position_name: string
   level_name: string
   level_rank: number
+  system_salary_max: number | null
+  system_salary_min: number | null
   salary_city_count: number
 }
 
@@ -495,6 +518,10 @@ function formatNumber(num: number): string {
   return Number(num).toLocaleString('zh-CN')
 }
 
+function formatSalaryBound(value: number | null): string {
+  return value == null ? '-' : `¥${formatNumber(value)}`
+}
+
 // Detail
 async function showDetail(item: JobPositionItem) {
   try {
@@ -520,6 +547,12 @@ async function openEditDialog(item: JobPositionItem) {
 
 async function saveData() {
   if (!currentEditId.value) return
+  const minSalary = formData.value.system_salary_min
+  const maxSalary = formData.value.system_salary_max
+  if (minSalary != null && maxSalary != null && minSalary > maxSalary) {
+    ElMessage.warning('系统最低薪资不能大于系统最高薪资')
+    return
+  }
   try {
     await axios.put(`${API_URL}/job-positions/${currentEditId.value}`, formData.value)
     ElMessage.success('更新成功')
@@ -671,12 +704,13 @@ async function downloadTemplate() {
   ]
   const cityProvinces = ['北京', '上海', '广东', '四川']
   const cityNames = ['北京市', '上海市', '广州市', '成都市']
+  const boundHeaders = ['系统取值最大值', '系统取值最小值']
 
   const techSheet = XLSX.utils.aoa_to_sheet([
     ['技术序列 —— 各岗位分级详情(要求/认证/内容/产出/KPI)；城市薪资列可按需增删，城市名需与城市社保表一致'],
-    [...Array(9).fill(null), ...cityProvinces],
-    [...baseHeaders, ...cityNames],
-    [1, '研发类', '前端开发工程师', '初级 (Junior/P1-P2)', '本科及以上，1-2年经验', '无强制认证', '页面开发与Bug修复', '可上线的页面/组件源代码', '需求交付准时率≥90%', 16000, 16000, 12000, 9500]
+    [...Array(9).fill(null), ...cityProvinces, null, null],
+    [...baseHeaders, ...cityNames, ...boundHeaders],
+    [1, '研发类', '前端开发工程师', '初级 (Junior/P1-P2)', '本科及以上，1-2年经验', '无强制认证', '页面开发与Bug修复', '可上线的页面/组件源代码', '需求交付准时率≥90%', 16000, 16000, 12000, 9500, 19200, 5200]
   ])
   XLSX.utils.book_append_sheet(wb, techSheet, '技术序列分级详情')
 
@@ -685,9 +719,9 @@ async function downloadTemplate() {
   mgmtHeaders[3] = '管理级别'
   const mgmtSheet = XLSX.utils.aoa_to_sheet([
     ['管理序列 —— 各管理方向分级详情'],
-    [...Array(9).fill(null), ...cityProvinces],
-    [...mgmtHeaders, ...cityNames],
-    [1, '研发管理', '研发经理/技术总监', '初级管理 (团队负责人/Team Lead)', '5年以上研发经验', '建议PMP', '团队任务分配与进度把控', '团队周报/月报', '团队任务按期交付率≥90%', 35000, 35000, 28000, 21000]
+    [...Array(9).fill(null), ...cityProvinces, null, null],
+    [...mgmtHeaders, ...cityNames, ...boundHeaders],
+    [1, '研发管理', '研发经理/技术总监', '初级管理 (团队负责人/Team Lead)', '5年以上研发经验', '建议PMP', '团队任务分配与进度把控', '团队周报/月报', '团队任务按期交付率≥90%', 35000, 35000, 28000, 21000, 42000, 11600]
   ])
   XLSX.utils.book_append_sheet(wb, mgmtSheet, '管理序列分级详情')
 

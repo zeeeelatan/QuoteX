@@ -11,6 +11,8 @@ class JobPositionBase(BaseModel):
     position_name: str = Field(..., description="岗位名称")
     level_name: str = Field(..., description="技术级别/管理级别全称")
     level_rank: int = Field(1, description="级别排序（1最低）")
+    system_salary_max: Optional[float] = Field(None, ge=0, description="系统允许的税前月薪最大值(元)")
+    system_salary_min: Optional[float] = Field(None, ge=0, description="系统允许的税前月薪最小值(元)")
     core_requirements: Optional[str] = Field(None, description="级别核心要求")
     certifications: Optional[str] = Field(None, description="适用认证参考")
     work_content: Optional[str] = Field(None, description="工作内容")
@@ -28,6 +30,8 @@ class JobPositionUpdate(BaseModel):
     position_name: Optional[str] = None
     level_name: Optional[str] = None
     level_rank: Optional[int] = None
+    system_salary_max: Optional[float] = Field(None, ge=0)
+    system_salary_min: Optional[float] = Field(None, ge=0)
     core_requirements: Optional[str] = None
     certifications: Optional[str] = None
     work_content: Optional[str] = None
@@ -52,6 +56,8 @@ class JobPositionListItem(BaseModel):
     position_name: str
     level_name: str
     level_rank: int
+    system_salary_max: Optional[float] = None
+    system_salary_min: Optional[float] = None
     salary_city_count: int = 0
 
     class Config:
@@ -70,6 +76,8 @@ class JobPositionOption(BaseModel):
     position_name: str
     level_name: str
     level_rank: int
+    system_salary_max: Optional[float] = None
+    system_salary_min: Optional[float] = None
 
 
 # ---------- 城市薪资 ----------

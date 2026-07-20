@@ -26,6 +26,8 @@ class JobPosition(Base):
     position_name = Column(String(128), nullable=False, index=True, comment="岗位名称")
     level_name = Column(String(64), nullable=False, comment="技术级别/管理级别全称")
     level_rank = Column(Integer, nullable=False, default=1, comment="级别排序（1最低）")
+    system_salary_max = Column(DECIMAL(12, 2), nullable=True, comment="系统允许的税前月薪最大值(元)")
+    system_salary_min = Column(DECIMAL(12, 2), nullable=True, comment="系统允许的税前月薪最小值(元)")
 
     core_requirements = Column(Text, nullable=True, comment="级别核心要求(含建议认证)")
     certifications = Column(Text, nullable=True, comment="适用认证参考")

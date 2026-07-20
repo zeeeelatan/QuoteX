@@ -133,7 +133,16 @@
               <div class="col-salary">
                 <div class="input-with-prefix">
                   <span class="input-prefix">¥</span>
-                  <input v-model.number="row.salary" class="row-input" type="number" @input="onSalaryChange(index)" />
+                  <input
+                    v-model.number="row.salary"
+                    class="row-input"
+                    type="number"
+                    :min="getSalaryMin(row)"
+                    :max="getSalaryMax(row)"
+                    :title="getSalaryRangeTitle(row)"
+                    @input="onSalaryChange(index)"
+                    @blur="enforceSalaryBounds(index)"
+                  />
                 </div>
                 <div
                   v-if="row.salarySource && row.salarySource !== 'exact' && row.salarySource !== 'manual'"
@@ -141,6 +150,13 @@
                   :title="getSalarySourceTitle(row)"
                 >
                   参考值{{ row.salarySourceCity ? `（${row.salarySourceCity}）` : '' }}
+                </div>
+                <div
+                  v-if="getSalaryRangeTitle(row)"
+                  class="salary-range-hint"
+                  :title="getSalaryRangeTitle(row)"
+                >
+                  {{ getSalaryRangeTitle(row) }}
                 </div>
               </div>
               <div class="col-salary">
@@ -304,7 +320,7 @@
             <div class="header-left">
               <span class="material-symbols-outlined card-icon">tune</span>
               <h3 class="card-title">
-                人力硬成本（月度）
+                人力成本（月度）
                 <span class="card-title-amount">{{ formatCurrency(hardCostMonthly) }}</span>
               </h3>
             </div>
@@ -928,6 +944,18 @@ interface PositionRow {
   otherCosts: OtherCostItem[]
 }
 
+interface PositionOption {
+  id: number
+  name: string
+  position: string
+  level: string
+  levelRank: number
+  sequenceType: string
+  category: string
+  systemSalaryMax: number | null
+  systemSalaryMin: number | null
+}
+
 // Social rule item
 interface SocialRuleItem {
   type: string
@@ -1127,7 +1155,7 @@ const positionRows = ref<PositionRow[]>([
   }
 ])
 
-// Selected row index for filtering rules display (人力硬成本)
+// Selected row index for filtering rules display (人力成本)
 const selectedRowIndex = ref(0)
 
 // Selected row index for flexible cost (灵活人力成本)
@@ -1140,7 +1168,7 @@ const selectedOtherCostRowIndex = ref(0)
 // Global mode switches for each section (全局模式开关)
 // When enabled, changes apply to all positions instead of just the selected one
 const flexCostGlobalMode = ref(false)  // 灵活人力成本全局模式
-const hardCostGlobalMode = ref(false)  // 人力硬成本全局模式
+const hardCostGlobalMode = ref(false)  // 人力成本全局模式
 const optionalCostGlobalMode = ref(false)  // 可选人力成本全局模式
 const otherCostGlobalMode = ref(false)  // 其他成本全局模式
 
@@ -1405,7 +1433,58 @@ const optionalCostTabs = [
 ]
 
 // Position data
-const availablePositions = ref<any[]>([])
+const availablePositions = ref<PositionOption[]>([])
+
+function getPositionSalaryBounds(row: PositionRow): { min: number | null; max: number | null } {
+  const position = availablePositions.value.find(item => item.id === row.position)
+  if (!position) return { min: null, max: null }
+
+  const min = position.systemSalaryMin == null ? Number.NaN : Number(position.systemSalaryMin)
+  const max = position.systemSalaryMax == null ? Number.NaN : Number(position.systemSalaryMax)
+  return {
+    min: Number.isFinite(min) && min >= 0 ? min : null,
+    max: Number.isFinite(max) && max >= 0 ? max : null
+  }
+}
+
+function getSalaryMin(row: PositionRow): number | undefined {
+  return getPositionSalaryBounds(row).min ?? undefined
+}
+
+function getSalaryMax(row: PositionRow): number | undefined {
+  return getPositionSalaryBounds(row).max ?? undefined
+}
+
+function getSalaryRangeTitle(row: PositionRow): string {
+  const { min, max } = getPositionSalaryBounds(row)
+  if (min == null && max == null) return ''
+  if (min != null && max != null) {
+    return `允许范围 ¥${formatNumber(min)} - ¥${formatNumber(max)}`
+  }
+  return min != null
+    ? `最低 ¥${formatNumber(min)}`
+    : `最高 ¥${formatNumber(max as number)}`
+}
+
+function clampSalaryToPositionBounds(
+  row: PositionRow,
+  enforceMinimum: boolean,
+  notify = false
+): boolean {
+  const { min, max } = getPositionSalaryBounds(row)
+  const currentSalary = Number(row.salary) || 0
+  let nextSalary = Math.max(0, currentSalary)
+
+  if (max != null && nextSalary > max) nextSalary = max
+  if (enforceMinimum && min != null && nextSalary < min) nextSalary = min
+
+  if (nextSalary === currentSalary) return false
+  row.salary = nextSalary
+  if (notify) {
+    ElMessage.warning(`税前月薪已调整为岗位允许范围：${getSalaryRangeTitle(row)}`)
+  }
+  return true
+}
 
 // City social rules cache
 const citySocialRulesCache = ref<Record<string, any>>({})
@@ -2802,7 +2881,16 @@ function onSalaryChange(index: number) {
     row.salaryManuallyEdited = true
     row.salarySource = 'manual'
     row.salarySourceCity = undefined
+    // 输入过程中只即时限制最高值；最低值在输入完成后校正，避免影响连续输入。
+    clampSalaryToPositionBounds(row, false, true)
   }
+  calculateRow(index, false)
+}
+
+function enforceSalaryBounds(index: number) {
+  const row = positionRows.value[index]
+  if (!row) return
+  clampSalaryToPositionBounds(row, true, true)
   calculateRow(index, false)
 }
 
@@ -2817,7 +2905,8 @@ function onAfterTaxSalaryChange(index: number) {
 
   if (afterTaxSalary <= 0) {
     row.salary = 0
-    calculateRow(index, true)
+    const adjusted = clampSalaryToPositionBounds(row, true, true)
+    calculateRow(index, adjusted ? false : true)
     return
   }
 
@@ -2844,6 +2933,8 @@ function onAfterTaxSalaryChange(index: number) {
     row.salary = Math.round((afterTaxSalary / denominator) * 100) / 100
   }
 
+  const salaryAdjusted = clampSalaryToPositionBounds(row, true, true)
+
   // Update calcBase for all rules to match the new salary
   const newSalary = row.salary
   row.socialRules.forEach((item: any) => {
@@ -2856,7 +2947,7 @@ function onAfterTaxSalaryChange(index: number) {
   })
 
   // Recalculate the row (skip after-tax calc to avoid loop)
-  calculateRow(index, true)
+  calculateRow(index, salaryAdjusted ? false : true)
 }
 
 // Calculate all rows
@@ -2962,6 +3053,7 @@ async function onRowPositionChange(index: number) {
   const result = await fetchPositionSalary(position.id, row.city || '')
   if (result && result.salary != null) {
     row.salary = result.salary
+    clampSalaryToPositionBounds(row, true)
     row.salarySource = result.source
     row.salarySourceCity = result.source_city || undefined
     // 薪资变化后刷新该行社保基数
@@ -3082,7 +3174,9 @@ async function fetchPositions() {
         level: item.level_name,
         levelRank: item.level_rank,
         sequenceType: item.sequence_type,
-        category: item.category
+        category: item.category,
+        systemSalaryMax: item.system_salary_max == null ? null : Number(item.system_salary_max),
+        systemSalaryMin: item.system_salary_min == null ? null : Number(item.system_salary_min)
       }
     })
 
@@ -3121,6 +3215,7 @@ async function refreshRowSalary(index: number) {
   const result = await fetchPositionSalary(position.id, row.city || '')
   if (result && result.salary != null) {
     row.salary = result.salary
+    clampSalaryToPositionBounds(row, true)
     row.salarySource = result.source
     row.salarySourceCity = result.source_city || undefined
   }
@@ -3727,6 +3822,17 @@ input[type="number"] {
   font-size: 0.625rem;
   line-height: 1.2;
   color: #d97706;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: help;
+}
+
+.salary-range-hint {
+  margin-top: 2px;
+  font-size: 0.625rem;
+  line-height: 1.2;
+  color: #7dd3fc;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

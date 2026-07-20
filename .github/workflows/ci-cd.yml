@@ -136,6 +136,16 @@ jobs:
           command_timeout: 30m
           script: |
             cd /opt/quotex
+
+            mkdir -p backups
+            backup_file="backups/pre_salary_bounds_$(date +%Y%m%d_%H%M%S).sql"
+            echo "发布前备份正式数据库..."
+            if ! docker exec AI_Quote_DB sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > "$backup_file"; then
+              echo "数据库备份失败，终止发布！"
+              exit 1
+            fi
+            echo "数据库备份完成: $backup_file"
+
             git pull origin main
             docker compose up -d --build
 
@@ -150,6 +160,13 @@ jobs:
               exit 1
             fi
             echo "数据库迁移完成"
+
+            echo "同步驻场岗位薪资上下限..."
+            if ! docker exec AI_Quote_Backend python -m scripts.sync_job_position_salary_bounds_2025 --apply; then
+              echo "岗位薪资上下限同步失败！"
+              exit 1
+            fi
+            echo "岗位薪资上下限同步完成"
 
             # 迁移后重启后端使中间件生效
             docker compose restart backend
@@ -224,6 +241,16 @@ jobs:
           command_timeout: 30m
           script: |
             cd /opt/quotex
+
+            mkdir -p backups
+            backup_file="backups/pre_salary_bounds_$(date +%Y%m%d_%H%M%S).sql"
+            echo "发布前备份正式数据库..."
+            if ! docker exec AI_Quote_DB sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > "$backup_file"; then
+              echo "数据库备份失败，终止发布！"
+              exit 1
+            fi
+            echo "数据库备份完成: $backup_file"
+
             git fetch --tags
             git checkout ${{ github.event.release.tag_name }}
             docker compose up -d --build
@@ -238,6 +265,13 @@ jobs:
               exit 1
             fi
             echo "数据库迁移完成"
+
+            echo "同步驻场岗位薪资上下限..."
+            if ! docker exec AI_Quote_Backend python -m scripts.sync_job_position_salary_bounds_2025 --apply; then
+              echo "岗位薪资上下限同步失败！"
+              exit 1
+            fi
+            echo "岗位薪资上下限同步完成"
 
             docker compose restart backend
             sleep 10
