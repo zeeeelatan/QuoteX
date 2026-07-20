@@ -3,8 +3,8 @@ from app.models.korea_job_salary import KoreaJobSalary
 
 def test_korea_job_salary_crud(client, db):
     record = KoreaJobSalary(
-        city="首尔",
-        position_name="桌面运维（3年+）",
+        city="测试城市",
+        position_name="测试岗位",
         monthly_salary_krw=5640000,
         notes="测试基准岗位",
         is_active=True,
@@ -14,9 +14,10 @@ def test_korea_job_salary_crud(client, db):
 
     response = client.get("/korea-job-salaries/options")
     assert response.status_code == 200
-    assert response.json()[0]["monthly_salary_krw"] == 5640000
+    created = next(item for item in response.json() if item["city"] == "测试城市")
+    assert created["monthly_salary_krw"] == 5640000
 
-    record_id = response.json()[0]["id"]
+    record_id = created["id"]
     response = client.put(
         f"/korea-job-salaries/{record_id}",
         json={"monthly_salary_krw": 5800000},
