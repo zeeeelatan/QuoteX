@@ -1,7 +1,26 @@
 <template>
   <div class="job-position-management">
+    <div class="country-module-tabs" role="tablist" aria-label="国家薪资模块">
+      <button
+        type="button"
+        class="country-module-tab"
+        :class="{ active: activeCountryModule === 'china' }"
+        @click="activeCountryModule = 'china'"
+      >
+        中国大陆
+      </button>
+      <button
+        type="button"
+        class="country-module-tab"
+        :class="{ active: activeCountryModule === 'korea' }"
+        @click="activeCountryModule = 'korea'"
+      >
+        韩国
+      </button>
+    </div>
+
     <!-- Top Filter Bar -->
-    <div class="filter-bar">
+    <div v-if="activeCountryModule === 'china'" class="filter-bar">
       <div class="filter-left">
         <div class="filter-group">
           <label>序列</label>
@@ -55,8 +74,31 @@
       </div>
     </div>
 
+    <div v-else class="filter-bar">
+      <div class="filter-left">
+        <div class="search-box">
+          <span class="material-symbols-outlined search-icon">search</span>
+          <input
+            v-model="koreaSearchKeyword"
+            type="text"
+            placeholder="搜索城市、岗位..."
+          />
+        </div>
+      </div>
+      <div class="filter-right actions">
+        <el-button type="primary" @click="fetchKoreaData">
+          <span class="material-symbols-outlined btn-icon">refresh</span>
+          刷新
+        </el-button>
+        <el-button type="success" @click="openKoreaEditDialog()">
+          <span class="material-symbols-outlined btn-icon">add</span>
+          新增岗位
+        </el-button>
+      </div>
+    </div>
+
     <!-- Data Table -->
-    <div class="table-container">
+    <div v-if="activeCountryModule === 'china'" class="table-container">
       <table class="data-table">
         <thead>
           <tr>
@@ -117,8 +159,49 @@
       </table>
     </div>
 
+    <div v-else class="table-container">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>国家/地区</th>
+            <th>城市</th>
+            <th>岗位名称</th>
+            <th class="text-right">税前月薪（KRW）</th>
+            <th>备注</th>
+            <th class="text-center">状态</th>
+            <th class="text-center">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="item in filteredKoreaData" :key="item.id">
+            <td><span class="seq-badge seq-korea">韩国</span></td>
+            <td>{{ item.city }}</td>
+            <td class="position-cell" :title="item.position_name">{{ item.position_name }}</td>
+            <td class="text-right salary-text">₩{{ formatNumber(item.monthly_salary_krw) }}</td>
+            <td :title="item.notes || ''">{{ item.notes || '-' }}</td>
+            <td class="text-center">
+              <span class="status-badge" :class="item.is_active ? 'status-active' : 'status-inactive'">
+                {{ item.is_active ? '启用' : '停用' }}
+              </span>
+            </td>
+            <td class="text-center">
+              <button class="action-btn edit-btn" @click="openKoreaEditDialog(item)" title="编辑">
+                <span class="material-symbols-outlined">edit</span>
+              </button>
+              <button class="action-btn delete-btn" @click="deleteKoreaSalary(item)" title="删除">
+                <span class="material-symbols-outlined">delete</span>
+              </button>
+            </td>
+          </tr>
+          <tr v-if="filteredKoreaData.length === 0">
+            <td colspan="7" class="empty-state">暂无韩国岗位薪资数据</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
     <!-- Frozen Bottom Bar with Pagination -->
-    <div class="bottom-bar">
+    <div v-if="activeCountryModule === 'china'" class="bottom-bar">
       <div class="pagination-container">
         <div class="pagination-info">
           显示第 <span>{{ filteredData.length === 0 ? 0 : (currentPage - 1) * pageSize + 1 }}</span> 到
@@ -167,6 +250,40 @@
       </div>
       <template #footer>
         <el-button type="primary" @click="detailDialogVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="koreaEditDialogVisible"
+      :title="koreaEditId == null ? '新增韩国岗位薪资' : '编辑韩国岗位薪资'"
+      width="560px"
+      :close-on-click-modal="false"
+    >
+      <el-form :model="koreaFormData" label-width="130px">
+        <el-form-item label="城市">
+          <el-input v-model="koreaFormData.city" placeholder="如：首尔" />
+        </el-form-item>
+        <el-form-item label="岗位名称">
+          <el-input v-model="koreaFormData.position_name" placeholder="如：桌面运维（3年+）" />
+        </el-form-item>
+        <el-form-item label="税前月薪（KRW）">
+          <el-input-number
+            v-model="koreaFormData.monthly_salary_krw"
+            :min="1"
+            :precision="0"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="状态">
+          <el-switch v-model="koreaFormData.is_active" active-text="启用" inactive-text="停用" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="koreaFormData.notes" type="textarea" :rows="3" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="koreaEditDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveKoreaSalary">确定</el-button>
       </template>
     </el-dialog>
 
@@ -373,7 +490,17 @@ interface SalaryItem {
   salary: number
 }
 
+interface KoreaJobSalaryItem {
+  id: number
+  city: string
+  position_name: string
+  monthly_salary_krw: number
+  notes: string | null
+  is_active: boolean
+}
+
 // State
+const activeCountryModule = ref<'china' | 'korea'>('china')
 const allData = ref<JobPositionItem[]>([])
 const categories = ref<string[]>([])
 const filters = ref({ sequenceType: '', category: '' })
@@ -382,6 +509,27 @@ const currentPage = ref(1)
 const pageSize = ref(15)
 
 const fileInput = ref<HTMLInputElement | null>(null)
+
+const koreaData = ref<KoreaJobSalaryItem[]>([])
+const koreaSearchKeyword = ref('')
+const koreaEditDialogVisible = ref(false)
+const koreaEditId = ref<number | null>(null)
+const koreaFormData = ref({
+  city: '首尔',
+  position_name: '',
+  monthly_salary_krw: 5640000,
+  notes: '',
+  is_active: true
+})
+
+const filteredKoreaData = computed(() => {
+  const keyword = koreaSearchKeyword.value.trim().toLowerCase()
+  if (!keyword) return koreaData.value
+  return koreaData.value.filter(item =>
+    item.city.toLowerCase().includes(keyword) ||
+    item.position_name.toLowerCase().includes(keyword)
+  )
+})
 
 // Detail dialog
 const detailDialogVisible = ref(false)
@@ -487,6 +635,74 @@ async function fetchCategories() {
     categories.value = response.data.categories || []
   } catch {
     // 类别筛选失败不阻塞主流程
+  }
+}
+
+async function fetchKoreaData() {
+  try {
+    const response = await axios.get(`${API_URL}/korea-job-salaries/`)
+    koreaData.value = response.data.map((item: any) => ({
+      ...item,
+      monthly_salary_krw: Number(item.monthly_salary_krw)
+    }))
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '获取韩国岗位薪资失败')
+  }
+}
+
+function openKoreaEditDialog(item?: KoreaJobSalaryItem) {
+  koreaEditId.value = item?.id ?? null
+  koreaFormData.value = item
+    ? {
+        city: item.city,
+        position_name: item.position_name,
+        monthly_salary_krw: Number(item.monthly_salary_krw),
+        notes: item.notes || '',
+        is_active: item.is_active
+      }
+    : {
+        city: '首尔',
+        position_name: '',
+        monthly_salary_krw: 5640000,
+        notes: '',
+        is_active: true
+      }
+  koreaEditDialogVisible.value = true
+}
+
+async function saveKoreaSalary() {
+  const payload = {
+    ...koreaFormData.value,
+    city: koreaFormData.value.city.trim(),
+    position_name: koreaFormData.value.position_name.trim()
+  }
+  if (!payload.city || !payload.position_name || payload.monthly_salary_krw <= 0) {
+    ElMessage.warning('请完整填写城市、岗位名称和税前月薪')
+    return
+  }
+
+  try {
+    if (koreaEditId.value == null) {
+      await axios.post(`${API_URL}/korea-job-salaries/`, payload)
+      ElMessage.success('韩国岗位薪资已新增')
+    } else {
+      await axios.put(`${API_URL}/korea-job-salaries/${koreaEditId.value}`, payload)
+      ElMessage.success('韩国岗位薪资已更新')
+    }
+    koreaEditDialogVisible.value = false
+    await fetchKoreaData()
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '保存失败')
+  }
+}
+
+async function deleteKoreaSalary(item: KoreaJobSalaryItem) {
+  try {
+    await axios.delete(`${API_URL}/korea-job-salaries/${item.id}`)
+    ElMessage.success('韩国岗位薪资已删除')
+    await fetchKoreaData()
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '删除失败')
   }
 }
 
@@ -731,6 +947,7 @@ async function downloadTemplate() {
 onMounted(() => {
   fetchData()
   fetchCategories()
+  fetchKoreaData()
 })
 </script>
 
@@ -741,6 +958,59 @@ onMounted(() => {
   flex-direction: column;
   background-color: #0f172a;
   color: #e2e8f0;
+}
+
+.country-module-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 12px 16px 0;
+  background: #1e293b;
+  border-bottom: 1px solid #334155;
+}
+
+.country-module-tab {
+  min-width: 112px;
+  padding: 10px 16px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.country-module-tab:hover {
+  color: #e2e8f0;
+}
+
+.country-module-tab.active {
+  border-bottom-color: #3b82f6;
+  color: #ffffff;
+}
+
+.seq-korea {
+  background: rgba(16, 185, 129, 0.15);
+  color: #6ee7b7;
+}
+
+.status-badge {
+  display: inline-flex;
+  min-width: 48px;
+  justify-content: center;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+}
+
+.status-active {
+  background: rgba(34, 197, 94, 0.15);
+  color: #86efac;
+}
+
+.status-inactive {
+  background: rgba(148, 163, 184, 0.15);
+  color: #cbd5e1;
 }
 
 /* Filter Bar */

@@ -9,6 +9,7 @@ from .product_parameter import BaseRate, SLAConfig, HardwareDepreciation, Region
 from .relocation_vehicle import RelocationVehicle
 from .china_city_tier import ChinaCityTier
 from .job_position import JobPosition, JobPositionSalary
+from .korea_job_salary import KoreaJobSalary
 from .manufacturer import Manufacturer
 from .device_field_config import DeviceFieldConfig
 from .semantic_noise_term import SemanticNoiseTerm

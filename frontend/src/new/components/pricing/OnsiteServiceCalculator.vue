@@ -1,5 +1,5 @@
 <template>
-  <div class="onsite-calculator-page" :class="{ 'embedded-mode': embedded }">
+  <div class="onsite-calculator-page" :class="{ 'embedded-mode': embedded, 'korea-mode': isKorea }">
     <!-- Header (hidden when embedded) -->
     <div v-if="!embedded" class="page-header">
       <div class="breadcrumb">
@@ -18,10 +18,14 @@
           <p class="page-subtitle">基于城市、岗位、社保规则的多维度精细化成本分析模型</p>
         </div>
         <div class="header-buttons">
-          <button class="header-btn" @click="showHistory">
-            <span class="material-symbols-outlined">history</span>
-            历史记录
-          </button>
+          <label class="header-btn country-select-btn" title="切换驻场报价国家">
+            <span class="material-symbols-outlined">public</span>
+            <span>国家选择</span>
+            <select v-model="selectedCountry" @change="onCountryChange">
+              <option value="china">中国大陆</option>
+              <option value="korea">韩国</option>
+            </select>
+          </label>
           <button class="header-btn" @click="resetForm">
             <span class="material-symbols-outlined">restart_alt</span>
             重置
@@ -50,8 +54,8 @@
             <div class="col-header col-seq">序号</div>
             <div class="col-header col-city">目标城市</div>
             <div class="col-header col-position">岗位职级</div>
-            <div class="col-header col-salary">税前月薪</div>
-            <div class="col-header">税后工资</div>
+            <div class="col-header col-salary">税前月薪{{ isKorea ? '（KRW）' : '' }}</div>
+            <div v-if="!isKorea" class="col-header">税后工资</div>
             <div class="col-header col-count">人员数量</div>
             <div class="col-header col-cycle">服务周期</div>
             <div class="col-header col-subtotal">金额小计</div>
@@ -132,7 +136,7 @@
               </div>
               <div class="col-salary">
                 <div class="input-with-prefix">
-                  <span class="input-prefix">¥</span>
+                  <span class="input-prefix">{{ costCurrencySymbol }}</span>
                   <input
                     v-model.number="row.salary"
                     class="row-input"
@@ -159,7 +163,7 @@
                   {{ getSalaryRangeTitle(row) }}
                 </div>
               </div>
-              <div class="col-salary">
+              <div v-if="!isKorea" class="col-salary">
                 <div class="input-with-prefix">
                   <span class="input-prefix">¥</span>
                   <input v-model.number="row.afterTaxSalary" class="row-input" type="number" @input="onAfterTaxSalaryChange(index)" />
@@ -374,9 +378,9 @@
                   <th>险种</th>
                   <th>计算基数</th>
                   <th>企业比例</th>
-                  <th>个人比例</th>
+                  <th v-if="!isKorea">个人比例</th>
                   <th>社保成本（公司）</th>
-                  <th>社保成本（个人）</th>
+                  <th v-if="!isKorea">社保成本（个人）</th>
                 </tr>
               </thead>
               <tbody>
@@ -384,7 +388,7 @@
                   <td class="type-cell">{{ item.type }}</td>
                   <td class="calc-base-cell">
                     <input
-                      v-if="item.type === '工伤保险'"
+                      v-if="item.type === '工伤保险' && !isKorea"
                       v-model.number="item.calcBase"
                       class="calc-base-input"
                       type="number"
@@ -403,22 +407,22 @@
                     <input v-model.number="item.corpRate" class="rate-edit-input" type="number" step="0.01" min="0" @input="onRateChange('social', idx)" />
                     <span class="rate-percent">%</span>
                   </td>
-                  <td>
+                  <td v-if="!isKorea">
                     <input v-model.number="item.indivRate" class="rate-edit-input" type="number" step="0.01" min="0" @input="onRateChange('social', idx)" />
                     <span class="rate-percent">%</span>
                   </td>
                   <td class="cost-corp">{{ formatCurrency(calculateSocialCost(item.calcBase, item.corpRate)) }}</td>
-                  <td class="cost-indiv">{{ formatCurrency(calculateSocialCost(item.calcBase, item.indivRate)) }}</td>
+                  <td v-if="!isKorea" class="cost-indiv">{{ formatCurrency(calculateSocialCost(item.calcBase, item.indivRate)) }}</td>
                 </tr>
                 <tr class="summary-row">
-                  <td colspan="4" class="summary-label">社保成本小计（当前岗位月度）</td>
+                  <td :colspan="isKorea ? 3 : 4" class="summary-label">{{ isKorea ? '雇主保险小计' : '社保成本小计' }}（当前岗位月度）</td>
                   <td class="summary-value">{{ formatCurrency(selectedSocialCorpTotal) }}</td>
-                  <td class="summary-value">{{ formatCurrency(selectedSocialIndivTotal) }}</td>
+                  <td v-if="!isKorea" class="summary-value">{{ formatCurrency(selectedSocialIndivTotal) }}</td>
                 </tr>
                 <tr class="summary-row">
-                  <td colspan="4" class="summary-label">社保成本小计（全部岗位总计）</td>
+                  <td :colspan="isKorea ? 3 : 4" class="summary-label">{{ isKorea ? '雇主保险小计' : '社保成本小计' }}（全部岗位总计）</td>
                   <td class="summary-value">{{ formatCurrency(allRowsSocialCorpTotal) }}</td>
-                  <td class="summary-value">{{ formatCurrency(allRowsSocialIndivTotal) }}</td>
+                  <td v-if="!isKorea" class="summary-value">{{ formatCurrency(allRowsSocialIndivTotal) }}</td>
                 </tr>
               </tbody>
             </table>
@@ -515,7 +519,7 @@
             </div>
             <div class="update-info">
               <span class="material-symbols-outlined info-icon">info</span>
-              <span>数据最后更新: 2024-01-15 (AI自动同步)</span>
+              <span>{{ isKorea ? '韩国规则：NPS基数上限 6,170,000 KRW；比例可手动调整' : '数据最后更新: 2024-01-15 (AI自动同步)' }}</span>
             </div>
           </div>
         </div>
@@ -756,7 +760,7 @@
                   <span class="input-suffix">%</span>
                 </div>
               </div>
-              <div class="global-param-item">
+              <div v-if="!isKorea" class="global-param-item">
                 <label class="param-label">账期</label>
                 <div class="input-with-suffix">
                   <input
@@ -781,7 +785,7 @@
                   <span class="input-suffix">%</span>
                 </div>
               </div>
-              <div class="global-param-item">
+              <div v-if="!isKorea" class="global-param-item">
                 <label class="param-label">年化资金成本率</label>
                 <div class="input-with-suffix">
                   <input
@@ -794,6 +798,33 @@
                   <span class="input-suffix">%</span>
                 </div>
               </div>
+              <div v-if="isKorea" class="global-param-item">
+                <label class="param-label">我方管理费率</label>
+                <div class="input-with-suffix">
+                  <input
+                    v-model.number="globalParams.managementRate"
+                    class="param-input"
+                    type="number"
+                    min="0"
+                    @input="calculateAll"
+                  />
+                  <span class="input-suffix">%</span>
+                </div>
+              </div>
+              <div v-if="isKorea" class="global-param-item">
+                <label class="param-label">KRW/CNY 汇率</label>
+                <div class="input-with-suffix">
+                  <input
+                    v-model.number="globalParams.exchangeRate"
+                    class="param-input exchange-rate-input"
+                    type="number"
+                    min="0"
+                    step="0.000001"
+                    @input="calculateAll"
+                  />
+                  <span class="input-suffix">CNY</span>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -802,7 +833,7 @@
             <div class="main-price highlight">
               <p class="price-label">项目总额</p>
               <div class="price-value">
-                {{ formatCurrency(finalProjectAmount) }}
+                {{ formatQuoteCurrency(finalProjectAmount) }}
               </div>
               <div class="price-trend">
                 <span class="material-symbols-outlined trend-icon">receipt_long</span>
@@ -813,12 +844,12 @@
             <div class="sub-prices">
               <div class="sub-price-item">
                 <p class="sub-price-label">岗位小计总额</p>
-                <div class="sub-price-value">{{ formatCurrency(positionSubtotal) }}</div>
+                <div class="sub-price-value">{{ formatQuoteCurrency(positionSubtotal) }}</div>
                 <div class="sub-price-note">共 {{ totalPersonnel }} 人 / {{ totalCycles }}</div>
               </div>
               <div class="sub-price-item">
                 <p class="sub-price-label">预估总毛利</p>
-                <div class="sub-price-value">{{ formatCurrency(totalGrossProfit) }}</div>
+                <div class="sub-price-value">{{ formatQuoteCurrency(totalGrossProfit) }}</div>
                 <div class="sub-price-note">利润率: {{ totalMargin }}%</div>
               </div>
             </div>
@@ -831,7 +862,7 @@
               <div class="breakdown-item" v-for="item in costBreakdown" :key="item.name">
                 <div class="breakdown-header">
                   <span class="breakdown-name">{{ item.name }}</span>
-                  <span class="breakdown-amount">{{ formatCurrency(item.amount) }}</span>
+                  <span class="breakdown-amount">{{ formatQuoteCurrency(item.amount) }}</span>
                   <span class="breakdown-percent">{{ item.percent }}%</span>
                 </div>
                 <div class="breakdown-bar">
@@ -900,6 +931,11 @@ const props = withDefaults(defineProps<{
 })
 
 const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5002'
+type CountryMode = 'china' | 'korea'
+
+const selectedCountry = ref<CountryMode>('china')
+const isKorea = computed(() => selectedCountry.value === 'korea')
+const costCurrencySymbol = computed(() => isKorea.value ? '₩' : '¥')
 
 // Router
 const router = useRouter()
@@ -918,6 +954,7 @@ const previewData = ref<any>({
 // Position row interface
 interface PositionRow {
   id: string
+  country?: CountryMode
   city: string
   position: string
   salary: number
@@ -954,6 +991,8 @@ interface PositionOption {
   category: string
   systemSalaryMax: number | null
   systemSalaryMin: number | null
+  city?: string
+  monthlySalaryKrw?: number
 }
 
 // Social rule item
@@ -1000,6 +1039,8 @@ type OtherCostFormula =
   | 'fundingOccupancy'
   | 'badDebtReserve'
   | 'laborDisputeReserve'
+  | 'severance'
+  | 'koreaBaseRate'
 
 interface OtherCostItem {
   category: string
@@ -1092,6 +1133,20 @@ const getDefaultContingencyCosts = (): ContingencyCostItem[] => [
 
 const OTHER_COST_MONTHLY_FACTOR = 1.33
 
+const getDefaultKoreaSocialRules = (salary = 0): SocialRuleItem[] => [
+  { type: '国民年金（NPS）', minBase: 0, maxBase: 6170000, corpRate: 4.5, indivRate: 0, calcBase: clampBase(salary, 0, 6170000) },
+  { type: '国民健康保险（NHI）', minBase: 0, maxBase: 0, corpRate: 4.004, indivRate: 0, calcBase: salary },
+  { type: '就业保险', minBase: 0, maxBase: 0, corpRate: 0.9, indivRate: 0, calcBase: salary },
+  { type: '工伤保险', minBase: 0, maxBase: 0, corpRate: 0.73, indivRate: 0, calcBase: salary }
+]
+
+const getDefaultKoreaOtherCosts = (): OtherCostItem[] => [
+  { category: '员工直接成本', name: '退职金月摊销', formula: 'severance', calculation: '税前月薪÷12', basis: '无论项目周期长短均按月预提', value: 12, amount: 0 },
+  { category: '韩国EOR/挂靠公司服务费', name: 'EOR管理服务费', formula: 'salaryRate', calculation: '税前月薪×EOR费率', basis: '韩国当地EOR公司服务费', value: 12, amount: 0 },
+  { category: '汇率风险及跨境费用', name: '汇率风险缓冲', formula: 'koreaBaseRate', calculation: '直接成本基数×缓冲比例', basis: '对冲KRW/CNY汇率波动风险', value: 3, amount: 0 },
+  { category: '汇率风险及跨境费用', name: '跨境汇款手续费', formula: 'koreaBaseRate', calculation: '直接成本基数×手续费率', basis: '服务贸易外汇通道手续费', value: 0.5, amount: 0 }
+]
+
 // 2025 版驻场服务其他成本模板，对应 Excel「实际报价测算」成本构成 rows 35-78。
 const getDefaultOtherCosts = (): OtherCostItem[] => [
   { category: '直接人力成本', name: '月度福利费', formula: 'fixed', calculation: '固定金额', basis: '餐补', value: 0, amount: 0 },
@@ -1131,10 +1186,36 @@ const getDefaultOtherCosts = (): OtherCostItem[] => [
   { category: '资金风险成本', name: '赔付/违约风险准备', formula: 'salaryRate', calculation: '阶段成本×违约风险比例', basis: '赔付/违约风险比例，无则填0，按照实际项目计算', value: 0, amount: 0 }
 ]
 
+function createPositionRow(country: CountryMode, option?: PositionOption): PositionRow {
+  const salary = country === 'korea' ? (option?.monthlySalaryKrw || 0) : 0
+  return {
+    id: String(nextRowId++),
+    country,
+    city: country === 'korea' ? (option?.city || '首尔') : '',
+    position: option ? String(option.id) : '',
+    salary,
+    afterTaxSalary: 0,
+    personnelCount: 1,
+    cycleUnit: 'month',
+    serviceCycleCount: 12,
+    subtotal: 0,
+    unitPrice: 0,
+    socialRules: country === 'korea' ? getDefaultKoreaSocialRules(salary) : getDefaultSocialRules(),
+    fundRules: country === 'korea' ? [] : getDefaultFundRules(),
+    mgmtRules: getDefaultMgmtRules(),
+    riskRatio: 8.6,
+    opsCosts: getDefaultOpsCosts(),
+    onDemandCosts: getDefaultOnDemandCosts(),
+    contingencyCosts: getDefaultContingencyCosts(),
+    otherCosts: country === 'korea' ? getDefaultKoreaOtherCosts() : getDefaultOtherCosts()
+  }
+}
+
 // Position rows (multi-line support)
 const positionRows = ref<PositionRow[]>([
   {
     id: '1',
+    country: 'china',
     city: '',
     position: '',
     salary: 0,
@@ -1177,8 +1258,15 @@ const globalParams = ref({
   vatRate: 6,
   paymentCycle: 90,
   profitRate: 0,
-  fundingCostRate: 3.5  // 年化资金成本率，默认 3.5%
+  fundingCostRate: 3.5,  // 年化资金成本率，默认 3.5%
+  managementRate: 0,
+  exchangeRate: 1
 })
+
+const countryGlobalParams: Record<CountryMode, typeof globalParams.value> = {
+  china: { vatRate: 6, paymentCycle: 90, profitRate: 0, fundingCostRate: 3.5, managementRate: 0, exchangeRate: 1 },
+  korea: { vatRate: 6, paymentCycle: 0, profitRate: 8, fundingCostRate: 0, managementRate: 12, exchangeRate: 0.004403 }
+}
 
 // City options - fetched from backend
 const cityOptions = ref<Array<{ label: string; value: string }>>([])
@@ -1288,7 +1376,7 @@ function getPositionDisplayValue(row: PositionRow): string {
   // When dropdown is closed, show the position value (either selected or custom input)
   if (!row.position) return ''
   // If it's a predefined option, show the name
-  const pos = availablePositions.value.find(p => p.id === row.position)
+  const pos = availablePositions.value.find(p => p.id === Number(row.position))
   return pos ? pos.name : row.position
 }
 
@@ -1419,10 +1507,13 @@ let nextRowId = 2
 
 // Tabs
 const activeTab = ref('social')
-const ruleTabs = [
-  { key: 'social', label: '社保规则' },
-  { key: 'fund', label: '公积金规则' }
-]
+const ruleTabs = computed(() => isKorea.value
+  ? [{ key: 'social', label: '韩国雇主保险规则' }]
+  : [
+      { key: 'social', label: '社保规则' },
+      { key: 'fund', label: '公积金规则' }
+    ]
+)
 
 // Optional cost tabs
 const activeOptionalTab = ref('ops')
@@ -1436,7 +1527,7 @@ const optionalCostTabs = [
 const availablePositions = ref<PositionOption[]>([])
 
 function getPositionSalaryBounds(row: PositionRow): { min: number | null; max: number | null } {
-  const position = availablePositions.value.find(item => item.id === row.position)
+  const position = availablePositions.value.find(item => item.id === Number(row.position))
   if (!position) return { min: null, max: null }
 
   const min = position.systemSalaryMin == null ? Number.NaN : Number(position.systemSalaryMin)
@@ -1708,7 +1799,7 @@ const selectedRowOtherCosts = computed(() => {
   return row.otherCosts || getDefaultOtherCosts()
 })
 
-const otherCostCategoryOrder = [
+const chinaOtherCostCategoryOrder = [
   '直接人力成本',
   '人员获取成本',
   '人员稳定成本',
@@ -1720,18 +1811,41 @@ const otherCostCategoryOrder = [
   '资金风险成本'
 ]
 
-const collapsedOtherCostGroups = ref<Record<string, boolean>>(
-  Object.fromEntries(otherCostCategoryOrder.map(category => [category, true]))
+const koreaOtherCostCategoryOrder = [
+  '员工直接成本',
+  '韩国EOR/挂靠公司服务费',
+  '汇率风险及跨境费用'
+]
+
+const otherCostCategoryOrder = computed(() =>
+  isKorea.value ? koreaOtherCostCategoryOrder : chinaOtherCostCategoryOrder
 )
 
-const otherCostSuggestedValues: Record<string, number> = {
-  招聘成本摊销: 1.5,
+const collapsedOtherCostGroups = ref<Record<string, boolean>>(
+  Object.fromEntries(
+    [...chinaOtherCostCategoryOrder, ...koreaOtherCostCategoryOrder]
+      .map(category => [category, true])
+  )
+)
+
+// Excel「实际报价测算」T 列（取值默认值）；比例在页面中按百分数录入。
+const otherCostWorkbookDefaultValues: Record<string, number> = {
+  '商业保险/雇主责任险（医疗10W，身故100W，身残按照比例支付）': 180,
+  '商业保险/意外险10W': 10,
+  体检费摊销: 50,
+  节日福利摊销: 33,
+  招聘成本摊销: 0.5,
   '人员替换/空档风险': 2,
-  培训成本摊销: 1,
-  HR分摊: 1,
-  '销售/客户维护分摊': 0.5,
+  'PM/交付管理分摊': 1.5,
   坏账风险准备: 0.5,
   劳动纠纷风险准备: 8.33
+}
+
+const koreaOtherCostDefaultValues: Record<string, number> = {
+  退职金月摊销: 12,
+  EOR管理服务费: 12,
+  汇率风险缓冲: 3,
+  跨境汇款手续费: 0.5
 }
 
 function isOtherCostGroupCollapsed(category: string): boolean {
@@ -1744,7 +1858,7 @@ function toggleOtherCostGroup(category: string) {
 
 const selectedRowOtherCostGroups = computed(() => {
   const entries = selectedRowOtherCosts.value.map((item, index) => ({ item, index }))
-  return otherCostCategoryOrder
+  return otherCostCategoryOrder.value
     .map(category => {
       const items = entries.filter(entry => entry.item.category === category)
       const total = items.reduce((sum, entry) => sum + (Number(entry.item.amount) || 0), 0)
@@ -1783,6 +1897,14 @@ async function resetHardCostToDefault() {
 
   const salary = row.salary || 0
   const city = row.city
+
+  if (row.country === 'korea') {
+    row.socialRules = getDefaultKoreaSocialRules(salary)
+    row.fundRules = []
+    calculateRow(selectedRowIndex.value)
+    ElMessage.success('已恢复韩国雇主保险默认值')
+    return
+  }
 
   // Reset management rules to default
   row.mgmtRules = getDefaultMgmtRules()
@@ -1829,6 +1951,15 @@ async function resetHardCostToDefault() {
 
 // Reset hard cost to default values for ALL rows
 async function resetAllHardCostToDefault() {
+  if (isKorea.value) {
+    positionRows.value.forEach((row, index) => {
+      row.socialRules = getDefaultKoreaSocialRules(row.salary || 0)
+      row.fundRules = []
+      calculateRow(index)
+    })
+    ElMessage.success(`已恢复全部 ${positionRows.value.length} 个岗位的韩国雇主保险默认值`)
+    return
+  }
   // Clear all city cache to force reload from backend
   citySocialRulesCache.value = {}
 
@@ -2013,14 +2144,18 @@ function getOtherCostValueSuffix(item: OtherCostItem): string {
     'salaryRate',
     'benchReserve',
     'badDebtReserve',
-    'laborDisputeReserve'
+    'laborDisputeReserve',
+    'koreaBaseRate'
   ].includes(item.formula)) {
     return '%'
   }
   if (item.formula === 'fundingOccupancy') {
     return '自动'
   }
-  return '元'
+  if (item.formula === 'severance') {
+    return '月'
+  }
+  return isKorea.value ? 'KRW' : '元'
 }
 
 function getOtherCostStep(item: OtherCostItem): string {
@@ -2058,9 +2193,8 @@ function toggleSuggestedOtherCostValues() {
 
   const applyToRow = (row: PositionRow) => {
     row.otherCosts?.forEach(item => {
-      if (Object.prototype.hasOwnProperty.call(otherCostSuggestedValues, item.name)) {
-        item.value = applying ? otherCostSuggestedValues[item.name] : 0
-      }
+      const defaults = isKorea.value ? koreaOtherCostDefaultValues : otherCostWorkbookDefaultValues
+      item.value = applying ? (defaults[item.name] ?? 0) : 0
     })
     recalculateOtherCostsForRow(row)
     row.subtotal = calculateRowSubtotal(row)
@@ -2432,19 +2566,22 @@ const optionalCostMonthly = computed(() => {
 // Computed - Total project amount (without tax and profit)
 // Formula: 单人月成本（工资+社保公司+公积金公司+其他成本）× 人数 × 周期
 const totalSubtotal = computed(() => {
-  return baseSubtotal.value
+  if (!isKorea.value) return baseSubtotal.value
+  return baseSubtotal.value * (globalParams.value.exchangeRate || 0)
 })
 
 // Computed - Position subtotal (sum of all row subtotals, without tax and profit)
 const positionSubtotal = computed(() => {
-  return baseSubtotal.value
+  return totalSubtotal.value
 })
 
 // Computed - Base project amount (without VAT)
 // Formula: totalSubtotal × (1 + 利润率)
 const baseProjectAmount = computed(() => {
   const profitMultiplier = 1 + (globalParams.value.profitRate || 0) / 100
-  return totalSubtotal.value * profitMultiplier
+  if (!isKorea.value) return totalSubtotal.value * profitMultiplier
+  const managementMultiplier = 1 + (globalParams.value.managementRate || 0) / 100
+  return totalSubtotal.value * managementMultiplier * profitMultiplier
 })
 
 // Computed - Funding cost rate for the payment cycle
@@ -2486,7 +2623,10 @@ const totalCycles = computed(() => {
 // Formula: totalSubtotal × 利润率
 const totalGrossProfit = computed(() => {
   const profitRate = (globalParams.value.profitRate || 0) / 100
-  return totalSubtotal.value * profitRate
+  const profitBase = isKorea.value
+    ? totalSubtotal.value * (1 + (globalParams.value.managementRate || 0) / 100)
+    : totalSubtotal.value
+  return profitBase * profitRate
 })
 
 // Computed - Total margin percentage (using global profit rate parameter)
@@ -2504,31 +2644,46 @@ const totalDealAmount = computed(() => {
 // 使用项目总额作为分母，所有项占比之和为 100%
 const costBreakdown = computed(() => {
   const projectTotal = finalProjectAmount.value
-  const salaryAmount = positionRows.value.reduce((sum, row) => {
+  const exchangeRate = isKorea.value ? (globalParams.value.exchangeRate || 0) : 1
+  const salaryAmountKrw = positionRows.value.reduce((sum, row) => {
     return sum + (row.salary || 0) * (row.personnelCount || 1) * getServiceMonths(row)
   }, 0)
-  const socialFundAmount = positionRows.value.reduce((sum, row) => {
+  const socialFundAmountKrw = positionRows.value.reduce((sum, row) => {
     const social = (row.socialRules || []).reduce((s: number, item: any) => s + calculateSocialCost(item.calcBase, item.corpRate), 0)
     const fund = (row.fundRules || []).reduce((s: number, item: any) => s + calculateSocialCost(item.calcBase, item.corpRate), 0)
     return sum + (social + fund) * (row.personnelCount || 1) * getServiceMonths(row)
   }, 0)
-  const otherAmount = otherCostTotal.value
+  const salaryAmount = salaryAmountKrw * exchangeRate
+  const socialFundAmount = socialFundAmountKrw * exchangeRate
+  const otherAmount = otherCostTotal.value * exchangeRate
+  const managementAmount = isKorea.value
+    ? totalSubtotal.value * (globalParams.value.managementRate || 0) / 100
+    : 0
   const profitAmount = totalGrossProfit.value
   const taxAmount = finalProjectAmount.value - baseProjectAmount.value
 
   const percent = (amount: number) => projectTotal > 0 ? Math.round(amount / projectTotal * 100) : 0
 
-  return [
+  const items = [
     { name: '税前工资', percent: percent(salaryAmount), amount: salaryAmount, color: '#3b82f6' },
-    { name: '社保公积金（公司）', percent: percent(socialFundAmount), amount: socialFundAmount, color: '#14b8a6' },
+    { name: isKorea.value ? '雇主保险' : '社保公积金（公司）', percent: percent(socialFundAmount), amount: socialFundAmount, color: '#14b8a6' },
     { name: '其他成本构成', percent: percent(otherAmount), amount: otherAmount, color: '#a855f7' },
+  ]
+  if (isKorea.value) {
+    items.push({ name: '我方管理费', percent: percent(managementAmount), amount: managementAmount, color: '#0ea5e9' })
+  }
+  items.push(
     { name: '预估总毛利', percent: percent(profitAmount), amount: profitAmount, color: '#10b981' },
     { name: '增值税', percent: percent(taxAmount), amount: taxAmount, color: '#f59e0b' }
-  ]
+  )
+  return items
 })
 
 // AI Insight
 const aiInsight = computed(() => {
+  if (isKorea.value) {
+    return '韩国报价已分别计入EOR服务费、汇率风险、跨境手续费、我方管理费及国内开票税费。'
+  }
   const margin = parseFloat(totalMargin.value)
   if (margin < 15) {
     return '当前利润率偏低，建议适当上调至 18% 以上以覆盖运营风险。'
@@ -2542,7 +2697,8 @@ const aiInsight = computed(() => {
 // Calculate social insurance/fund cost for a single item
 // rate is stored as percentage number (e.g., 7 for 7%, 16 for 16%)
 function calculateSocialCost(calcBase: number, rate: number): number {
-  return (calcBase || 0) * ((rate || 0) / 100)
+  const amount = (calcBase || 0) * ((rate || 0) / 100)
+  return isKorea.value ? Math.round(amount) : amount
 }
 
 // Computed - Total social insurance cost for company
@@ -2713,7 +2869,17 @@ function formatNumberCompact(num: number): string {
 
 function formatCurrency(num: number): string {
   const value = num || 0
+  if (isKorea.value) {
+    return '₩ ' + Math.round(value).toLocaleString('ko-KR')
+  }
   return '¥ ' + value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function formatQuoteCurrency(num: number): string {
+  return '¥ ' + (num || 0).toLocaleString('zh-CN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })
 }
 
 function formatCurrencyCompact(num: number): string {
@@ -2754,6 +2920,25 @@ function calculateOtherCostItem(item: OtherCostItem, row: PositionRow): number {
   const monthlyCost = salary * OTHER_COST_MONTHLY_FACTOR
 
   switch (item.formula) {
+    case 'severance':
+      return value > 0 ? salary / value : 0
+    case 'koreaBaseRate': {
+      const socialCost = (row.socialRules || []).reduce(
+        (sum, rule) => sum + calculateSocialCost(rule.calcBase, rule.corpRate),
+        0
+      )
+      const severanceMonths = Number(
+        row.otherCosts?.find(cost => cost.formula === 'severance')?.value
+      ) || 12
+      const eorRate = Number(
+        row.otherCosts?.find(cost => cost.name === 'EOR管理服务费')?.value
+      ) || 0
+      const koreaDirectBase = salary
+        + socialCost
+        + Math.round(salary / severanceMonths)
+        + Math.round(salary * eorRate / 100)
+      return koreaDirectBase * (value / 100)
+    }
     case 'salaryRate':
       return salary * (value / 100)
     case 'fixedMonthlySpread':
@@ -2778,10 +2963,13 @@ function calculateOtherCostItem(item: OtherCostItem, row: PositionRow): number {
 
 function recalculateOtherCostsForRow(row: PositionRow) {
   if (!row.otherCosts) {
-    row.otherCosts = getDefaultOtherCosts()
+    row.otherCosts = row.country === 'korea' ? getDefaultKoreaOtherCosts() : getDefaultOtherCosts()
   }
   row.otherCosts.forEach(item => {
-    item.amount = Math.round(calculateOtherCostItem(item, row) * 100) / 100
+    const amount = calculateOtherCostItem(item, row)
+    item.amount = row.country === 'korea'
+      ? Math.round(amount)
+      : Math.round(amount * 100) / 100
   })
 }
 
@@ -2854,7 +3042,9 @@ function calculateRow(index: number, skipAfterTaxCalc = false) {
   row.subtotal = calculateRowSubtotal(row)
 
   // Auto-calculate after-tax salary if not manually editing
-  if (!skipAfterTaxCalc) {
+  if (row.country === 'korea') {
+    row.afterTaxSalary = 0
+  } else if (!skipAfterTaxCalc) {
     const socialIndivTotal = row.socialRules.reduce((sum: number, item: any) => {
       return sum + calculateSocialCost(item.calcBase, item.indivRate)
     }, 0)
@@ -2967,26 +3157,10 @@ function calculateAll() {
 
 // Add a new position row
 function addPositionRow() {
-  positionRows.value.push({
-    id: String(nextRowId++),
-    city: '',
-    position: '',
-    salary: 0,
-    afterTaxSalary: 0,
-    personnelCount: 1,
-    cycleUnit: 'month',
-    serviceCycleCount: 12,
-    subtotal: 0,
-    unitPrice: 0,
-    socialRules: getDefaultSocialRules(),
-    fundRules: getDefaultFundRules(),
-    mgmtRules: getDefaultMgmtRules(),
-    riskRatio: 8.6,
-    opsCosts: getDefaultOpsCosts(),
-    onDemandCosts: getDefaultOnDemandCosts(),
-    contingencyCosts: getDefaultContingencyCosts(),
-    otherCosts: getDefaultOtherCosts()
-  })
+  const defaultOption = isKorea.value ? availablePositions.value[0] : undefined
+  const row = createPositionRow(selectedCountry.value, defaultOption)
+  positionRows.value.push(row)
+  calculateRow(positionRows.value.length - 1)
 }
 
 // Remove a position row
@@ -2999,6 +3173,13 @@ function removePositionRow(index: number) {
 // Handle city change for a specific row
 async function onRowCityChange(index: number) {
   const row = positionRows.value[index]
+  if (row.country === 'korea') {
+    await refreshRowSalary(index)
+    row.socialRules = getDefaultKoreaSocialRules(row.salary)
+    row.fundRules = []
+    calculateRow(index)
+    return
+  }
   // 城市变化时按 岗位+城市 重新取薪（未手动改薪时）
   await refreshRowSalary(index)
   // Load city rules into this row's own rules
@@ -3013,6 +3194,12 @@ async function onRowCityChange(index: number) {
 // Load city social rules for a specific row
 async function loadCitySocialRulesForRow(row: PositionRow, city: string) {
   const salary = row.salary || 0
+
+  if (row.country === 'korea') {
+    row.socialRules = getDefaultKoreaSocialRules(salary)
+    row.fundRules = []
+    return
+  }
 
   // If city is not selected, use default values
   if (!city) {
@@ -3046,10 +3233,20 @@ async function loadCitySocialRulesForRow(row: PositionRow, city: string) {
 // Handle position change for a specific row
 async function onRowPositionChange(index: number) {
   const row = positionRows.value[index]
-  const position = availablePositions.value.find(p => p.id === row.position)
+  const position = availablePositions.value.find(p => p.id === Number(row.position))
   if (!position) return
   // 重新选择岗位后恢复自动取薪
   row.salaryManuallyEdited = false
+  if (row.country === 'korea') {
+    row.city = position.city || row.city || '首尔'
+    row.salary = position.monthlySalaryKrw || 0
+    row.salarySource = 'exact'
+    row.salarySourceCity = position.city
+    row.socialRules = getDefaultKoreaSocialRules(row.salary)
+    row.fundRules = []
+    calculateRow(index)
+    return
+  }
   const result = await fetchPositionSalary(position.id, row.city || '')
   if (result && result.salary != null) {
     row.salary = result.salary
@@ -3190,6 +3387,34 @@ async function fetchPositions() {
   }
 }
 
+async function fetchKoreaPositions() {
+  try {
+    const response = await axios.get(`${API_URL}/korea-job-salaries/options`)
+    availablePositions.value = response.data.map((item: any) => ({
+      id: item.id,
+      name: item.position_name,
+      position: item.position_name,
+      level: '',
+      levelRank: 1,
+      sequenceType: '韩国',
+      category: '驻场服务',
+      systemSalaryMax: null,
+      systemSalaryMin: null,
+      city: item.city,
+      monthlySalaryKrw: Number(item.monthly_salary_krw)
+    }))
+    const uniqueCities = new Set<string>(
+      availablePositions.value.map(item => item.city || '').filter(Boolean)
+    )
+    cityOptions.value = Array.from(uniqueCities).map(city => ({ label: city, value: city }))
+  } catch (error: any) {
+    console.error('获取韩国岗位薪资失败:', error)
+    ElMessage.error(error.response?.data?.detail || '获取韩国岗位薪资失败')
+    availablePositions.value = []
+    cityOptions.value = []
+  }
+}
+
 // Query salary for a position in a city (with fallback chain on backend)
 async function fetchPositionSalary(positionId: number, city: string): Promise<{ salary: number | null, source: string, source_city: string | null } | null> {
   try {
@@ -3209,8 +3434,20 @@ async function refreshRowSalary(index: number) {
   if (!row) return
   // 用户手动改过薪资后不再自动覆盖
   if (row.salaryManuallyEdited) return
-  const position = availablePositions.value.find(p => p.id === row.position)
+  const position = availablePositions.value.find(p => p.id === Number(row.position))
   if (!position) return
+
+  if (row.country === 'korea') {
+    const koreaPosition = availablePositions.value.find(
+      item => item.id === Number(row.position) && (!row.city || item.city === row.city)
+    ) || position
+    row.salary = koreaPosition.monthlySalaryKrw || 0
+    row.salarySource = 'exact'
+    row.salarySourceCity = koreaPosition.city
+    row.socialRules = getDefaultKoreaSocialRules(row.salary)
+    calculateRow(index)
+    return
+  }
 
   const result = await fetchPositionSalary(position.id, row.city || '')
   if (result && result.salary != null) {
@@ -3232,45 +3469,50 @@ function getSalarySourceTitle(row: PositionRow): string {
   return ''
 }
 
-function showHistory() {
-  ElMessage.info('历史记录功能开发中...')
+let activeCountryState: CountryMode = 'china'
+const countryRowSnapshots: Partial<Record<CountryMode, PositionRow[]>> = {}
+
+function clonePositionRows(rows: PositionRow[]): PositionRow[] {
+  return JSON.parse(JSON.stringify(rows))
 }
 
-function resetForm() {
-  positionRows.value = [
-    {
-      id: String(Date.now()),
-      city: '',
-      position: '',
-      salary: 0,
-      afterTaxSalary: 0,
-      personnelCount: 1,
-      cycleUnit: 'month',
-      serviceCycleCount: 12,
-      subtotal: 0,
-      unitPrice: 0,
-      socialRules: getDefaultSocialRules(),
-      fundRules: getDefaultFundRules(),
-      mgmtRules: getDefaultMgmtRules(),
-      riskRatio: 8.6,
-      opsCosts: getDefaultOpsCosts(),
-      onDemandCosts: getDefaultOnDemandCosts(),
-      contingencyCosts: getDefaultContingencyCosts(),
-      otherCosts: getDefaultOtherCosts()
-    }
-  ]
-  globalParams.value = {
-    vatRate: 6,
-    paymentCycle: 90,
-    profitRate: 0,
-    fundingCostRate: 3.5
-  }
-  // Reset selected row indices
+function resetSelectedIndexes() {
   selectedRowIndex.value = 0
   selectedFlexRowIndex.value = 0
   selectedOptionalRowIndex.value = 0
   selectedOtherCostRowIndex.value = 0
-  suggestedValuesApplied.value = false
+  activeTab.value = 'social'
+  suggestedValuesApplied.value = isKorea.value
+}
+
+async function onCountryChange() {
+  const nextCountry = selectedCountry.value
+  countryRowSnapshots[activeCountryState] = clonePositionRows(positionRows.value)
+  countryGlobalParams[activeCountryState] = { ...globalParams.value }
+
+  if (nextCountry === 'korea') {
+    await fetchKoreaPositions()
+  } else {
+    await Promise.all([fetchPositions(), fetchCities()])
+  }
+
+  globalParams.value = { ...countryGlobalParams[nextCountry] }
+  const savedRows = countryRowSnapshots[nextCountry]
+  positionRows.value = savedRows
+    ? clonePositionRows(savedRows)
+    : [createPositionRow(nextCountry, nextCountry === 'korea' ? availablePositions.value[0] : undefined)]
+  activeCountryState = nextCountry
+  resetSelectedIndexes()
+  calculateAll()
+}
+
+function resetForm() {
+  positionRows.value = [
+    createPositionRow(selectedCountry.value, isKorea.value ? availablePositions.value[0] : undefined)
+  ]
+  globalParams.value = { ...countryGlobalParams[selectedCountry.value] }
+  countryRowSnapshots[selectedCountry.value] = clonePositionRows(positionRows.value)
+  resetSelectedIndexes()
   calculateAll()
 }
 
@@ -3310,6 +3552,9 @@ async function startCalculation() {
 
   // Prepare preview data
   previewData.value = {
+    country: selectedCountry.value,
+    costCurrency: isKorea.value ? 'KRW' : 'CNY',
+    quoteCurrency: 'CNY',
     positionRows: positionRows.value.map(row => {
       // 获取岗位名称：如果 position 是 ID，查找对应的名称；否则直接使用 position 值
       let positionName = row.position
@@ -3362,7 +3607,10 @@ async function startCalculation() {
       baseProjectAmount: baseProjectAmount.value,        // 未税报价（含利润，不含增值税）
       otherCostTotal: otherCostTotal.value,              // 其他成本合计
       grossProfit: totalGrossProfit.value,               // 预估毛利
-      vatRate: globalParams.value.vatRate ?? 6           // 增值税率
+      vatRate: globalParams.value.vatRate ?? 6,          // 增值税率
+      costTotalKrw: isKorea.value ? baseSubtotal.value : null,
+      exchangeRate: isKorea.value ? globalParams.value.exchangeRate : null,
+      managementRate: isKorea.value ? globalParams.value.managementRate : null
     }
   }
   // Open modal
@@ -3495,6 +3743,7 @@ onUnmounted(() => {
 .header-buttons {
   display: flex;
   gap: 0.75rem;
+  flex-shrink: 0;
 }
 
 .header-btn {
@@ -3519,6 +3768,23 @@ onUnmounted(() => {
 
 .header-btn .material-symbols-outlined {
   font-size: 1.125rem;
+}
+
+.country-select-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.country-select-btn select {
+  width: 7rem;
+  min-width: 7rem;
+  padding-right: 1.5rem;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #ffffff;
+  font: inherit;
+  cursor: pointer;
 }
 
 /* Main Content */
@@ -3683,6 +3949,11 @@ input[type="number"] {
   border-radius: 0.5rem;
   align-items: center;
   transition: background-color 0.2s;
+}
+
+.korea-mode .position-table-header,
+.korea-mode .position-row {
+  grid-template-columns: 0.5fr 1fr 1.2fr 1.35fr 0.8fr 1fr 1fr 50px;
 }
 
 .position-row:hover {
@@ -5119,6 +5390,10 @@ input:checked + .slider:before {
   gap: 0.75rem;
 }
 
+.korea-mode .global-params-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .global-param-item {
   display: flex;
   flex-direction: column;
@@ -5161,6 +5436,12 @@ input:checked + .slider:before {
 
 .global-param-item .input-with-suffix .param-input {
   padding-right: 1.5rem;
+}
+
+.global-param-item .input-with-suffix .exchange-rate-input {
+  padding-right: 2.75rem;
+  padding-left: 0.35rem;
+  font-size: 0.75rem;
 }
 
 /* Readonly cost display */
@@ -5478,8 +5759,13 @@ input:checked + .slider:before {
 
   .header-actions-row {
     flex-direction: column;
-    align-items: flex-start;
+    align-items: stretch;
     gap: 1rem;
+  }
+
+  .header-buttons {
+    width: 100%;
+    flex-wrap: wrap;
   }
 
   .page-title {

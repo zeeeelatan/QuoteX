@@ -94,7 +94,7 @@
                         </div>
                       </div>
                       <div class="title-section">
-                        <h3 class="document-title">驻场服务报价单</h3>
+                        <h3 class="document-title">{{ documentTitle }}</h3>
                         <p class="document-number">编号: Q{{ currentYear }}{{ String(currentMonth).padStart(2, '0') }}{{ String(currentDay).padStart(2, '0') }}-XA009</p>
                       </div>
                     </div>
@@ -137,8 +137,8 @@
                           <th class="text-left">服务岗位明细</th>
                           <th class="text-right">人数</th>
                           <th class="text-right">周期(月)</th>
-                          <th class="text-right">综合单价 (¥/人/月)</th>
-                          <th class="text-right">总价 (¥)</th>
+                          <th class="text-right">综合单价 (CNY/人/月)</th>
+                          <th class="text-right">总价 (CNY)</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -158,6 +158,14 @@
                     <!-- Summary Section -->
                     <div class="summary-section">
                       <div class="summary-card">
+                        <div v-if="isKoreaQuote" class="summary-row">
+                          <span>完全成本（KRW）</span>
+                          <span class="summary-value">₩ {{ formatKrw(data.calculatedAmounts?.costTotalKrw) }}</span>
+                        </div>
+                        <div v-if="isKoreaQuote" class="summary-row">
+                          <span>KRW/CNY 汇率</span>
+                          <span class="summary-value">{{ data.calculatedAmounts?.exchangeRate }}</span>
+                        </div>
                         <div class="summary-row">
                           <span>项目总价（未税）</span>
                           <span class="summary-value">{{ formatCurrency(getLaborCostBeforeVat()) }}</span>
@@ -358,6 +366,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
 }>()
+
+const isKoreaQuote = computed(() => props.data?.country === 'korea')
+const documentTitle = computed(() => isKoreaQuote.value ? '韩国驻场服务报价单' : '驻场服务报价单')
 
 // 公司和客户数据
 interface CompanyInfo {
@@ -743,6 +754,10 @@ function formatCurrency(num: number): string {
   return '¥ ' + (num || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
+function formatKrw(num: number): string {
+  return Math.round(num || 0).toLocaleString('ko-KR')
+}
+
 function close() {
   emit('close')
 }
@@ -778,7 +793,8 @@ async function downloadQuotation() {
 function getFileNameBase(): string {
   const date = new Date()
   const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
-  return `驻场服务报价单_${selectedCompanyInfo.value.companyName}_${dateStr}`
+  const prefix = isKoreaQuote.value ? '韩国驻场服务报价单' : '驻场服务报价单'
+  return `${prefix}_${selectedCompanyInfo.value.companyName}_${dateStr}`
 }
 
 // 格式化数字为货币字符串（不带 ¥ 符号，用于 Excel）
@@ -917,7 +933,7 @@ async function downloadExcel() {
     const titleRow = ws.getRow(rowNum)
     titleRow.height = 36
     const titleCell = ws.getCell(`A${rowNum}`)
-    titleCell.value = '驻场服务报价单'
+    titleCell.value = documentTitle.value
     titleCell.font = titleFont
     titleCell.alignment = { horizontal: 'center', vertical: 'middle' }
     rowNum++
@@ -981,7 +997,7 @@ async function downloadExcel() {
     rowNum++
 
     // ===== 服务明细表头 =====
-    const headers = ['序号', '服务岗位', '驻场城市', '人数', '周期(月)', '综合单价(¥/人/月)', '总价(¥)']
+    const headers = ['序号', '服务岗位', '驻场城市', '人数', '周期(月)', '综合单价(CNY/人/月)', '总价(CNY)']
     const headerRow = ws.getRow(rowNum)
     headerRow.height = 28
     headers.forEach((h, i) => {
@@ -1040,6 +1056,11 @@ async function downloadExcel() {
     const finalAmount = getFinalProjectAmount()
 
     const summaryItems = [
+      ...(isKoreaQuote.value ? [
+        { label: '完全成本（KRW）', value: `₩${formatKrw(props.data.calculatedAmounts?.costTotalKrw)}` },
+        { label: 'KRW/CNY 汇率', value: String(props.data.calculatedAmounts?.exchangeRate || 0) },
+        { label: '我方管理费率', value: `${props.data.calculatedAmounts?.managementRate || 0}%` }
+      ] : []),
       { label: '项目总价（未税）', value: formatNumber(laborBeforeVat) },
       { label: '增值税率', value: `${vatRate}%` },
       { label: '项目总价', value: formatNumber(finalAmount) }

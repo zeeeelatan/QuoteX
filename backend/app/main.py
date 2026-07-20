@@ -24,6 +24,7 @@ from app.routers import service_personnel
 from app.routers import pricing_parameter
 from app.routers import single_service
 from app.routers import job_position
+from app.routers import korea_job_salary
 from app.routers import dispatch_service
 from app.routers import superimposed_price
 from app.routers import city_social_insurance
@@ -259,6 +260,7 @@ app.include_router(service_personnel.router)
 app.include_router(pricing_parameter.router)
 app.include_router(single_service.router)
 app.include_router(job_position.router)
+app.include_router(korea_job_salary.router)
 app.include_router(dispatch_service.router)
 app.include_router(superimposed_price.router)
 app.include_router(city_social_insurance.router)
