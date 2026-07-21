@@ -53,11 +53,6 @@
                   class="paper"
                   :style="{ transform: `scale(${zoomLevel / 100})` }"
                 >
-                  <!-- Watermark -->
-                  <div class="watermark" :style="{ opacity: watermarkOpacity / 100 }">
-                    {{ watermarkText }}
-                  </div>
-
                   <!-- Paper Content -->
                   <div class="paper-content">
                     <!-- Header Section -->
@@ -181,22 +176,23 @@
                       </div>
                     </div>
 
-                    <!-- Footer Section -->
+                    <!-- Footer：服务条款独占分割线下方全宽，落款置于条款之后 -->
                     <div class="paper-footer">
-                      <div class="footer-grid">
-                        <div class="footer-notes">
-                          <p class="notes-title">服务条款：</p>
-                          <p class="notes-text">
-                            1. 本报价单基于当前市场人力成本测算，有效期内签署有效。<br/>
-                            2. 最终解释权归{{ data.quoteCompanyInfo?.companyName || '报价公司' }}所有。
-                          </p>
+                      <div class="footer-notes">
+                        <p class="notes-title">服务条款：</p>
+                        <div v-if="currentServiceTermsLines.length" class="notes-text terms-lines">
+                          <p
+                            v-for="(line, index) in currentServiceTermsLines"
+                            :key="`${selectedServiceTermId}-${index}`"
+                            class="terms-line"
+                          >{{ line || '\u00a0' }}</p>
                         </div>
-                        <div class="footer-signature">
-                          <div v-if="includeStamp" class="stamp">★<br/>业务专用章</div>
-                          <div class="signature-line">
-                            <p class="signature-label">{{ selectedCompanyInfo.companyName }}</p>
-                            <p class="signature-name">{{ quotationDate }}</p>
-                          </div>
+                        <p v-else class="notes-text terms-empty">未选择服务条款</p>
+                      </div>
+                      <div class="footer-signature">
+                        <div class="signature-block">
+                          <p class="signature-company">{{ selectedCompanyInfo.companyName }}</p>
+                          <p class="signature-date">日期：{{ quotationDate }}</p>
                         </div>
                       </div>
                     </div>
@@ -233,13 +229,6 @@
                             <span class="format-name">Excel 表格</span>
                           </div>
                         </label>
-                        <label class="format-option" :class="{ active: exportFormat === 'word' }">
-                          <input type="radio" name="export_format" value="word" v-model="exportFormat" />
-                          <div class="format-card">
-                            <span class="material-symbols-outlined format-icon word">description</span>
-                            <span class="format-name">Word 文档</span>
-                          </div>
-                        </label>
                       </div>
                     </div>
 
@@ -252,10 +241,15 @@
                             <span class="material-symbols-outlined input-icon">business</span>
                             报价公司
                           </label>
-                          <select v-model="selectedCompanyId" class="config-select">
+                          <select
+                            v-model="selectedCompanyId"
+                            class="config-select"
+                            @change="onCompanySelectChange"
+                          >
                             <option v-for="company in companiesList" :key="company.id" :value="company.id">
                               {{ company.company_name }}
                             </option>
+                            <option :value="ADD_COMPANY_OPTION">＋ 新增报价公司</option>
                           </select>
                         </div>
                         <div class="input-group">
@@ -263,66 +257,64 @@
                             <span class="material-symbols-outlined input-icon">person</span>
                             客户信息
                           </label>
-                          <select v-model="selectedCustomerId" class="config-select">
+                          <select
+                            v-model="selectedCustomerId"
+                            class="config-select"
+                            @change="onCustomerSelectChange"
+                          >
                             <option v-for="customer in customersList" :key="customer.id" :value="customer.id">
                               {{ customer.customer_name }}
                             </option>
+                            <option :value="ADD_CUSTOMER_OPTION">＋ 新增客户信息</option>
                           </select>
                         </div>
                       </div>
                     </div>
 
-                    <!-- Watermark Settings -->
+                    <!-- Service Terms -->
                     <div class="config-section">
-                      <label class="config-label">水印设置</label>
+                      <label class="config-label">服务条款</label>
                       <div class="config-card">
                         <div class="input-group">
-                          <label class="input-label">水印内容</label>
-                          <input type="text" v-model="watermarkText" class="config-input" placeholder="输入水印文字..." />
+                          <label class="input-label">
+                            <span class="material-symbols-outlined input-icon">policy</span>
+                            条款模板
+                          </label>
+                          <select
+                            v-model="selectedServiceTermId"
+                            class="config-select"
+                            :disabled="serviceTermsLoading"
+                          >
+                            <option value="none">不显示服务条款</option>
+                            <option
+                              v-for="term in serviceTermsList"
+                              :key="term.id"
+                              :value="String(term.id)"
+                            >
+                              {{ term.name }}
+                            </option>
+                          </select>
                         </div>
-                        <div class="input-group">
-                          <div class="flex justify-between">
-                            <label class="input-label">透明度</label>
-                            <span class="input-value">{{ watermarkOpacity }}%</span>
-                          </div>
-                          <input type="range" v-model.number="watermarkOpacity" min="0" max="100" class="slider" />
-                        </div>
+                        <p v-if="serviceTermsLoading" class="config-status">正在加载后台服务条款...</p>
+                        <p v-else-if="serviceTermsError" class="config-status error">{{ serviceTermsError }}</p>
+                        <p v-else-if="selectedServiceTerm" class="config-status">
+                          已选择：{{ selectedServiceTerm.name }}
+                        </p>
                       </div>
                     </div>
 
-                    <!-- Content Settings -->
+                    <!-- Validity -->
                     <div class="config-section">
-                      <label class="config-label">内容与合规</label>
-                      <div class="config-list">
-                        <div class="config-item">
-                          <div class="config-item-left">
-                            <span class="material-symbols-outlined config-icon blue">list_alt</span>
-                            <span class="config-item-text">包含详细费用明细表</span>
-                          </div>
-                          <label class="toggle-switch">
-                            <input type="checkbox" v-model="includeDetail" />
-                            <span class="toggle-slider"></span>
-                          </label>
+                      <label class="config-label">报价单有效期</label>
+                      <div class="config-card">
+                        <div class="input-group">
+                          <select v-model="validityPeriod" class="config-select">
+                            <option value="15">15 天</option>
+                            <option value="30">30 天</option>
+                            <option value="60">60 天</option>
+                            <option value="90">90 天</option>
+                          </select>
                         </div>
-                        <div class="config-item">
-                          <div class="config-item-left">
-                            <span class="material-symbols-outlined config-icon purple">verified</span>
-                            <span class="config-item-text">加盖电子公章/签名</span>
-                          </div>
-                          <label class="toggle-switch">
-                            <input type="checkbox" v-model="includeStamp" />
-                            <span class="toggle-slider"></span>
-                          </label>
-                        </div>
-                      </div>
-                      <div class="input-group mt-4">
-                        <label class="input-label">报价单有效期</label>
-                        <select v-model="validityPeriod" class="config-select">
-                          <option value="15">15 天</option>
-                          <option value="30">30 天</option>
-                          <option value="60">60 天</option>
-                          <option value="90">90 天</option>
-                        </select>
                       </div>
                     </div>
                   </div>
@@ -344,14 +336,97 @@
         </div>
       </div>
     </Transition>
+
+    <!-- 快捷新增报价公司 -->
+    <el-dialog
+      v-model="showAddCompanyDialog"
+      title="新增报价公司"
+      width="480px"
+      append-to-body
+      destroy-on-close
+      class="quick-add-dialog"
+      @closed="resetAddCompanyForm"
+    >
+      <div class="quick-add-form">
+        <div class="quick-add-field">
+          <label class="quick-add-label">公司名称 <span class="required">*</span></label>
+          <el-input v-model="newCompanyForm.company_name" placeholder="例如：北京源晨动力技术服务有限公司" maxlength="100" />
+        </div>
+        <div class="quick-add-field">
+          <label class="quick-add-label">公司地址</label>
+          <el-input
+            v-model="newCompanyForm.company_address"
+            type="textarea"
+            :rows="2"
+            placeholder="办公地址"
+            maxlength="200"
+          />
+        </div>
+        <div class="quick-add-field">
+          <label class="quick-add-label">公司网站</label>
+          <el-input v-model="newCompanyForm.company_website" placeholder="https://..." maxlength="200" />
+        </div>
+      </div>
+      <template #footer>
+        <div class="actions">
+          <el-button @click="showAddCompanyDialog = false">取消</el-button>
+          <el-button type="primary" :loading="isCreatingCompany" @click="createAndSelectCompany">
+            创建并选用
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
+
+    <!-- 快捷新增客户 -->
+    <el-dialog
+      v-model="showAddCustomerDialog"
+      title="新增客户信息"
+      width="480px"
+      append-to-body
+      destroy-on-close
+      class="quick-add-dialog"
+      @closed="resetAddCustomerForm"
+    >
+      <div class="quick-add-form">
+        <div class="quick-add-field">
+          <label class="quick-add-label">客户名称 <span class="required">*</span></label>
+          <el-input v-model="newCustomerForm.customer_name" placeholder="例如：未来科技集团" maxlength="100" />
+        </div>
+        <div class="quick-add-field">
+          <label class="quick-add-label">联系人</label>
+          <el-input v-model="newCustomerForm.contact_person" placeholder="联系人姓名" maxlength="50" />
+        </div>
+        <div class="quick-add-field">
+          <label class="quick-add-label">联系电话</label>
+          <el-input v-model="newCustomerForm.contact_phone" placeholder="联系电话" maxlength="30" />
+        </div>
+        <div class="quick-add-field">
+          <label class="quick-add-label">客户地址</label>
+          <el-input
+            v-model="newCustomerForm.customer_address"
+            type="textarea"
+            :rows="2"
+            placeholder="办公地址"
+            maxlength="200"
+          />
+        </div>
+      </div>
+      <template #footer>
+        <div class="actions">
+          <el-button @click="showAddCustomerDialog = false">取消</el-button>
+          <el-button type="primary" :loading="isCreatingCustomer" @click="createAndSelectCustomer">
+            创建并选用
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
   </Teleport>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import axios from 'axios'
-import html2canvas from 'html2canvas'
-import { jsPDF } from 'jspdf'
+import { ElMessage } from 'element-plus'
 import ExcelJS from 'exceljs'
 import { saveAs } from 'file-saver'
 
@@ -392,16 +467,156 @@ interface UserProfile {
   department?: string
 }
 
+interface ServiceTerm {
+  id: number | string
+  name: string
+  products: string[]
+  content: string
+}
+
+const ADD_COMPANY_OPTION = '__add_company__'
+const ADD_CUSTOMER_OPTION = '__add_customer__'
+
 const companiesList = ref<CompanyInfo[]>([])
 const customersList = ref<CustomerInfo[]>([])
 const userProfile = ref<UserProfile>({})
-const selectedCompanyId = ref<number | null>(null)
-const selectedCustomerId = ref<number | null>(null)
+const selectedCompanyId = ref<number | string | null>(null)
+const selectedCustomerId = ref<number | string | null>(null)
+const previousCompanyId = ref<number | null>(null)
+const previousCustomerId = ref<number | null>(null)
+const serviceTermsList = ref<ServiceTerm[]>([])
+const selectedServiceTermId = ref('')
+const serviceTermsLoading = ref(false)
+const serviceTermsError = ref('')
+
+// 快捷新增报价公司 / 客户（下拉底部入口）
+const showAddCompanyDialog = ref(false)
+const showAddCustomerDialog = ref(false)
+const isCreatingCompany = ref(false)
+const isCreatingCustomer = ref(false)
+const newCompanyForm = ref({
+  company_name: '',
+  company_address: '',
+  company_website: ''
+})
+const newCustomerForm = ref({
+  customer_name: '',
+  contact_person: '',
+  contact_phone: '',
+  customer_address: ''
+})
+
+function resetAddCompanyForm() {
+  newCompanyForm.value = {
+    company_name: '',
+    company_address: '',
+    company_website: ''
+  }
+}
+
+function resetAddCustomerForm() {
+  newCustomerForm.value = {
+    customer_name: '',
+    contact_person: '',
+    contact_phone: '',
+    customer_address: ''
+  }
+}
+
+function onCompanySelectChange() {
+  if (selectedCompanyId.value === ADD_COMPANY_OPTION) {
+    selectedCompanyId.value = previousCompanyId.value
+    resetAddCompanyForm()
+    showAddCompanyDialog.value = true
+    return
+  }
+  previousCompanyId.value = typeof selectedCompanyId.value === 'number'
+    ? selectedCompanyId.value
+    : Number(selectedCompanyId.value) || null
+}
+
+function onCustomerSelectChange() {
+  if (selectedCustomerId.value === ADD_CUSTOMER_OPTION) {
+    selectedCustomerId.value = previousCustomerId.value
+    resetAddCustomerForm()
+    showAddCustomerDialog.value = true
+    return
+  }
+  previousCustomerId.value = typeof selectedCustomerId.value === 'number'
+    ? selectedCustomerId.value
+    : Number(selectedCustomerId.value) || null
+}
+
+async function createAndSelectCompany() {
+  const name = newCompanyForm.value.company_name.trim()
+  if (!name) {
+    ElMessage.warning('请输入公司名称')
+    return
+  }
+  isCreatingCompany.value = true
+  try {
+    const res = await axios.post(`${API_URL}/user-profile/companies`, {
+      company_name: name,
+      company_address: newCompanyForm.value.company_address.trim() || null,
+      company_website: newCompanyForm.value.company_website.trim() || null
+    })
+    const created = res.data
+    await loadCompaniesAndCustomers()
+    if (created?.id) {
+      selectedCompanyId.value = created.id
+      previousCompanyId.value = created.id
+      if (created.company_logo) customLogoUrl.value = created.company_logo
+    }
+    showAddCompanyDialog.value = false
+    ElMessage.success('公司创建成功，已自动选用')
+  } catch (error) {
+    console.error('创建公司失败', error)
+    ElMessage.error('创建公司失败，请重试')
+  } finally {
+    isCreatingCompany.value = false
+  }
+}
+
+async function createAndSelectCustomer() {
+  const name = newCustomerForm.value.customer_name.trim()
+  if (!name) {
+    ElMessage.warning('请输入客户名称')
+    return
+  }
+  isCreatingCustomer.value = true
+  try {
+    const res = await axios.post(`${API_URL}/user-profile/customers`, {
+      customer_name: name,
+      contact_person: newCustomerForm.value.contact_person.trim() || null,
+      contact_phone: newCustomerForm.value.contact_phone.trim() || null,
+      customer_address: newCustomerForm.value.customer_address.trim() || null
+    })
+    const created = res.data
+    await loadCompaniesAndCustomers()
+    if (created?.id) {
+      selectedCustomerId.value = created.id
+      previousCustomerId.value = created.id
+    }
+    showAddCustomerDialog.value = false
+    ElMessage.success('客户创建成功，已自动选用')
+  } catch (error) {
+    console.error('创建客户失败', error)
+    ElMessage.error('创建客户失败，请重试')
+  } finally {
+    isCreatingCustomer.value = false
+  }
+}
+
+function resolveSelectedId(raw: number | string | null): number | null {
+  if (raw === null || raw === '' || raw === ADD_COMPANY_OPTION || raw === ADD_CUSTOMER_OPTION) return null
+  const id = Number(raw)
+  return Number.isFinite(id) ? id : null
+}
 
 // 获取选中的公司信息
 const selectedCompanyInfo = computed(() => {
-  if (!selectedCompanyId.value) {
-    // 返回从 props.data 传入的默认信息
+  const companyId = resolveSelectedId(selectedCompanyId.value)
+  if (!companyId) {
     return {
       companyName: props.data.quoteCompanyInfo?.companyName || '报价公司名称',
       contactName: props.data.quoteCompanyInfo?.contactName || userProfile.value.name || '联系人',
@@ -410,7 +625,7 @@ const selectedCompanyInfo = computed(() => {
       companyAddress: props.data.quoteCompanyInfo?.companyAddress || ''
     }
   }
-  const company = companiesList.value.find(c => c.id === selectedCompanyId.value)
+  const company = companiesList.value.find(c => c.id === companyId)
   if (company) {
     return {
       companyName: company.company_name,
@@ -431,8 +646,8 @@ const selectedCompanyInfo = computed(() => {
 
 // 获取选中的客户信息
 const selectedCustomerInfo = computed(() => {
-  if (!selectedCustomerId.value) {
-    // 返回从 props.data 传入的默认信息
+  const customerId = resolveSelectedId(selectedCustomerId.value)
+  if (!customerId) {
     return {
       customerName: props.data.customerName || '客户名称',
       customerAddress: props.data.customerAddress || '客户地址',
@@ -440,7 +655,7 @@ const selectedCustomerInfo = computed(() => {
       contactPhone: props.data.customerPhone || ''
     }
   }
-  const customer = customersList.value.find(c => c.id === selectedCustomerId.value)
+  const customer = customersList.value.find(c => c.id === customerId)
   if (customer) {
     return {
       customerName: customer.customer_name,
@@ -477,12 +692,16 @@ async function loadCompaniesAndCustomers() {
     if (companiesRes.data) {
       companiesList.value = companiesRes.data
       // 默认选中第一个公司
-      if (companiesRes.data.length > 0 && !selectedCompanyId.value) {
+      if (companiesRes.data.length > 0 && !resolveSelectedId(selectedCompanyId.value)) {
         selectedCompanyId.value = companiesRes.data[0].id
+        previousCompanyId.value = companiesRes.data[0].id
+      } else {
+        previousCompanyId.value = resolveSelectedId(selectedCompanyId.value)
       }
       // 若用户未手动上传 Logo，则使用个人设置中的公司 Logo 作为默认
       if (!customLogoUrl.value && companiesRes.data.length > 0) {
-        const defaultCompany = companiesRes.data.find((c: any) => c.id === selectedCompanyId.value) || companiesRes.data[0]
+        const currentId = resolveSelectedId(selectedCompanyId.value)
+        const defaultCompany = companiesRes.data.find((c: any) => c.id === currentId) || companiesRes.data[0]
         if (defaultCompany.company_logo) {
           customLogoUrl.value = defaultCompany.company_logo
         }
@@ -492,8 +711,11 @@ async function loadCompaniesAndCustomers() {
     if (customersRes.data) {
       customersList.value = customersRes.data
       // 默认选中第一个客户
-      if (customersRes.data.length > 0 && !selectedCustomerId.value) {
+      if (customersRes.data.length > 0 && !resolveSelectedId(selectedCustomerId.value)) {
         selectedCustomerId.value = customersRes.data[0].id
+        previousCustomerId.value = customersRes.data[0].id
+      } else {
+        previousCustomerId.value = resolveSelectedId(selectedCustomerId.value)
       }
     }
   } catch (err) {
@@ -501,10 +723,38 @@ async function loadCompaniesAndCustomers() {
   }
 }
 
+async function loadServiceTerms() {
+  serviceTermsLoading.value = true
+  serviceTermsError.value = ''
+
+  try {
+    const response = await axios.get<ServiceTerm[]>(`${API_URL}/service-terms/`)
+    serviceTermsList.value = Array.isArray(response.data) ? response.data : []
+
+    const selectionExists = serviceTermsList.value.some(
+      term => String(term.id) === selectedServiceTermId.value
+    )
+    if (!selectionExists) {
+      const defaultTerm = serviceTermsList.value.find(term => term.name === '驻场服务条款')
+        || serviceTermsList.value.find(term => term.name.includes('驻场'))
+        || serviceTermsList.value[0]
+      selectedServiceTermId.value = defaultTerm ? String(defaultTerm.id) : 'none'
+    }
+  } catch (error) {
+    console.error('加载服务条款失败', error)
+    serviceTermsList.value = []
+    selectedServiceTermId.value = 'none'
+    serviceTermsError.value = '服务条款加载失败，请检查后端服务'
+  } finally {
+    serviceTermsLoading.value = false
+  }
+}
+
 // 当 modal 打开时加载数据
 watch(() => props.isOpen, (newVal) => {
   if (newVal) {
     loadCompaniesAndCustomers()
+    loadServiceTerms()
   }
 })
 
@@ -516,11 +766,99 @@ const isMinimized = ref(false)
 
 // Config State
 const exportFormat = ref('pdf')
-const watermarkText = ref('内部报价 · 禁止外传')
-const watermarkOpacity = ref(15)
-const includeDetail = ref(true)
-const includeStamp = ref(false)
 const validityPeriod = ref('15')
+
+function convertServiceTermHtmlToPlainText(html: string): string {
+  if (!html) return ''
+
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  const blockTags = new Set([
+    'p', 'div', 'section', 'article', 'header', 'footer',
+    'table', 'thead', 'tbody', 'tr', 'td', 'th',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6'
+  ])
+  const manualNumberPattern = /^[\s\u00a0]*\d+[.、]/
+
+  const walk = (
+    node: Node,
+    autoNumber: boolean,
+    listType?: 'ol' | 'ul',
+    listIndex = 1
+  ): string => {
+    if (node.nodeType === Node.TEXT_NODE) return node.nodeValue || ''
+    if (node.nodeType !== Node.ELEMENT_NODE) return ''
+
+    const element = node as HTMLElement
+    const tag = element.tagName.toLowerCase()
+    if (tag === 'br') return '\n'
+
+    if (tag === 'ol' || tag === 'ul') {
+      const listItems = Array.from(element.children).filter(
+        child => child.tagName.toLowerCase() === 'li'
+      ) as HTMLElement[]
+      let index = 1
+      let text = ''
+      for (const listItem of listItems) {
+        const line = walk(listItem, autoNumber, tag, index)
+        if (line.trim()) {
+          text += line
+          index += 1
+        }
+      }
+      return text
+    }
+
+    if (tag === 'li') {
+      const content = Array.from(element.childNodes)
+        .map(child => walk(child, autoNumber))
+        .join('')
+      if (!content.replace(/[\s\u00a0]/g, '')) return ''
+
+      const prefix = listType === 'ol' && autoNumber && !manualNumberPattern.test(content)
+        ? `${listIndex}. `
+        : ''
+      const line = `${prefix}${content}`
+      return line.endsWith('\n') ? line : `${line}\n`
+    }
+
+    const content = Array.from(element.childNodes)
+      .map(child => walk(child, autoNumber))
+      .join('')
+    if (blockTags.has(tag)) {
+      return content.replace(/[\s\u00a0]/g, '') ? `${content}\n` : ''
+    }
+    return content
+  }
+
+  const render = (autoNumber: boolean) => {
+    let text = ''
+    doc.body.childNodes.forEach(child => {
+      text += walk(child, autoNumber)
+    })
+    return text
+      .replace(/\r\n?/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/^\n+|\n+$/g, '')
+  }
+
+  const plainText = render(false)
+  return /^[ \t\u00a0]*\d+[.、]/m.test(plainText) ? plainText : render(true)
+}
+
+const selectedServiceTerm = computed(() => serviceTermsList.value.find(
+  term => String(term.id) === selectedServiceTermId.value
+) || null)
+
+const currentServiceTermsContent = computed(() => {
+  if (!selectedServiceTerm.value || selectedServiceTermId.value === 'none') return ''
+  return convertServiceTermHtmlToPlainText(selectedServiceTerm.value.content)
+})
+
+const currentServiceTermsLines = computed(() => {
+  if (!currentServiceTermsContent.value) return []
+  return currentServiceTermsContent.value.split('\n').map(line => line.trimEnd())
+})
 
 // 可编辑的项目信息
 const editableProjectLabel = ref('项目信息')
@@ -657,10 +995,11 @@ watch(
 
 // 切换公司时，若无手动上传 Logo，则同步切换为所选公司的 Logo
 watch(selectedCompanyId, (newId) => {
-  if (!newId) return
+  const companyId = resolveSelectedId(newId)
+  if (!companyId) return
   const savedLogo = localStorage.getItem('quotation_custom_logo')
   if (savedLogo) return // 用户手动上传过，不覆盖
-  const company = companiesList.value.find((c: any) => c.id === newId)
+  const company = companiesList.value.find((c: any) => c.id === companyId)
   if (company && company.company_logo) {
     customLogoUrl.value = company.company_logo
   } else {
@@ -777,11 +1116,6 @@ function toggleMaximize() {
 async function downloadQuotation() {
   if (isDownloading.value) return
 
-  if (exportFormat.value === 'word') {
-    alert('Word 导出暂未实现，请先选择 PDF 或 Excel')
-    return
-  }
-
   if (exportFormat.value === 'excel') {
     await downloadExcel()
   } else {
@@ -802,85 +1136,291 @@ function formatNumber(num: number): number {
   return Math.round((num || 0) * 100) / 100
 }
 
+/** 页脚页码图（中文），对齐「生成报价单」导出逻辑 */
+function createFooterImageDataUrl(pageNum: number, totalPages: number): string {
+  const canvas = document.createElement('canvas')
+  const dpr = 2
+  canvas.width = 800 * dpr
+  canvas.height = 36 * dpr
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return ''
+  ctx.scale(dpr, dpr)
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, 800, 36)
+  ctx.fillStyle = '#94a3b8'
+  ctx.font = '12px "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Hiragino Sans GB", sans-serif'
+  ctx.textAlign = 'center'
+  ctx.fillText(`第 ${pageNum} 页 / 共 ${totalPages} 页`, 400, 22)
+  return canvas.toDataURL('image/png', 1.0)
+}
+
+/**
+ * PDF 导出：对齐「发起询价 → 生成报价单」流程
+ * - onclone 脱离页面布局链，完整渲染条款与落款
+ * - 扫描空白行智能分页，避免条款文字被腰斩
+ */
 async function downloadPDF() {
   if (!paperRef.value) return
 
   isDownloading.value = true
+  const savedScrollX = window.scrollX
+  const savedScrollY = window.scrollY
+  const paperEl = paperRef.value
+  const originalTransform = paperEl.style.transform
 
   try {
-    // 临时重置缩放以获取完整尺寸
-    const originalTransform = paperRef.value.style.transform
-    paperRef.value.style.transform = 'scale(1)'
+    paperEl.style.transform = 'none'
+    await nextTick()
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
 
-    // 临时将 input 元素替换为 p 元素以确保正确渲染
-    const inputs = paperRef.value.querySelectorAll('input.editable-input')
-    const inputData: { input: HTMLInputElement; p: HTMLParagraphElement; parent: ParentNode }[] = []
+    const html2canvas = (await import('html2canvas')).default
+    const { default: jsPDF } = await import('jspdf')
 
-    inputs.forEach((input) => {
-      const inputEl = input as HTMLInputElement
-      const p = document.createElement('p')
-      p.textContent = inputEl.value
+    const a4Width = 210
+    const a4Height = 297
+    const pageMargin = 10
+    const imgWidthMm = a4Width - 2 * pageMargin
+    const renderWidth = 794 // ≈ 210mm @ 96dpi
 
-      // 根据原始 input 的 class 设置对应的样式 class
-      if (inputEl.classList.contains('info-label')) {
-        p.className = 'info-label'
-      } else if (inputEl.classList.contains('info-value-bold')) {
-        p.className = 'info-value-bold'
-      }
+    window.scrollTo(0, 0)
 
-      if (inputEl.parentNode) {
-        inputData.push({ input: inputEl, p, parent: inputEl.parentNode })
-        inputEl.parentNode.replaceChild(p, inputEl)
-      }
-    })
-
-    // 使用 html2canvas 捕获报价单内容
-    const canvas = await html2canvas(paperRef.value, {
-      scale: 2, // 提高清晰度
+    const fullCanvas = await html2canvas(paperEl, {
+      scale: 2,
       useCORS: true,
       allowTaint: true,
+      logging: false,
       backgroundColor: '#ffffff',
-      logging: false
+      windowWidth: renderWidth,
+      windowHeight: 50000,
+      scrollX: 0,
+      scrollY: 0,
+      onclone: (clonedDoc: Document, clonedEl: HTMLElement) => {
+        clonedEl.remove()
+        clonedDoc.body.innerHTML = ''
+        clonedDoc.body.style.cssText = 'margin:0;padding:0;overflow:visible;background:white;'
+        clonedDoc.documentElement.style.overflow = 'visible'
+        clonedDoc.body.appendChild(clonedEl)
+
+        clonedEl.style.cssText = `
+          width: ${renderWidth}px;
+          max-width: none;
+          min-height: 0;
+          height: auto;
+          overflow: visible;
+          display: block;
+          padding: 40px 48px 56px;
+          background: white;
+          color: #0f172a;
+          box-shadow: none;
+          border-radius: 0;
+          position: static;
+          transform: none !important;
+          box-sizing: border-box;
+        `
+
+        // 可编辑 input → 文本，确保 PDF 可见
+        clonedEl.querySelectorAll('input.editable-input').forEach((input) => {
+          const inputEl = input as HTMLInputElement
+          const p = clonedDoc.createElement('p')
+          p.textContent = inputEl.value
+          if (inputEl.classList.contains('info-label')) p.className = 'info-label'
+          else if (inputEl.classList.contains('info-value-bold')) p.className = 'info-value-bold'
+          else p.className = inputEl.className
+          inputEl.parentNode?.replaceChild(p, inputEl)
+        })
+
+        clonedEl.querySelectorAll('.logo-upload-hint').forEach(
+          (el) => ((el as HTMLElement).style.display = 'none')
+        )
+
+        const pdfStyle = clonedDoc.createElement('style')
+        pdfStyle.textContent = `
+          *, *::before, *::after { animation: none !important; transition: none !important; }
+          .paper-content {
+            display: block !important;
+            min-height: 0 !important;
+            height: auto !important;
+            overflow: visible !important;
+          }
+          .paper-footer {
+            margin-top: 28px !important;
+            padding-top: 20px !important;
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 28px !important;
+            width: 100% !important;
+            overflow: visible !important;
+            page-break-inside: auto !important;
+          }
+          .footer-notes {
+            width: 100% !important;
+          }
+          .notes-title {
+            margin: 0 0 10px !important;
+            color: #334155 !important;
+            font-weight: 700 !important;
+          }
+          .terms-lines {
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 8px !important;
+          }
+          .terms-line {
+            margin: 0 !important;
+            color: #475569 !important;
+            font-size: 13px !important;
+            line-height: 1.7 !important;
+            white-space: pre-wrap !important;
+            overflow-wrap: anywhere !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+          }
+          .footer-signature {
+            width: 100% !important;
+            display: flex !important;
+            justify-content: flex-end !important;
+            padding: 12px 0 8px !important;
+            margin-top: 8px !important;
+            position: relative !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+          }
+          .signature-block {
+            text-align: right !important;
+            min-width: 220px !important;
+          }
+          .signature-company {
+            margin: 0 0 8px !important;
+            color: #0f172a !important;
+            font-size: 14px !important;
+            font-weight: 700 !important;
+            white-space: nowrap !important;
+          }
+          .signature-date {
+            margin: 0 !important;
+            color: #334155 !important;
+            font-size: 13px !important;
+            font-weight: 500 !important;
+            white-space: nowrap !important;
+          }
+          .data-table, .summary-section, .paper-header, .info-grid {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+          }
+        `
+        clonedDoc.head.appendChild(pdfStyle)
+      }
     })
 
-    // 恢复 input 元素
-    inputData.forEach(({ input, p, parent }) => {
-      parent.replaceChild(input, p)
-    })
+    // 智能分页：在空白像素行处分页，避免条款被腰斩
+    const pxToMm = imgWidthMm / fullCanvas.width
+    const pageContentHeightMm = a4Height - 2 * pageMargin
+    const pageHeightPx = pageContentHeightMm / pxToMm
+    const SEARCH_RANGE = 220
+    const PADDING_X = 80
+    const SAMPLE_STEP = 6
+    const WHITE_THRESHOLD = 245
 
-    // 恢复原始缩放
-    paperRef.value.style.transform = originalTransform
+    const safePageRanges: Array<{ start: number; end: number }> = []
+    let currentY = 0
+    const fullCtx = fullCanvas.getContext('2d')
 
-    // 创建 PDF (A4 尺寸)
-    const pdf = new jsPDF({
-      orientation: 'portrait',
-      unit: 'mm',
-      format: 'a4'
-    })
+    while (currentY < fullCanvas.height) {
+      const idealEnd = Math.round(currentY + pageHeightPx)
+      if (idealEnd >= fullCanvas.height) {
+        safePageRanges.push({ start: currentY, end: fullCanvas.height })
+        break
+      }
 
-    const imgData = canvas.toDataURL('image/png')
-    const pdfWidth = pdf.internal.pageSize.getWidth()
-    const pdfHeight = pdf.internal.pageSize.getHeight()
+      let safeEnd = idealEnd
+      if (fullCtx) {
+        const scanTop = Math.max(Math.round(currentY + 80), idealEnd - SEARCH_RANGE)
+        const scanHeight = idealEnd - scanTop
+        const scanLeft = Math.min(PADDING_X, Math.round(fullCanvas.width * 0.08))
+        const scanWidth = Math.max(1, fullCanvas.width - 2 * scanLeft)
+        if (scanHeight > 0) {
+          const imageData = fullCtx.getImageData(scanLeft, scanTop, scanWidth, scanHeight)
+          const data = imageData.data
+          for (let row = scanHeight - 1; row >= 0; row--) {
+            let isBlankRow = true
+            const rowOffset = row * scanWidth * 4
+            for (let x = 0; x < scanWidth * 4; x += SAMPLE_STEP * 4) {
+              const idx = rowOffset + x
+              if (data[idx] < WHITE_THRESHOLD || data[idx + 1] < WHITE_THRESHOLD || data[idx + 2] < WHITE_THRESHOLD) {
+                isBlankRow = false
+                break
+              }
+            }
+            if (isBlankRow) {
+              safeEnd = scanTop + row
+              break
+            }
+          }
+        }
+      }
 
-    // 计算图片在 PDF 中的尺寸，保持比例
-    const imgWidth = canvas.width
-    const imgHeight = canvas.height
-    const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight)
-    const finalWidth = imgWidth * ratio
-    const finalHeight = imgHeight * ratio
+      // 避免分页点几乎不动导致死循环
+      if (safeEnd <= currentY + 40) safeEnd = idealEnd
+      safePageRanges.push({ start: currentY, end: safeEnd })
+      currentY = safeEnd
+      if (safePageRanges.length > 40) break
+    }
 
-    // 居中放置
-    const x = (pdfWidth - finalWidth) / 2
-    const y = 0
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+    const totalPages = safePageRanges.length
 
-    pdf.addImage(imgData, 'PNG', x, y, finalWidth, finalHeight)
+    for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+      const { start: startY, end: endY } = safePageRanges[pageIdx]
+      const sliceHeight = endY - startY
+      if (sliceHeight <= 0) continue
 
-    pdf.save(`${getFileNameBase()}.pdf`)
+      const pageCanvas = document.createElement('canvas')
+      pageCanvas.width = fullCanvas.width
+      pageCanvas.height = Math.round(sliceHeight)
+      const ctx = pageCanvas.getContext('2d')
+      if (ctx) {
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height)
+        ctx.drawImage(
+          fullCanvas,
+          0, Math.round(startY),
+          fullCanvas.width, Math.round(sliceHeight),
+          0, 0,
+          fullCanvas.width, Math.round(sliceHeight)
+        )
+      }
 
+      if (pageIdx > 0) doc.addPage()
+      const imgHeightMm = (pageCanvas.height / pageCanvas.width) * imgWidthMm
+      doc.addImage(
+        pageCanvas.toDataURL('image/jpeg', 0.92),
+        'JPEG',
+        pageMargin,
+        pageMargin,
+        imgWidthMm,
+        imgHeightMm
+      )
+
+      const footerImg = createFooterImageDataUrl(pageIdx + 1, totalPages)
+      if (footerImg) {
+        doc.addImage(
+          footerImg,
+          'PNG',
+          (a4Width - 80) / 2,
+          a4Height - pageMargin + 1,
+          80,
+          4
+        )
+      }
+    }
+
+    doc.save(`${getFileNameBase()}.pdf`)
   } catch (error) {
     console.error('PDF 生成失败:', error)
     alert('PDF 生成失败，请重试')
   } finally {
+    paperEl.style.transform = originalTransform
+    window.scrollTo(savedScrollX, savedScrollY)
     isDownloading.value = false
   }
 }
@@ -1105,20 +1645,26 @@ async function downloadExcel() {
     rowNum++
 
     // ===== 服务条款 =====
-    ws.mergeCells(`A${rowNum}:G${rowNum}`)
-    ws.getCell(`A${rowNum}`).value = '服务条款：'
-    ws.getCell(`A${rowNum}`).font = { ...valueFont, size: 9 }
-    rowNum++
+    const serviceTermLines = currentServiceTermsLines.value
+    if (serviceTermLines.length > 0) {
+      ws.mergeCells(`A${rowNum}:G${rowNum}`)
+      ws.getCell(`A${rowNum}`).value = '服务条款：'
+      ws.getCell(`A${rowNum}`).font = { ...valueFont, size: 9 }
+      ws.getRow(rowNum).height = 24
+      rowNum++
 
-    ws.mergeCells(`A${rowNum}:G${rowNum}`)
-    ws.getCell(`A${rowNum}`).value = '1. 本报价单基于当前市场人力成本测算，有效期内签署有效。'
-    ws.getCell(`A${rowNum}`).font = { ...normalFont, size: 9, color: { argb: 'FF666666' } }
-    rowNum++
-
-    ws.mergeCells(`A${rowNum}:G${rowNum}`)
-    ws.getCell(`A${rowNum}`).value = `2. 最终解释权归${selectedCompanyInfo.value.companyName}所有。`
-    ws.getCell(`A${rowNum}`).font = { ...normalFont, size: 9, color: { argb: 'FF666666' } }
-    rowNum++
+      serviceTermLines.forEach((line) => {
+        ws.mergeCells(`A${rowNum}:G${rowNum}`)
+        const termCell = ws.getCell(`A${rowNum}`)
+        termCell.value = line || ' '
+        termCell.font = { ...normalFont, size: 9, color: { argb: 'FF666666' } }
+        termCell.alignment = { vertical: 'top', wrapText: true }
+        ws.getRow(rowNum).height = line
+          ? Math.min(90, Math.max(20, Math.ceil(line.length / 72) * 18))
+          : 10
+        rowNum++
+      })
+    }
 
     // 空行
     rowNum++
@@ -1131,7 +1677,7 @@ async function downloadExcel() {
     rowNum++
 
     ws.mergeCells(`E${rowNum}:G${rowNum}`)
-    ws.getCell(`E${rowNum}`).value = quotationDate.value
+    ws.getCell(`E${rowNum}`).value = `日期：${quotationDate.value}`
     ws.getCell(`E${rowNum}`).font = normalFont
     ws.getCell(`E${rowNum}`).alignment = { horizontal: 'right' }
 
@@ -1328,6 +1874,8 @@ function sendEmail() {
   background-color: #0b0e14;
   display: flex;
   justify-content: center;
+  /* 禁止把纸张拉伸成视口高度，否则条款会溢出白底且 PDF 截断 */
+  align-items: flex-start;
 }
 
 .preview-area::-webkit-scrollbar {
@@ -1347,30 +1895,22 @@ function sendEmail() {
   background: #4a5568;
 }
 
-/* Paper */
+/* Paper：高度随内容增长，条款过长时自动拉长白底页面 */
 .paper {
   position: relative;
   background-color: #fff;
   color: #1e293b;
   width: 210mm;
   min-height: 297mm;
+  height: fit-content;
   box-shadow: 0 0 50px rgba(0, 0, 0, 0.5);
-  margin: 0 auto;
+  margin: 0 auto 2rem;
   padding: 15mm;
   transform-origin: top center;
-}
-
-.watermark {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%) rotate(-45deg);
-  font-size: 4rem;
-  font-weight: 900;
-  color: rgba(220, 38, 38, 0.1);
-  white-space: nowrap;
-  pointer-events: none;
-  user-select: none;
+  overflow: visible;
+  flex-shrink: 0;
+  align-self: flex-start;
+  box-sizing: border-box;
 }
 
 .paper-content {
@@ -1378,7 +1918,10 @@ function sendEmail() {
   z-index: 1;
   display: flex;
   flex-direction: column;
-  min-height: 900px;
+  min-height: calc(297mm - 30mm);
+  height: auto;
+  overflow: visible;
+  box-sizing: border-box;
 }
 
 /* Paper Header */
@@ -1681,24 +2224,29 @@ input.info-value-bold.editable-input {
   font-family: monospace;
 }
 
-/* Footer */
+/* Footer：分割线以下条款全宽独占，公司落款在条款下方靠右 */
 .paper-footer {
   margin-top: auto;
-  padding-top: 2rem;
+  padding-top: 1.5rem;
   border-top: 1px solid #e2e8f0;
   position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+  width: 100%;
+  overflow: visible;
 }
 
-.footer-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 3rem;
+.footer-notes {
+  width: 100%;
+  min-width: 0;
 }
 
 .notes-title {
   font-size: 0.875rem;
   color: #64748b;
-  margin-bottom: 2rem;
+  margin: 0 0 0.75rem;
+  font-weight: 600;
 }
 
 .notes-text {
@@ -1707,51 +2255,57 @@ input.info-value-bold.editable-input {
   line-height: 1.75;
 }
 
-.footer-signature {
-  position: relative;
-}
-
-.stamp {
-  position: absolute;
-  top: -3.5rem;
-  right: 2.5rem;
-  width: 8rem;
-  height: 8rem;
-  border: 4px solid #dc2626;
-  border-radius: 50%;
+.terms-lines {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  opacity: 0.85;
-  transform: rotate(-15deg);
-  pointer-events: none;
-  color: #dc2626;
-  font-weight: 700;
-  text-align: center;
-  font-size: 0.6rem;
+  gap: 0.45rem;
+  width: 100%;
 }
 
-.signature-line {
-  margin-left: auto;
+.terms-line {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.terms-empty {
+  color: #94a3b8;
+}
+
+.footer-signature {
+  position: relative;
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 0.75rem;
+  margin-top: 0.5rem;
+  min-height: 3.5rem;
+}
+
+.signature-block {
   position: relative;
   z-index: 2;
   text-align: right;
+  min-width: 14rem;
 }
 
-.signature-label {
-  font-size: 0.875rem;
-  color: #1e293b;
-  font-weight: 600;
+.signature-company {
+  margin: 0 0 0.4rem;
+  font-size: 0.9rem;
+  color: #0f172a;
+  font-weight: 700;
   white-space: nowrap;
 }
 
-.signature-name {
+.signature-date {
+  margin: 0;
   font-size: 0.875rem;
-  color: #64748b;
-  margin-top: 0.25rem;
+  color: #334155;
+  font-weight: 500;
   white-space: nowrap;
 }
+
 
 /* Sidebar */
 .sidebar-toggle {
@@ -1827,7 +2381,7 @@ input.info-value-bold.editable-input {
 
 .format-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 0.5rem;
 }
 
@@ -1875,10 +2429,6 @@ input.info-value-bold.editable-input {
   color: #22c55e;
 }
 
-.format-icon.word {
-  color: #60a5fa;
-}
-
 .format-name {
   font-size: 0.65rem;
   font-weight: 500;
@@ -1911,6 +2461,35 @@ input.info-value-bold.editable-input {
   align-items: center;
   gap: 0.25rem;
   margin-bottom: 0.25rem;
+}
+
+.quick-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.quick-add-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.quick-add-label {
+  color: #64748b;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.quick-add-label .required {
+  color: #f56c6c;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .input-icon {
@@ -1956,89 +2535,6 @@ input.info-value-bold.editable-input {
   cursor: pointer;
 }
 
-.config-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.config-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.5rem 0.75rem;
-  background-color: #232f48;
-  border-radius: 0.5rem;
-  border: 1px solid #2d3748;
-}
-
-.config-item-left {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.config-icon {
-  font-size: 1rem;
-}
-
-.config-icon.blue {
-  color: #3b82f6;
-}
-
-.config-icon.purple {
-  color: #a855f7;
-}
-
-.config-item-text {
-  font-size: 0.75rem;
-  color: #e5e7eb;
-}
-
-/* Toggle Switch */
-.toggle-switch {
-  position: relative;
-  display: inline-block;
-  width: 2rem;
-  height: 1rem;
-}
-
-.toggle-switch input {
-  display: none;
-}
-
-.toggle-slider {
-  position: absolute;
-  cursor: pointer;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: #4b5563;
-  transition: 0.3s;
-  border-radius: 9999px;
-}
-
-.toggle-slider:before {
-  position: absolute;
-  content: "";
-  height: 0.75rem;
-  width: 0.75rem;
-  left: 0.125rem;
-  bottom: 0.125rem;
-  background-color: #fff;
-  transition: 0.3s;
-  border-radius: 50%;
-}
-
-.toggle-switch input:checked + .toggle-slider {
-  background-color: #007aff;
-}
-
-.toggle-switch input:checked + .toggle-slider:before {
-  transform: translateX(1rem);
-}
-
 .config-select {
   width: 100%;
   background-color: #232f48;
@@ -2050,8 +2546,20 @@ input.info-value-bold.editable-input {
   appearance: none;
 }
 
-.mt-4 {
-  margin-top: 1rem;
+.config-select:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.config-status {
+  margin: 0.5rem 0 0;
+  color: #92a4c9;
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+
+.config-status.error {
+  color: #fca5a5;
 }
 
 .sidebar-footer {

@@ -282,7 +282,32 @@
                     <td class="mgmt-salary-cell" :title="entry.item.calculation">{{ entry.item.calculation }}</td>
                     <td class="mgmt-salary-cell" :title="entry.item.basis">{{ entry.item.basis }}</td>
                     <td class="mgmt-rate-cell">
-                      <div class="rate-input-wrapper">
+                      <div
+                        v-if="isCalculatorOtherCost(entry.item)"
+                        class="calculator-value-control"
+                      >
+                        <div class="rate-input-wrapper calculator-result-input">
+                          <input
+                            :value="entry.item.value"
+                            class="rate-input"
+                            type="number"
+                            readonly
+                            tabindex="-1"
+                          />
+                          <span class="rate-symbol">元</span>
+                        </div>
+                        <button
+                          type="button"
+                          class="cost-calculator-btn"
+                          :class="{ active: entry.item.calculatorConfirmed }"
+                          :title="`计算${entry.item.name}`"
+                          :aria-label="`打开${entry.item.name}计算器`"
+                          @click="openOtherCostCalculator(entry.index)"
+                        >
+                          <span class="material-symbols-outlined">calculate</span>
+                        </button>
+                      </div>
+                      <div v-else class="rate-input-wrapper">
                         <input
                           :value="entry.item.value"
                           @input="onOtherCostValueChange(entry.index, ($event.target as HTMLInputElement).value)"
@@ -914,6 +939,127 @@
       :data="previewData"
       @close="closePreviewModal"
     />
+
+    <Teleport to="body">
+      <div
+        v-if="otherCostCalculator.visible"
+        class="cost-calculator-overlay"
+        role="presentation"
+        @click.self="closeOtherCostCalculator"
+      >
+        <section
+          class="cost-calculator-dialog"
+          role="dialog"
+          aria-modal="true"
+          :aria-label="`${otherCostCalculator.itemName}计算器`"
+        >
+          <header class="cost-calculator-header">
+            <div>
+              <span class="cost-calculator-eyebrow">其他成本测算</span>
+              <h3>{{ otherCostCalculator.itemName }}</h3>
+            </div>
+            <button
+              type="button"
+              class="cost-calculator-close"
+              title="关闭"
+              aria-label="关闭计算器"
+              @click="closeOtherCostCalculator"
+            >
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </header>
+
+          <div class="cost-calculator-formula">
+            <span class="material-symbols-outlined">function</span>
+            <span>{{ otherCostCalculatorFormulaText }}</span>
+          </div>
+
+          <div class="cost-calculator-context">
+            <span>税前月薪</span>
+            <strong>{{ formatCurrency(otherCostCalculatorSalary) }}</strong>
+          </div>
+
+          <div v-if="otherCostCalculator.formula === 'benchReserve'" class="cost-calculator-fields">
+            <label class="cost-calculator-field">
+              <span>待岗概率</span>
+              <div class="cost-calculator-input-wrap">
+                <input v-model.number="otherCostCalculator.benchProbability" type="number" min="0" step="0.01" />
+                <span>%</span>
+              </div>
+            </label>
+            <label class="cost-calculator-field">
+              <span>待岗月数</span>
+              <div class="cost-calculator-input-wrap">
+                <input v-model.number="otherCostCalculator.benchMonths" type="number" min="0" step="0.5" />
+                <span>月</span>
+              </div>
+            </label>
+            <label class="cost-calculator-field">
+              <span>项目周期</span>
+              <div class="cost-calculator-input-wrap">
+                <input v-model.number="otherCostCalculator.projectMonths" type="number" min="0.01" step="1" />
+                <span>月</span>
+              </div>
+            </label>
+            <label class="cost-calculator-field">
+              <span>待岗人数</span>
+              <div class="cost-calculator-input-wrap">
+                <input v-model.number="otherCostCalculator.waitingPersonnel" type="number" min="1" step="1" />
+                <span>人</span>
+              </div>
+            </label>
+          </div>
+
+          <div v-else class="cost-calculator-fields">
+            <label class="cost-calculator-field">
+              <span>账期</span>
+              <div class="cost-calculator-input-wrap">
+                <input v-model.number="otherCostCalculator.paymentMonths" type="number" min="0" step="0.5" />
+                <span>月</span>
+              </div>
+            </label>
+            <label class="cost-calculator-field">
+              <span>年化利率</span>
+              <div class="cost-calculator-input-wrap">
+                <input v-model.number="otherCostCalculator.annualRate" type="number" min="0" step="0.01" />
+                <span>%</span>
+              </div>
+            </label>
+            <div class="cost-calculator-field fixed-param">
+              <span>年度月数</span>
+              <div class="cost-calculator-fixed-value">12 月</div>
+            </div>
+          </div>
+
+          <div class="cost-calculator-result">
+            <div>
+              <span>测算结果</span>
+              <small>月度金额 / 人</small>
+            </div>
+            <strong>{{ formatCurrency(otherCostCalculatorResult) }}</strong>
+          </div>
+
+          <footer class="cost-calculator-footer">
+            <button type="button" class="calculator-reset-btn" @click="resetOtherCostCalculatorDefaults">
+              <span class="material-symbols-outlined">restart_alt</span>
+              恢复默认
+            </button>
+            <div class="cost-calculator-actions">
+              <button type="button" class="calculator-cancel-btn" @click="closeOtherCostCalculator">取消</button>
+              <button
+                type="button"
+                class="calculator-confirm-btn"
+                :disabled="!isOtherCostCalculatorValid"
+                @click="confirmOtherCostCalculator"
+              >
+                <span class="material-symbols-outlined">check</span>
+                确认填入
+              </button>
+            </div>
+          </footer>
+        </section>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -1042,6 +1188,15 @@ type OtherCostFormula =
   | 'severance'
   | 'koreaBaseRate'
 
+interface OtherCostCalculatorParams {
+  benchProbability?: number
+  benchMonths?: number
+  projectMonths?: number
+  waitingPersonnel?: number
+  paymentMonths?: number
+  annualRate?: number
+}
+
 interface OtherCostItem {
   category: string
   name: string
@@ -1050,6 +1205,24 @@ interface OtherCostItem {
   basis: string
   value: number
   amount: number
+  calculatorConfirmed?: boolean
+  calculatorParams?: OtherCostCalculatorParams
+}
+
+type OtherCostCalculatorFormula = 'benchReserve' | 'fundingOccupancy'
+
+interface OtherCostCalculatorState {
+  visible: boolean
+  rowIndex: number
+  itemIndex: number
+  itemName: string
+  formula: OtherCostCalculatorFormula
+  benchProbability: number
+  benchMonths: number
+  projectMonths: number
+  waitingPersonnel: number
+  paymentMonths: number
+  annualRate: number
 }
 
 // Default social rules template
@@ -1161,7 +1334,7 @@ const getDefaultOtherCosts = (): OtherCostItem[] => [
   { category: '人员获取成本', name: '内推奖金摊销', formula: 'fixed', calculation: '内推奖金/摊销月数/项目人数', basis: '内推奖金/内推奖金摊销月数,无则填0/建议12个月', value: 0, amount: 0 },
   { category: '人员获取成本', name: '入职体检费用摊销', formula: 'fixedMonthlySpread', calculation: '个人入职单次体检费用/12', basis: '建议摊销12个月，无则填0', value: 0, amount: 0 },
   { category: '人员稳定成本', name: '人员替换/空档风险', formula: 'salaryRate', calculation: '税前工资×空档风险比例系数', basis: '取值范围2%-5%，建议取值2%', value: 0, amount: 0 },
-  { category: '人员稳定成本', name: '待岗成本储备', formula: 'benchReserve', calculation: '税前工资×待岗概率×2/12', basis: '待岗概率5%；待岗2月；项目周期12月（可按项目调整待岗概率及公式中月数）', value: 0, amount: 0 },
+  { category: '人员稳定成本', name: '待岗成本储备', formula: 'benchReserve', calculation: '税前工资×待岗概率×待岗月数/项目周期/待岗人数', basis: '默认5%、2个月；项目周期取服务周期，待岗人数取全部岗位人员总数', value: 0, amount: 0, calculatorConfirmed: false },
   { category: '人员稳定成本', name: '项目交接期成本/TT期成本人员成本', formula: 'fixed', calculation: '计划总费用/人数/摊销月数', basis: '每人每月', value: 0, amount: 0 },
   { category: '人员稳定成本', name: '培训成本摊销', formula: 'salaryRate', calculation: '税前工资×培训比例系数', basis: '培训系数建议取值1%，取值范围是0.5%-5%', value: 0, amount: 0 },
   { category: '交付管理成本', name: 'PM/交付管理分摊', formula: 'salaryRate', calculation: '税前工资×系数', basis: '建议1.5%-8%', value: 0, amount: 0 },
@@ -1180,7 +1353,7 @@ const getDefaultOtherCosts = (): OtherCostItem[] => [
   { category: '设备办公成本', name: '工位/办公场地', formula: 'fixed', calculation: '月摊销', basis: '工位/办公场地月摊销，如客户提供工位可填0', value: 0, amount: 0 },
   { category: '差旅异地成本', name: '差旅摊销（交通、食宿、差旅补贴）', formula: 'fixed', calculation: '项目差旅总预算/人数/摊销月数', basis: '每人每月', value: 0, amount: 0 },
   { category: '差旅异地成本', name: '团建员工关怀摊销', formula: 'fixed', calculation: '费用总预算/人数/摊销月数', basis: '每人每月', value: 0, amount: 0 },
-  { category: '资金风险成本', name: '资金占用成本', formula: 'fundingOccupancy', calculation: '月成本×账期×年化利率/12', basis: '账期3个月；年化利率3.5%', value: 0, amount: 0 },
+  { category: '资金风险成本', name: '资金占用成本', formula: 'fundingOccupancy', calculation: '月成本×账期×年化利率/12', basis: '月成本取税前月薪；账期默认3个月，年化利率默认3.5%', value: 0, amount: 0, calculatorConfirmed: false },
   { category: '资金风险成本', name: '坏账风险准备', formula: 'badDebtReserve', calculation: '月成本×坏账比例', basis: '建议取值0.5%，取值范围0.5%-3%', value: 0, amount: 0 },
   { category: '资金风险成本', name: '劳动纠纷风险准备', formula: 'laborDisputeReserve', calculation: '税前工资×劳动风险比例', basis: '建议取值8.33%，取值范围8.33%-16.6%/月或月薪/12', value: 0, amount: 0 },
   { category: '资金风险成本', name: '赔付/违约风险准备', formula: 'salaryRate', calculation: '阶段成本×违约风险比例', basis: '赔付/违约风险比例，无则填0，按照实际项目计算', value: 0, amount: 0 }
@@ -1252,6 +1425,20 @@ const flexCostGlobalMode = ref(false)  // 灵活人力成本全局模式
 const hardCostGlobalMode = ref(false)  // 人力成本全局模式
 const optionalCostGlobalMode = ref(false)  // 可选人力成本全局模式
 const otherCostGlobalMode = ref(false)  // 其他成本全局模式
+
+const otherCostCalculator = ref<OtherCostCalculatorState>({
+  visible: false,
+  rowIndex: 0,
+  itemIndex: -1,
+  itemName: '',
+  formula: 'benchReserve',
+  benchProbability: 5,
+  benchMonths: 2,
+  projectMonths: 12,
+  waitingPersonnel: 1,
+  paymentMonths: 3,
+  annualRate: 3.5
+})
 
 // Global parameters (VAT rate and payment cycle)
 const globalParams = ref({
@@ -2139,18 +2326,169 @@ function onMgmtRateChange(index: number) {
   calculateAll()
 }
 
+function isCalculatorOtherCost(item: OtherCostItem): boolean {
+  return item.formula === 'benchReserve' || item.formula === 'fundingOccupancy'
+}
+
+function roundOtherCostAmount(amount: number): number {
+  return Math.round((Number(amount) || 0) * 100) / 100
+}
+
+function calculateOtherCostFromParams(
+  formula: OtherCostCalculatorFormula,
+  row: PositionRow,
+  params: OtherCostCalculatorParams
+): number {
+  const salary = Number(row.salary) || 0
+
+  if (formula === 'benchReserve') {
+    const probability = Number(params.benchProbability) || 0
+    const benchMonths = Number(params.benchMonths) || 0
+    const projectMonths = Number(params.projectMonths) || 0
+    const waitingPersonnel = Number(params.waitingPersonnel) || 0
+    if (projectMonths <= 0 || waitingPersonnel <= 0) return 0
+    return salary * (probability / 100) * benchMonths / projectMonths / waitingPersonnel
+  }
+
+  const paymentMonths = Number(params.paymentMonths) || 0
+  const annualRate = Number(params.annualRate) || 0
+  return salary * paymentMonths * (annualRate / 100) / 12
+}
+
+function getOtherCostCalculatorParams(): OtherCostCalculatorParams {
+  if (otherCostCalculator.value.formula === 'benchReserve') {
+    return {
+      benchProbability: otherCostCalculator.value.benchProbability,
+      benchMonths: otherCostCalculator.value.benchMonths,
+      projectMonths: otherCostCalculator.value.projectMonths,
+      waitingPersonnel: otherCostCalculator.value.waitingPersonnel
+    }
+  }
+  return {
+    paymentMonths: otherCostCalculator.value.paymentMonths,
+    annualRate: otherCostCalculator.value.annualRate
+  }
+}
+
+const otherCostCalculatorSalary = computed(() => {
+  return positionRows.value[otherCostCalculator.value.rowIndex]?.salary || 0
+})
+
+const otherCostCalculatorFormulaText = computed(() => {
+  return otherCostCalculator.value.formula === 'benchReserve'
+    ? '税前工资 × 待岗概率 × 待岗月数 ÷ 项目周期 ÷ 待岗人数'
+    : '税前月薪 × 账期 × 年化利率 ÷ 12'
+})
+
+const otherCostCalculatorResult = computed(() => {
+  const row = positionRows.value[otherCostCalculator.value.rowIndex]
+  if (!row) return 0
+  return roundOtherCostAmount(
+    calculateOtherCostFromParams(
+      otherCostCalculator.value.formula,
+      row,
+      getOtherCostCalculatorParams()
+    )
+  )
+})
+
+const isOtherCostCalculatorValid = computed(() => {
+  if (otherCostCalculator.value.formula === 'benchReserve') {
+    return otherCostCalculator.value.benchProbability >= 0
+      && otherCostCalculator.value.benchMonths >= 0
+      && otherCostCalculator.value.projectMonths > 0
+      && otherCostCalculator.value.waitingPersonnel > 0
+  }
+  return otherCostCalculator.value.paymentMonths >= 0
+    && otherCostCalculator.value.annualRate >= 0
+})
+
+function resetOtherCostCalculatorDefaults() {
+  const row = positionRows.value[otherCostCalculator.value.rowIndex]
+  if (!row) return
+  if (otherCostCalculator.value.formula === 'benchReserve') {
+    otherCostCalculator.value.benchProbability = 5
+    otherCostCalculator.value.benchMonths = 2
+    otherCostCalculator.value.projectMonths = Math.max(getServiceMonths(row), 0.01)
+    otherCostCalculator.value.waitingPersonnel = Math.max(totalPersonnel.value, 1)
+    return
+  }
+  otherCostCalculator.value.paymentMonths = 3
+  otherCostCalculator.value.annualRate = 3.5
+}
+
+function openOtherCostCalculator(itemIndex: number) {
+  const rowIndex = selectedOtherCostRowIndex.value
+  const row = positionRows.value[rowIndex]
+  const item = row?.otherCosts?.[itemIndex]
+  if (!row || !item || !isCalculatorOtherCost(item)) return
+
+  otherCostCalculator.value.rowIndex = rowIndex
+  otherCostCalculator.value.itemIndex = itemIndex
+  otherCostCalculator.value.itemName = item.name
+  otherCostCalculator.value.formula = item.formula as OtherCostCalculatorFormula
+
+  if (item.calculatorConfirmed && item.calculatorParams) {
+    const params = item.calculatorParams
+    otherCostCalculator.value.benchProbability = Number(params.benchProbability) || 0
+    otherCostCalculator.value.benchMonths = Number(params.benchMonths) || 0
+    otherCostCalculator.value.projectMonths = Number(params.projectMonths) || 0
+    otherCostCalculator.value.waitingPersonnel = Number(params.waitingPersonnel) || 0
+    otherCostCalculator.value.paymentMonths = Number(params.paymentMonths) || 0
+    otherCostCalculator.value.annualRate = Number(params.annualRate) || 0
+  } else {
+    resetOtherCostCalculatorDefaults()
+  }
+
+  otherCostCalculator.value.visible = true
+}
+
+function closeOtherCostCalculator() {
+  otherCostCalculator.value.visible = false
+}
+
+function confirmOtherCostCalculator() {
+  if (!isOtherCostCalculatorValid.value) return
+  const sourceRow = positionRows.value[otherCostCalculator.value.rowIndex]
+  if (!sourceRow) return
+
+  const params = getOtherCostCalculatorParams()
+  const itemIndex = otherCostCalculator.value.itemIndex
+  const formula = otherCostCalculator.value.formula
+
+  const applyToRow = (row: PositionRow) => {
+    const item = row.otherCosts?.[itemIndex]
+    if (!item || item.formula !== formula) return
+    item.calculatorConfirmed = true
+    item.calculatorParams = { ...params }
+    item.value = roundOtherCostAmount(calculateOtherCostFromParams(formula, row, params))
+    item.amount = item.value
+    row.subtotal = calculateRowSubtotal(row)
+  }
+
+  applyToRow(sourceRow)
+  if (otherCostGlobalMode.value) {
+    positionRows.value.forEach(row => {
+      if (row.id !== sourceRow.id) applyToRow(row)
+    })
+  }
+
+  calculateAll()
+  closeOtherCostCalculator()
+  ElMessage.success(`${otherCostCalculator.value.itemName}已计入其他成本`)
+}
+
 function getOtherCostValueSuffix(item: OtherCostItem): string {
+  if (isCalculatorOtherCost(item)) {
+    return isKorea.value ? 'KRW' : '元'
+  }
   if ([
     'salaryRate',
-    'benchReserve',
     'badDebtReserve',
     'laborDisputeReserve',
     'koreaBaseRate'
   ].includes(item.formula)) {
     return '%'
-  }
-  if (item.formula === 'fundingOccupancy') {
-    return '自动'
   }
   if (item.formula === 'severance') {
     return '月'
@@ -2193,6 +2531,13 @@ function toggleSuggestedOtherCostValues() {
 
   const applyToRow = (row: PositionRow) => {
     row.otherCosts?.forEach(item => {
+      if (isCalculatorOtherCost(item)) {
+        item.value = 0
+        item.amount = 0
+        item.calculatorConfirmed = false
+        item.calculatorParams = undefined
+        return
+      }
       const defaults = isKorea.value ? koreaOtherCostDefaultValues : otherCostWorkbookDefaultValues
       item.value = applying ? (defaults[item.name] ?? 0) : 0
     })
@@ -2944,13 +3289,9 @@ function calculateOtherCostItem(item: OtherCostItem, row: PositionRow): number {
     case 'fixedMonthlySpread':
       return value / 12
     case 'benchReserve':
-      return salary * (value / 100) * 2 / 12
-    case 'fundingOccupancy': {
-      if (value <= 0) return 0
-      const paymentMonths = (globalParams.value.paymentCycle || 0) / 30
-      const annualRate = (globalParams.value.fundingCostRate || 0) / 100
-      return monthlyCost * paymentMonths * annualRate / 12
-    }
+    case 'fundingOccupancy':
+      if (!item.calculatorConfirmed || !item.calculatorParams) return 0
+      return calculateOtherCostFromParams(item.formula, row, item.calculatorParams)
     case 'badDebtReserve':
       return monthlyCost * (value / 100)
     case 'laborDisputeReserve':
@@ -2970,6 +3311,9 @@ function recalculateOtherCostsForRow(row: PositionRow) {
     item.amount = row.country === 'korea'
       ? Math.round(amount)
       : Math.round(amount * 100) / 100
+    if (isCalculatorOtherCost(item)) {
+      item.value = item.amount
+    }
   })
 }
 
@@ -3486,6 +3830,7 @@ function resetSelectedIndexes() {
 }
 
 async function onCountryChange() {
+  closeOtherCostCalculator()
   const nextCountry = selectedCountry.value
   countryRowSnapshots[activeCountryState] = clonePositionRows(positionRows.value)
   countryGlobalParams[activeCountryState] = { ...globalParams.value }
@@ -3507,6 +3852,7 @@ async function onCountryChange() {
 }
 
 function resetForm() {
+  closeOtherCostCalculator()
   positionRows.value = [
     createPositionRow(selectedCountry.value, isKorea.value ? availablePositions.value[0] : undefined)
   ]
@@ -4775,6 +5121,51 @@ input:checked + .slider:before {
   width: 80px;
 }
 
+.calculator-value-control {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  width: 100%;
+}
+
+.calculator-value-control .calculator-result-input {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
+.calculator-result-input .rate-input[readonly] {
+  cursor: default;
+  color: #cbd5e1;
+}
+
+.cost-calculator-btn {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid #365078;
+  border-radius: 0.375rem;
+  background-color: #1d2a3f;
+  color: #8fb5ff;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.cost-calculator-btn:hover,
+.cost-calculator-btn.active {
+  border-color: #3b82f6;
+  background-color: #17366d;
+  color: #dbeafe;
+}
+
+.cost-calculator-btn .material-symbols-outlined {
+  font-size: 1.1rem;
+}
+
 .rate-input {
   width: 100%;
   padding: 0.375rem 1.5rem 0.375rem 0.5rem;
@@ -4921,7 +5312,7 @@ input:checked + .slider:before {
 }
 
 .other-cost-table th:nth-child(4) {
-  width: 112px;
+  width: 156px;
 }
 
 .other-cost-table th:last-child {
@@ -5713,6 +6104,270 @@ input:checked + .slider:before {
   font-size: 1.125rem;
 }
 
+.cost-calculator-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background-color: rgba(2, 6, 23, 0.78);
+}
+
+.cost-calculator-dialog {
+  width: min(540px, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  background-color: #151b26;
+  color: #f8fafc;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+  letter-spacing: 0;
+}
+
+.cost-calculator-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.1rem 1.25rem;
+  border-bottom: 1px solid #2b374c;
+}
+
+.cost-calculator-eyebrow {
+  display: block;
+  margin-bottom: 0.2rem;
+  color: #60a5fa;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.cost-calculator-header h3 {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+.cost-calculator-close {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 0.375rem;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.cost-calculator-close:hover {
+  border-color: #475569;
+  background-color: #202a3a;
+  color: #ffffff;
+}
+
+.cost-calculator-close .material-symbols-outlined {
+  font-size: 1.2rem;
+}
+
+.cost-calculator-formula {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 1rem 1.25rem 0;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid #263247;
+  color: #bfdbfe;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.cost-calculator-formula .material-symbols-outlined {
+  flex: 0 0 auto;
+  color: #3b82f6;
+  font-size: 1.1rem;
+}
+
+.cost-calculator-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem 0;
+  color: #94a3b8;
+  font-size: 0.875rem;
+}
+
+.cost-calculator-context strong {
+  color: #f8fafc;
+  font-size: 1rem;
+}
+
+.cost-calculator-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+  padding: 1rem 1.25rem 1.25rem;
+}
+
+.cost-calculator-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+  color: #a9b7d0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.cost-calculator-input-wrap {
+  position: relative;
+}
+
+.cost-calculator-input-wrap input {
+  width: 100%;
+  height: 40px;
+  padding: 0 2.4rem 0 0.75rem;
+  border: 1px solid #34435c;
+  border-radius: 0.375rem;
+  outline: none;
+  background-color: #1d2636;
+  color: #f8fafc;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.cost-calculator-input-wrap input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
+}
+
+.cost-calculator-input-wrap span {
+  position: absolute;
+  top: 50%;
+  right: 0.75rem;
+  transform: translateY(-50%);
+  color: #7183a4;
+  font-size: 0.75rem;
+  pointer-events: none;
+}
+
+.cost-calculator-fixed-value {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  padding: 0 0.75rem;
+  border: 1px solid #2b374c;
+  border-radius: 0.375rem;
+  background-color: #18202d;
+  color: #94a3b8;
+  font-size: 0.9375rem;
+}
+
+.cost-calculator-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border-top: 1px solid #2b374c;
+  border-bottom: 1px solid #2b374c;
+  background-color: #111827;
+}
+
+.cost-calculator-result > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  color: #cbd5e1;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.cost-calculator-result small {
+  color: #7183a4;
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+
+.cost-calculator-result strong {
+  color: #4ade80;
+  font-size: 1.25rem;
+}
+
+.cost-calculator-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+}
+
+.cost-calculator-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.calculator-reset-btn,
+.calculator-cancel-btn,
+.calculator-confirm-btn {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.85rem;
+  border-radius: 0.375rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.calculator-reset-btn {
+  border: 1px solid transparent;
+  background: transparent;
+  color: #8fb5ff;
+}
+
+.calculator-reset-btn:hover {
+  border-color: #365078;
+  background-color: #1d2a3f;
+}
+
+.calculator-cancel-btn {
+  border: 1px solid #3b475b;
+  background-color: transparent;
+  color: #cbd5e1;
+}
+
+.calculator-confirm-btn {
+  border: 1px solid #2563eb;
+  background-color: #2563eb;
+  color: #ffffff;
+}
+
+.calculator-confirm-btn:hover:not(:disabled) {
+  background-color: #1d4ed8;
+}
+
+.calculator-confirm-btn:disabled {
+  border-color: #334155;
+  background-color: #273244;
+  color: #64748b;
+  cursor: not-allowed;
+}
+
+.calculator-reset-btn .material-symbols-outlined,
+.calculator-confirm-btn .material-symbols-outlined {
+  font-size: 1rem;
+}
+
 /* Mobile Footer */
 .mobile-footer {
   display: none;
@@ -5778,6 +6433,20 @@ input:checked + .slider:before {
 
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .cost-calculator-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .cost-calculator-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .cost-calculator-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .right-column {
