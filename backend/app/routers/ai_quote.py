@@ -1,5 +1,5 @@
 """
-首页专用智能体：DashScope Tool Calling（或 Ollama 降级），
+首页专用智能体：OpenAI 兼容接口 Tool Calling（或 Ollama 降级），
 编排产品查询 / 维保 / 联想 / 驻场 / 搬迁等确定性后端能力。
 """
 from __future__ import annotations
@@ -24,11 +24,9 @@ from app.agent.config import REQUIRE_MATCH_CONFIRMATION
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ai-quote", tags=["AI报价"])
 
-DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
-DASHSCOPE_BASE_URL = os.getenv(
-    "DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
-)
-DASHSCOPE_MODEL = os.getenv("DASHSCOPE_MODEL", "qwen-plus")
+NEWAPI_API_KEY = os.getenv("NEWAPI_API_KEY", "")
+NEWAPI_BASE_URL = os.getenv("NEWAPI_BASE_URL", "https://airouter.cloud/v1")
+NEWAPI_MODEL = os.getenv("NEWAPI_MODEL", "gpt-4.1-mini")
 OLLAMA_BASE = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_QUOTE_MODEL", "qwen:latest")
 
@@ -47,8 +45,8 @@ async def _get_http_client() -> httpx.AsyncClient:
     return _http_client
 
 
-def _use_dashscope() -> bool:
-    return bool(DASHSCOPE_API_KEY)
+def _use_newapi() -> bool:
+    return bool(NEWAPI_API_KEY)
 
 
 def extract_text_from_file(filename: str, content: bytes) -> str:
@@ -106,8 +104,26 @@ class ConfirmResponse(BaseModel):
 
 @router.get("/models", response_model=ModelsResponse)
 async def list_available_models():
-    if _use_dashscope():
-        return ModelsResponse(models=["qwen-plus", "qwen-turbo", "qwen-max"])
+    if _use_newapi():
+        url = f"{NEWAPI_BASE_URL.rstrip('/')}/models"
+        client = await _get_http_client()
+        try:
+            resp = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {NEWAPI_API_KEY}"},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            names = [
+                item.get("id", "").strip()
+                for item in (data.get("data") or [])
+                if item.get("id")
+            ]
+            return ModelsResponse(models=names or [NEWAPI_MODEL])
+        except Exception as e:
+            logger.warning("拉取 New API 模型列表失败: %s", e)
+            return ModelsResponse(models=[NEWAPI_MODEL])
     url = f"{OLLAMA_BASE.rstrip('/')}/api/tags"
     client = await _get_http_client()
     try:
@@ -140,8 +156,8 @@ async def agent_policy():
             "relocation",
         ],
         "export_formats": ["excel", "pdf"],
-        "model_provider": "dashscope" if _use_dashscope() else "ollama",
-        "default_model": DASHSCOPE_MODEL if _use_dashscope() else OLLAMA_MODEL,
+        "model_provider": "newapi" if _use_newapi() else "ollama",
+        "default_model": NEWAPI_MODEL if _use_newapi() else OLLAMA_MODEL,
     }
 
 
@@ -189,8 +205,8 @@ async def _parse_agent_form(request: Request):
             UploadedFile(filename=filename, content=content, text_preview=text_preview)
         )
 
-    if _use_dashscope():
-        effective_model = model_name if model_name and model_name != OLLAMA_MODEL else DASHSCOPE_MODEL
+    if _use_newapi():
+        effective_model = model_name if model_name and model_name != OLLAMA_MODEL else NEWAPI_MODEL
     else:
         effective_model = model_name or OLLAMA_MODEL
 
@@ -223,9 +239,9 @@ async def analyze_requirement_stream(request: Request, db: Session = Depends(get
             user_text=requirement,
             history=history,
             model=model_name,
-            use_dashscope=_use_dashscope(),
-            dashscope_base_url=DASHSCOPE_BASE_URL,
-            dashscope_api_key=DASHSCOPE_API_KEY,
+            use_openai_api=_use_newapi(),
+            openai_base_url=NEWAPI_BASE_URL,
+            openai_api_key=NEWAPI_API_KEY,
             ollama_base_url=OLLAMA_BASE,
             http_client=client,
         ):
@@ -269,9 +285,9 @@ async def analyze_requirement(request: Request, db: Session = Depends(get_db)):
         user_text=requirement,
         history=history,
         model=model_name,
-        use_dashscope=_use_dashscope(),
-        dashscope_base_url=DASHSCOPE_BASE_URL,
-        dashscope_api_key=DASHSCOPE_API_KEY,
+        use_openai_api=_use_newapi(),
+        openai_base_url=NEWAPI_BASE_URL,
+        openai_api_key=NEWAPI_API_KEY,
         ollama_base_url=OLLAMA_BASE,
         http_client=client,
     ):

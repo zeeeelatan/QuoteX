@@ -30,6 +30,9 @@ services:
       DB_USER: ${POSTGRES_USER:?请在 .env 中设置 POSTGRES_USER}
       DB_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:?请在 .env 中设置 JWT_SECRET_KEY}
+      NEWAPI_BASE_URL: ${NEWAPI_BASE_URL:-https://airouter.cloud/v1}
+      NEWAPI_API_KEY: ${NEWAPI_API_KEY:?请在 .env 中设置 NEWAPI_API_KEY}
+      NEWAPI_MODEL: ${NEWAPI_MODEL:-gpt-4.1-mini}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
       OLLAMA_QUOTE_MODEL: ${OLLAMA_QUOTE_MODEL:-qwen:latest}
     depends_on:

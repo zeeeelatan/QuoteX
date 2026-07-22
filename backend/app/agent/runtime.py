@@ -24,11 +24,11 @@ def _sse(payload: Dict[str, Any]) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
-def _dashscope_headers(api_key: str) -> Dict[str, str]:
+def _openai_headers(api_key: str) -> Dict[str, str]:
     return {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
 
-async def _dashscope_chat_once(
+async def _openai_chat_once(
     client: httpx.AsyncClient,
     *,
     base_url: str,
@@ -47,16 +47,16 @@ async def _dashscope_chat_once(
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
     resp = await client.post(
-        url, json=payload, headers=_dashscope_headers(api_key), timeout=180
+        url, json=payload, headers=_openai_headers(api_key), timeout=180
     )
     if resp.status_code == 401:
-        raise RuntimeError("百炼 API Key 无效或已过期")
+        raise RuntimeError("AI API Key 无效或已过期")
     if resp.status_code >= 400:
-        raise RuntimeError(f"百炼 API 错误 {resp.status_code}: {resp.text[:300]}")
+        raise RuntimeError(f"AI API 错误 {resp.status_code}: {resp.text[:300]}")
     return resp.json()
 
 
-async def _stream_dashscope_text(
+async def _stream_openai_text(
     client: httpx.AsyncClient,
     *,
     base_url: str,
@@ -67,11 +67,11 @@ async def _stream_dashscope_text(
     url = f"{base_url.rstrip('/')}/chat/completions"
     payload = {"model": model, "messages": messages, "stream": True}
     async with client.stream(
-        "POST", url, json=payload, headers=_dashscope_headers(api_key)
+        "POST", url, json=payload, headers=_openai_headers(api_key)
     ) as resp:
         if resp.status_code != 200:
             body = await resp.aread()
-            raise RuntimeError(f"百炼流式错误 {resp.status_code}: {body.decode()[:200]}")
+            raise RuntimeError(f"AI API 流式错误 {resp.status_code}: {body.decode()[:200]}")
         async for line in resp.aiter_lines():
             if not line.startswith("data:"):
                 continue
@@ -136,9 +136,9 @@ async def run_agent_stream(
     user_text: str,
     history: Optional[List[Dict[str, str]]] = None,
     model: str,
-    use_dashscope: bool,
-    dashscope_base_url: str,
-    dashscope_api_key: str,
+    use_openai_api: bool,
+    openai_base_url: str,
+    openai_api_key: str,
     ollama_base_url: str,
     http_client: httpx.AsyncClient,
 ) -> AsyncIterator[str]:
@@ -159,7 +159,7 @@ async def run_agent_stream(
     if extracted and not session.last_bom_items:
         session.last_bom_items = extracted
 
-    tools = tool_schemas() if use_dashscope else None
+    tools = tool_schemas() if use_openai_api else None
     messages: List[Dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     # 注入精简历史
@@ -183,12 +183,12 @@ async def run_agent_stream(
     latest_structured: Optional[Dict[str, Any]] = None
 
     try:
-        if use_dashscope:
+        if use_openai_api:
             for _round in range(MAX_TOOL_ROUNDS):
-                data = await _dashscope_chat_once(
+                data = await _openai_chat_once(
                     http_client,
-                    base_url=dashscope_base_url,
-                    api_key=dashscope_api_key,
+                    base_url=openai_base_url,
+                    api_key=openai_api_key,
                     model=model,
                     messages=messages,
                     tools=tools,
@@ -259,10 +259,10 @@ async def run_agent_stream(
                     for i in range(0, len(content), chunk_size):
                         yield _sse({"content": content[i : i + chunk_size]})
                 else:
-                    async for c in _stream_dashscope_text(
+                    async for c in _stream_openai_text(
                         http_client,
-                        base_url=dashscope_base_url,
-                        api_key=dashscope_api_key,
+                        base_url=openai_base_url,
+                        api_key=openai_api_key,
                         model=model,
                         messages=messages,
                     ):

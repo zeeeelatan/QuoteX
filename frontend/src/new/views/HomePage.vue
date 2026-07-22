@@ -204,10 +204,25 @@
                     </div>
                     <div class="cmsg-body">
                       <div class="cmsg-bubble cmsg-bubble-ai" :class="{ 'cmsg-bubble-wide': msg.structured }">
-                        <p class="cmsg-source-hint">{{ msg.structured ? '基于系统设备库实时匹配计算' : '已结合维保费率、服务级别、设备库等后台数据生成' }}</p>
-                        <div class="cmsg-ai-content" v-html="formatAnalysis(msg.content, msg.isHtml)"></div>
+                        <p v-if="msg.content || msg.structured" class="cmsg-source-hint">{{ msg.structured ? '基于系统设备库实时匹配计算' : '已结合维保费率、服务级别、设备库等后台数据生成' }}</p>
+                        <div v-if="msg.pending" class="cmsg-progress" role="status" aria-live="polite">
+                          <span class="material-symbols-outlined cmsg-progress-icon">progress_activity</span>
+                          <div class="cmsg-progress-copy">
+                            <div class="cmsg-progress-title">
+                              <span>{{ msg.statusText || '正在思考' }}</span>
+                              <span class="cmsg-progress-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                            </div>
+                            <div v-if="msg.toolTrace?.length" class="cmsg-progress-steps">
+                              <span v-for="(step, stepIdx) in msg.toolTrace" :key="`${step}-${stepIdx}`" class="cmsg-progress-step">
+                                <span class="material-symbols-outlined">check_circle</span>
+                                {{ step }}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <div v-if="msg.content" class="cmsg-ai-content" v-html="formatAnalysis(msg.content, msg.isHtml)"></div>
                       </div>
-                      <div class="cmsg-actions">
+                      <div v-if="!msg.pending && (msg.content || msg.structured)" class="cmsg-actions">
                         <button
                           v-if="msg.structured && msg.structured.requires_confirmation && !msg.structured.confirmed"
                           type="button"
@@ -583,13 +598,35 @@ interface ChatMessage {
   structured?: any  // 结构化报价数据
   isHtml?: boolean  // 是否为 HTML 富文本
   toolTrace?: string[]
+  pending?: boolean
+  statusText?: string
 }
 const chatMessages = ref<ChatMessage[]>([])
 const chatMessagesRef = ref<HTMLElement | null>(null)
 
+const toolProgressLabels: Record<string, string> = {
+  search_products: '查询产品数据库',
+  list_service_levels: '读取服务级别',
+  describe_quote_type: '确认报价类型',
+  parse_bom_from_files: '解析附件清单',
+  match_devices: '匹配设备型号',
+  create_maintenance_quote: '计算维保报价',
+  confirm_pending_quote: '确认报价结果',
+  lenovo_quote: '计算联想框架报价',
+  list_job_positions: '读取岗位薪资',
+  query_city_social: '查询城市社保标准',
+  onsite_quote_estimate: '计算驻场服务报价',
+  list_relocation_vehicles: '读取搬迁车型',
+  relocation_quote_estimate: '计算搬迁服务报价',
+}
+
+function toolProgressLabel(name: string) {
+  return toolProgressLabels[name] || '处理系统数据'
+}
+
 // 模型选择（仅用于接口，无 UI）
-const availableModels = ref<string[]>(['qwen-plus'])
-const selectedModel = ref('qwen-plus')
+const availableModels = ref<string[]>(['gpt-4.1-mini'])
+const selectedModel = ref('gpt-4.1-mini')
 
 function persistSessionId(id: string) {
   if (!id) return
@@ -835,7 +872,14 @@ async function handleGenerate() {
 
   chatMessages.value.push(
     { role: 'user', content: userContent, fileNames: fileNames.length ? fileNames : undefined },
-    { role: 'assistant', content: '', isHtml: false, toolTrace: [] }
+    {
+      role: 'assistant',
+      content: '',
+      isHtml: false,
+      toolTrace: [],
+      pending: true,
+      statusText: fileNames.length ? '正在读取附件并理解需求' : '正在理解您的需求',
+    }
   )
   chatMode.value = true
   const assistantIdx = chatMessages.value.length - 1
@@ -880,6 +924,8 @@ async function handleGenerate() {
       throw new Error(detail)
     }
 
+    chatMessages.value[assistantIdx].statusText = '正在分析需求'
+
     const reader = resp.body?.getReader()
     if (!reader) throw new Error('浏览器不支持流式读取')
 
@@ -920,17 +966,29 @@ async function handleGenerate() {
             structured = parsed.structured
             const msg = chatMessages.value[assistantIdx]
             msg.structured = structured
+            msg.statusText = '正在整理报价结果'
           }
           if (parsed.tool_call?.name) {
             const msg = chatMessages.value[assistantIdx]
             msg.toolTrace = msg.toolTrace || []
-            msg.toolTrace.push(`调用 ${parsed.tool_call.name}`)
+            const stepLabel = toolProgressLabel(parsed.tool_call.name)
+            msg.statusText = `正在${stepLabel}`
+          }
+          if (parsed.tool_result?.name) {
+            const msg = chatMessages.value[assistantIdx]
+            const stepLabel = toolProgressLabel(parsed.tool_result.name)
+            msg.toolTrace = msg.toolTrace || []
+            if (!msg.toolTrace.includes(stepLabel)) {
+              msg.toolTrace.push(stepLabel)
+            }
+            msg.statusText = '正在继续分析'
           }
           if (parsed.content) {
             fullText += parsed.content
             const msg = chatMessages.value[assistantIdx]
             msg.content = fullText
             msg.isHtml = fullText.includes('<table') || fullText.includes('<div')
+            msg.statusText = '正在生成答复'
           }
         } catch {
           // ignore
@@ -956,6 +1014,8 @@ async function handleGenerate() {
     }
     finalMsg.content = fullText || '未返回分析内容'
     finalMsg.isHtml = fullText.includes('<table') || fullText.includes('<div')
+    finalMsg.pending = false
+    finalMsg.statusText = undefined
     if (structured) finalMsg.structured = structured
   } catch (err: any) {
     console.error('[AI Stream] Error:', err)
@@ -965,6 +1025,11 @@ async function handleGenerate() {
       chatMessages.value.splice(assistantIdx - 1, 2)
     }
   } finally {
+    const finalMsg = chatMessages.value[assistantIdx]
+    if (finalMsg) {
+      finalMsg.pending = false
+      finalMsg.statusText = undefined
+    }
     isGenerating.value = false
     await nextTick()
     chatMessagesRef.value?.scrollTo({ top: chatMessagesRef.value.scrollHeight, behavior: 'smooth' })
@@ -2128,6 +2193,95 @@ onUnmounted(() => {
   margin: 0 0 0.75rem;
   padding-bottom: 0.5rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.cmsg-progress {
+  width: min(18rem, calc(100vw - 7rem));
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  color: #cbd5e1;
+}
+
+.cmsg-progress-icon {
+  flex-shrink: 0;
+  margin-top: 0.125rem;
+  color: #60a5fa;
+  font-size: 1.25rem;
+  animation: cmsg-progress-spin 1.4s linear infinite;
+}
+
+.cmsg-progress-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+.cmsg-progress-title {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-height: 1.5rem;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.cmsg-progress-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.cmsg-progress-dots i {
+  width: 0.25rem;
+  height: 0.25rem;
+  border-radius: 50%;
+  background: #60a5fa;
+  animation: cmsg-dot-pulse 1.2s ease-in-out infinite;
+}
+
+.cmsg-progress-dots i:nth-child(2) { animation-delay: 0.16s; }
+.cmsg-progress-dots i:nth-child(3) { animation-delay: 0.32s; }
+
+.cmsg-progress-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+
+.cmsg-progress-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid rgba(34, 197, 94, 0.2);
+  border-radius: 0.375rem;
+  background: rgba(34, 197, 94, 0.08);
+  color: #86efac;
+  font-size: 0.75rem;
+  line-height: 1.25;
+}
+
+.cmsg-progress-step .material-symbols-outlined {
+  font-size: 0.875rem;
+}
+
+@keyframes cmsg-progress-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes cmsg-dot-pulse {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-0.15rem); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cmsg-progress-icon,
+  .cmsg-progress-dots i {
+    animation: none;
+  }
 }
 
 .cmsg-ai-content {

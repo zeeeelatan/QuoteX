@@ -108,18 +108,20 @@
                         <p class="info-value">地址：{{ selectedCustomerInfo.customerAddress }}</p>
                       </div>
                       <div class="info-item info-item-right">
-                        <input
-                          type="text"
-                          v-model="editableProjectLabel"
-                          class="info-label editable-input"
-                          :size="editableProjectLabel.length || 10"
-                        />
-                        <input
-                          type="text"
-                          v-model="editableProjectName"
-                          class="info-value-bold editable-input"
-                          :size="editableProjectName.length || 10"
-                        />
+                        <p
+                          class="info-label editable-field"
+                          contenteditable="true"
+                          spellcheck="false"
+                          @blur="onProjectLabelBlur"
+                          @keydown.enter.prevent="blurEditableField"
+                        >{{ editableProjectLabel }}</p>
+                        <p
+                          class="info-value-bold editable-field"
+                          contenteditable="true"
+                          spellcheck="false"
+                          @blur="onProjectNameBlur"
+                          @keydown.enter.prevent="blurEditableField"
+                        >{{ editableProjectName }}</p>
                         <p class="info-value">报价日期：{{ quotationDate }}</p>
                         <p class="info-value info-expiry">有效期至：{{ expiryDate }}</p>
                       </div>
@@ -753,6 +755,8 @@ async function loadServiceTerms() {
 // 当 modal 打开时加载数据
 watch(() => props.isOpen, (newVal) => {
   if (newVal) {
+    editableProjectLabel.value = '项目信息'
+    editableProjectName.value = props.data?.projectName?.trim() || '项目名称'
     loadCompaniesAndCustomers()
     loadServiceTerms()
   }
@@ -860,9 +864,25 @@ const currentServiceTermsLines = computed(() => {
   return currentServiceTermsContent.value.split('\n').map(line => line.trimEnd())
 })
 
-// 可编辑的项目信息
+// 可编辑的项目信息（使用与客户信息相同的 p 标签样式，保证字体一致）
 const editableProjectLabel = ref('项目信息')
 const editableProjectName = ref('项目名称')
+
+function blurEditableField(event: Event) {
+  ;(event.target as HTMLElement)?.blur()
+}
+
+function onProjectLabelBlur(event: FocusEvent) {
+  const text = (event.target as HTMLElement).innerText.replace(/\n/g, '').trim()
+  editableProjectLabel.value = text || '项目信息'
+  ;(event.target as HTMLElement).innerText = editableProjectLabel.value
+}
+
+function onProjectNameBlur(event: FocusEvent) {
+  const text = (event.target as HTMLElement).innerText.replace(/\n/g, '').trim()
+  editableProjectName.value = text || '项目名称'
+  ;(event.target as HTMLElement).innerText = editableProjectName.value
+}
 
 // Logo 上传相关
 const logoInputRef = ref<HTMLInputElement | null>(null)
@@ -1218,15 +1238,11 @@ async function downloadPDF() {
           box-sizing: border-box;
         `
 
-        // 可编辑 input → 文本，确保 PDF 可见
-        clonedEl.querySelectorAll('input.editable-input').forEach((input) => {
-          const inputEl = input as HTMLInputElement
-          const p = clonedDoc.createElement('p')
-          p.textContent = inputEl.value
-          if (inputEl.classList.contains('info-label')) p.className = 'info-label'
-          else if (inputEl.classList.contains('info-value-bold')) p.className = 'info-value-bold'
-          else p.className = inputEl.className
-          inputEl.parentNode?.replaceChild(p, inputEl)
+        // 可编辑字段导出时去掉 contenteditable，保留原有 info-* 样式类
+        clonedEl.querySelectorAll('.editable-field').forEach((el) => {
+          const node = el as HTMLElement
+          node.removeAttribute('contenteditable')
+          node.classList.remove('editable-field')
         })
 
         clonedEl.querySelectorAll('.logo-upload-hint').forEach(
@@ -2062,61 +2078,40 @@ function sendEmail() {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  margin-bottom: 0.5rem;
+  margin: 0 0 0.5rem;
+  line-height: 1.4;
 }
 
 .info-value {
   font-size: 0.875rem;
   color: #64748b;
+  margin: 0;
+  line-height: 1.4;
 }
 
 .info-value-bold {
   font-size: 0.875rem;
   font-weight: 700;
   color: #0f172a;
-}
-
-.editable-input {
-  background: transparent;
-  border: none;
-  outline: none;
-  padding: 0;
   margin: 0;
-  width: 100%;
-  text-align: inherit;
-  font-family: inherit;
+  line-height: 1.4;
+}
+
+/* 仅交互反馈，不改字体/颜色，与客户信息保持一致 */
+.editable-field {
+  outline: none;
+  cursor: text;
+  border-radius: 0.25rem;
   transition: background-color 0.2s;
+  min-height: 1.25em;
 }
 
-.editable-input:hover {
+.editable-field:hover {
   background-color: rgba(59, 130, 246, 0.08);
-  border-radius: 0.25rem;
 }
 
-.editable-input:focus {
+.editable-field:focus {
   background-color: rgba(59, 130, 246, 0.12);
-  border-radius: 0.25rem;
-}
-
-input.info-label.editable-input {
-  font-size: 0.75rem;
-  color: #9ca3af;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 0.5rem;
-  min-width: 120px;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-input.info-value-bold.editable-input {
-  font-size: 0.875rem;
-  font-weight: 700;
-  color: #0f172a;
-  min-width: 150px;
-  width: 100%;
-  box-sizing: border-box;
 }
 
 .info-expiry {
