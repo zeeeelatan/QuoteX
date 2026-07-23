@@ -1,5 +1,5 @@
 <template>
-  <div class="onsite-calculator-page" :class="{ 'embedded-mode': embedded, 'korea-mode': isKorea }">
+  <div class="onsite-calculator-page" :class="{ 'embedded-mode': embedded, 'overseas-mode': isOverseas }">
     <!-- Header (hidden when embedded) -->
     <div v-if="!embedded" class="page-header">
       <div class="breadcrumb">
@@ -22,8 +22,9 @@
             <span class="material-symbols-outlined">public</span>
             <span>国家选择</span>
             <select v-model="selectedCountry" @change="onCountryChange">
-              <option value="china">中国大陆</option>
-              <option value="korea">韩国</option>
+              <option v-for="country in countryOptions" :key="country.value" :value="country.value">
+                {{ country.label }}
+              </option>
             </select>
           </label>
           <button class="header-btn" @click="resetForm">
@@ -54,8 +55,8 @@
             <div class="col-header col-seq">序号</div>
             <div class="col-header col-city">目标城市</div>
             <div class="col-header col-position">岗位职级</div>
-            <div class="col-header col-salary">税前月薪{{ isKorea ? '（KRW）' : '' }}</div>
-            <div v-if="!isKorea" class="col-header">税后工资</div>
+            <div class="col-header col-salary">税前月薪{{ isOverseas ? `（${costCurrencyCode}）` : '' }}</div>
+            <div v-if="!hideAfterTaxSalary" class="col-header">税后工资</div>
             <div class="col-header col-count">人员数量</div>
             <div class="col-header col-cycle">服务周期</div>
             <div class="col-header col-subtotal">金额小计</div>
@@ -163,7 +164,7 @@
                   {{ getSalaryRangeTitle(row) }}
                 </div>
               </div>
-              <div v-if="!isKorea" class="col-salary">
+              <div v-if="!hideAfterTaxSalary" class="col-salary">
                 <div class="input-with-prefix">
                   <span class="input-prefix">¥</span>
                   <input v-model.number="row.afterTaxSalary" class="row-input" type="number" @input="onAfterTaxSalaryChange(index)" />
@@ -200,6 +201,7 @@
           <div class="total-subtotal">
             <span class="total-label">合计金额:</span>
             <span class="total-value">{{ formatCurrency(baseSubtotal) }}</span>
+            <span v-if="isOverseas" class="converted-total">折合 {{ formatQuoteCurrency(totalSubtotal) }}</span>
           </div>
         </div>
 
@@ -377,6 +379,35 @@
               </div>
             </div>
           </div>
+          <div v-if="isWorkbookInternational && selectedCountryParameters.length" class="international-parameter-panel">
+            <div class="international-parameter-title">
+              <span class="material-symbols-outlined">badge</span>
+              属地用工条件（当前岗位）
+            </div>
+            <div class="international-parameter-grid">
+              <label v-for="parameter in selectedCountryParameters" :key="parameter.key" class="international-parameter-item">
+                <span>{{ parameter.label }}</span>
+                <select
+                  v-if="parameter.type === 'select'"
+                  v-model="selectedPositionRow.countryParams[parameter.key]"
+                  @change="onInternationalParameterChange"
+                >
+                  <option v-for="option in parameter.options" :key="option.value" :value="option.value">
+                    {{ option.label }}
+                  </option>
+                </select>
+                <div v-else class="input-with-suffix">
+                  <input
+                    v-model.number="selectedPositionRow.countryParams[parameter.key]"
+                    type="number"
+                    min="0"
+                    @input="onInternationalParameterChange"
+                  />
+                  <span class="input-suffix">{{ parameter.suffix || '' }}</span>
+                </div>
+              </label>
+            </div>
+          </div>
           <!-- Tabs -->
           <div class="tabs-container">
             <div class="tabs">
@@ -403,9 +434,9 @@
                   <th>险种</th>
                   <th>计算基数</th>
                   <th>企业比例</th>
-                  <th v-if="!isKorea">个人比例</th>
+                  <th v-if="!hideAfterTaxSalary">个人比例</th>
                   <th>社保成本（公司）</th>
-                  <th v-if="!isKorea">社保成本（个人）</th>
+                  <th v-if="!hideAfterTaxSalary">社保成本（个人）</th>
                 </tr>
               </thead>
               <tbody>
@@ -413,7 +444,7 @@
                   <td class="type-cell">{{ item.type }}</td>
                   <td class="calc-base-cell">
                     <input
-                      v-if="item.type === '工伤保险' && !isKorea"
+                      v-if="item.type === '工伤保险' && !isOverseas"
                       v-model.number="item.calcBase"
                       class="calc-base-input"
                       type="number"
@@ -432,22 +463,22 @@
                     <input v-model.number="item.corpRate" class="rate-edit-input" type="number" step="0.01" min="0" @input="onRateChange('social', idx)" />
                     <span class="rate-percent">%</span>
                   </td>
-                  <td v-if="!isKorea">
+                  <td v-if="!hideAfterTaxSalary">
                     <input v-model.number="item.indivRate" class="rate-edit-input" type="number" step="0.01" min="0" @input="onRateChange('social', idx)" />
                     <span class="rate-percent">%</span>
                   </td>
                   <td class="cost-corp">{{ formatCurrency(calculateSocialCost(item.calcBase, item.corpRate)) }}</td>
-                  <td v-if="!isKorea" class="cost-indiv">{{ formatCurrency(calculateSocialCost(item.calcBase, item.indivRate)) }}</td>
+                  <td v-if="!hideAfterTaxSalary" class="cost-indiv">{{ formatCurrency(calculateSocialCost(item.calcBase, item.indivRate)) }}</td>
                 </tr>
                 <tr class="summary-row">
-                  <td :colspan="isKorea ? 3 : 4" class="summary-label">{{ isKorea ? '雇主保险小计' : '社保成本小计' }}（当前岗位月度）</td>
+                  <td :colspan="hideAfterTaxSalary ? 3 : 4" class="summary-label">{{ isOverseas ? '雇主法定成本小计' : '社保成本小计' }}（当前岗位月度）</td>
                   <td class="summary-value">{{ formatCurrency(selectedSocialCorpTotal) }}</td>
-                  <td v-if="!isKorea" class="summary-value">{{ formatCurrency(selectedSocialIndivTotal) }}</td>
+                  <td v-if="!hideAfterTaxSalary" class="summary-value">{{ formatCurrency(selectedSocialIndivTotal) }}</td>
                 </tr>
                 <tr class="summary-row">
-                  <td :colspan="isKorea ? 3 : 4" class="summary-label">{{ isKorea ? '雇主保险小计' : '社保成本小计' }}（全部岗位总计）</td>
+                  <td :colspan="hideAfterTaxSalary ? 3 : 4" class="summary-label">{{ isOverseas ? '雇主法定成本小计' : '社保成本小计' }}（全部岗位总计）</td>
                   <td class="summary-value">{{ formatCurrency(allRowsSocialCorpTotal) }}</td>
-                  <td v-if="!isKorea" class="summary-value">{{ formatCurrency(allRowsSocialIndivTotal) }}</td>
+                  <td v-if="!hideAfterTaxSalary" class="summary-value">{{ formatCurrency(allRowsSocialIndivTotal) }}</td>
                 </tr>
               </tbody>
             </table>
@@ -544,7 +575,7 @@
             </div>
             <div class="update-info">
               <span class="material-symbols-outlined info-icon">info</span>
-              <span>{{ isKorea ? '韩国规则：NPS基数上限 6,170,000 KRW；比例可手动调整' : '数据最后更新: 2024-01-15 (AI自动同步)' }}</span>
+              <span>{{ hardCostRuleUpdateText }}</span>
             </div>
           </div>
         </div>
@@ -785,7 +816,7 @@
                   <span class="input-suffix">%</span>
                 </div>
               </div>
-              <div v-if="!isKorea" class="global-param-item">
+              <div v-if="!isOverseas" class="global-param-item">
                 <label class="param-label">账期</label>
                 <div class="input-with-suffix">
                   <input
@@ -810,7 +841,7 @@
                   <span class="input-suffix">%</span>
                 </div>
               </div>
-              <div v-if="!isKorea" class="global-param-item">
+              <div v-if="!isOverseas" class="global-param-item">
                 <label class="param-label">年化资金成本率</label>
                 <div class="input-with-suffix">
                   <input
@@ -823,7 +854,14 @@
                   <span class="input-suffix">%</span>
                 </div>
               </div>
-              <div v-if="isKorea" class="global-param-item">
+              <div v-if="isWorkbookInternational" class="global-param-item">
+                <label class="param-label">EOR/当地服务费率</label>
+                <div class="input-with-suffix">
+                  <input v-model.number="globalParams.eorRate" class="param-input" type="number" min="0" @input="calculateAll" />
+                  <span class="input-suffix">%</span>
+                </div>
+              </div>
+              <div v-if="isOverseas" class="global-param-item">
                 <label class="param-label">我方管理费率</label>
                 <div class="input-with-suffix">
                   <input
@@ -836,8 +874,8 @@
                   <span class="input-suffix">%</span>
                 </div>
               </div>
-              <div v-if="isKorea" class="global-param-item">
-                <label class="param-label">KRW/CNY 汇率</label>
+              <div v-if="isOverseas" class="global-param-item">
+                <label class="param-label">{{ costCurrencyCode }}/CNY 汇率</label>
                 <div class="input-with-suffix">
                   <input
                     v-model.number="globalParams.exchangeRate"
@@ -850,6 +888,11 @@
                   <span class="input-suffix">CNY</span>
                 </div>
               </div>
+            </div>
+            <div v-if="isOverseas" class="dual-currency-summary">
+              <span>当地币种成本 <strong>{{ formatCurrency(baseSubtotal) }}</strong></span>
+              <span>折合人民币成本 <strong>{{ formatQuoteCurrency(totalSubtotal) }}</strong></span>
+              <small>汇率日期：{{ currentCountryRule?.exchange_rate_date || '-' }}</small>
             </div>
           </div>
 
@@ -929,7 +972,7 @@
         <p class="mobile-label">单人服务费</p>
         <p class="mobile-price">¥ {{ formatNumberCompact(totalSubtotal) }}</p>
       </div>
-      <button class="mobile-calc-btn">测算</button>
+      <button class="mobile-calc-btn" @click="startCalculation">测算</button>
     </div>
 
     <!-- 预览报价单弹窗 -->
@@ -1077,11 +1120,67 @@ const props = withDefaults(defineProps<{
 })
 
 const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5002'
-type CountryMode = 'china' | 'korea'
+type CountryMode = string
+
+interface CountryParameterOption {
+  label: string
+  value: string
+}
+
+interface CountryParameter {
+  key: string
+  label: string
+  type: 'select' | 'number'
+  default: string | number
+  suffix?: string
+  options?: CountryParameterOption[]
+}
+
+interface InternationalCountryRule {
+  country_code: string
+  country_name: string
+  default_city: string
+  currency: string
+  currency_symbol: string
+  currency_precision: number
+  exchange_rate_cny: number
+  exchange_rate_date: string
+  eor_rate: number
+  management_rate: number
+  profit_rate: number
+  vat_rate: number
+  local_vat_rate: number
+  local_vat_enabled: boolean
+  effective_label: string
+  employee_profile: string
+  parameter_config: CountryParameter[]
+}
 
 const selectedCountry = ref<CountryMode>('china')
 const isKorea = computed(() => selectedCountry.value === 'korea')
-const costCurrencySymbol = computed(() => isKorea.value ? '₩' : '¥')
+const isOverseas = computed(() => selectedCountry.value !== 'china')
+const isWorkbookInternational = computed(() => isOverseas.value && !isKorea.value)
+const hideAfterTaxSalary = computed(() => isOverseas.value)
+const internationalCountryRules = ref<InternationalCountryRule[]>([])
+const currentCountryRule = computed(() =>
+  internationalCountryRules.value.find(item => item.country_code === selectedCountry.value)
+)
+const countryOptions = computed(() => [
+  { label: '中国大陆', value: 'china' },
+  { label: '韩国', value: 'korea' },
+  ...internationalCountryRules.value.map(item => ({ label: item.country_name, value: item.country_code }))
+])
+const costCurrencyCode = computed(() => isKorea.value ? 'KRW' : currentCountryRule.value?.currency || 'CNY')
+const costCurrencySymbol = computed(() => isKorea.value ? '₩' : currentCountryRule.value?.currency_symbol || '¥')
+const costCurrencyPrecision = computed(() => isKorea.value ? 0 : currentCountryRule.value?.currency_precision ?? 2)
+const selectedCountryParameters = computed(() => currentCountryRule.value?.parameter_config || [])
+const hardCostRuleUpdateText = computed(() => {
+  if (isKorea.value) return '韩国规则：NPS基数上限 6,170,000 KRW；比例可手动调整'
+  if (currentCountryRule.value) {
+    return `${currentCountryRule.value.country_name}规则：${currentCountryRule.value.effective_label}；默认身份为${currentCountryRule.value.employee_profile}`
+  }
+  return '城市社保与公积金规则来自后台城市社保基准'
+})
 
 // Router
 const router = useRouter()
@@ -1125,6 +1224,7 @@ interface PositionRow {
   onDemandCosts: OnDemandCostItem[]
   contingencyCosts: ContingencyCostItem[]
   otherCosts: OtherCostItem[]
+  countryParams: Record<string, string | number>
 }
 
 interface PositionOption {
@@ -1138,6 +1238,10 @@ interface PositionOption {
   systemSalaryMax: number | null
   systemSalaryMin: number | null
   city?: string
+  cityName?: string
+  region?: string
+  currency?: string
+  monthlySalary?: number
   monthlySalaryKrw?: number
 }
 
@@ -1359,13 +1463,18 @@ const getDefaultOtherCosts = (): OtherCostItem[] => [
   { category: '资金风险成本', name: '赔付/违约风险准备', formula: 'salaryRate', calculation: '阶段成本×违约风险比例', basis: '赔付/违约风险比例，无则填0，按照实际项目计算', value: 0, amount: 0 }
 ]
 
-function createPositionRow(country: CountryMode, option?: PositionOption): PositionRow {
-  const salary = country === 'korea' ? (option?.monthlySalaryKrw || 0) : 0
+function createPositionRow(country: CountryMode): PositionRow {
+  const workbookInternational = country !== 'china' && country !== 'korea'
+  const salary = 0
+  const countryRule = internationalCountryRules.value.find(item => item.country_code === country)
+  const countryParams = Object.fromEntries(
+    (countryRule?.parameter_config || []).map(parameter => [parameter.key, parameter.default])
+  )
   return {
     id: String(nextRowId++),
     country,
-    city: country === 'korea' ? (option?.city || '首尔') : '',
-    position: option ? String(option.id) : '',
+    city: '',
+    position: '',
     salary,
     afterTaxSalary: 0,
     personnelCount: 1,
@@ -1373,14 +1482,15 @@ function createPositionRow(country: CountryMode, option?: PositionOption): Posit
     serviceCycleCount: 12,
     subtotal: 0,
     unitPrice: 0,
-    socialRules: country === 'korea' ? getDefaultKoreaSocialRules(salary) : getDefaultSocialRules(),
-    fundRules: country === 'korea' ? [] : getDefaultFundRules(),
+    socialRules: country === 'korea' ? getDefaultKoreaSocialRules(salary) : workbookInternational ? [] : getDefaultSocialRules(),
+    fundRules: country === 'china' ? getDefaultFundRules() : [],
     mgmtRules: getDefaultMgmtRules(),
     riskRatio: 8.6,
     opsCosts: getDefaultOpsCosts(),
     onDemandCosts: getDefaultOnDemandCosts(),
     contingencyCosts: getDefaultContingencyCosts(),
-    otherCosts: country === 'korea' ? getDefaultKoreaOtherCosts() : getDefaultOtherCosts()
+    otherCosts: country === 'korea' ? getDefaultKoreaOtherCosts() : getDefaultOtherCosts(),
+    countryParams
   }
 }
 
@@ -1405,12 +1515,14 @@ const positionRows = ref<PositionRow[]>([
     opsCosts: getDefaultOpsCosts(),
     onDemandCosts: getDefaultOnDemandCosts(),
     contingencyCosts: getDefaultContingencyCosts(),
-    otherCosts: getDefaultOtherCosts()
+    otherCosts: getDefaultOtherCosts(),
+    countryParams: {}
   }
 ])
 
 // Selected row index for filtering rules display (人力成本)
 const selectedRowIndex = ref(0)
+const selectedPositionRow = computed<PositionRow>(() => positionRows.value[selectedRowIndex.value] || positionRows.value[0]!)
 
 // Selected row index for flexible cost (灵活人力成本)
 const selectedFlexRowIndex = ref(0)
@@ -1447,12 +1559,13 @@ const globalParams = ref({
   profitRate: 0,
   fundingCostRate: 3.5,  // 年化资金成本率，默认 3.5%
   managementRate: 0,
+  eorRate: 0,
   exchangeRate: 1
 })
 
-const countryGlobalParams: Record<CountryMode, typeof globalParams.value> = {
-  china: { vatRate: 6, paymentCycle: 90, profitRate: 0, fundingCostRate: 3.5, managementRate: 0, exchangeRate: 1 },
-  korea: { vatRate: 6, paymentCycle: 0, profitRate: 8, fundingCostRate: 0, managementRate: 12, exchangeRate: 0.004403 }
+const countryGlobalParams: Record<string, typeof globalParams.value> = {
+  china: { vatRate: 6, paymentCycle: 90, profitRate: 0, fundingCostRate: 3.5, managementRate: 0, eorRate: 0, exchangeRate: 1 },
+  korea: { vatRate: 6, paymentCycle: 0, profitRate: 8, fundingCostRate: 0, managementRate: 12, eorRate: 0, exchangeRate: 0.004403 }
 }
 
 // City options - fetched from backend
@@ -1515,8 +1628,12 @@ function getFilteredCities(rowId: string) {
 // Get filtered positions
 function getFilteredPositions(rowId: string) {
   const query = getSearchQuery(rowId, 'position').toLowerCase()
-  if (!query) return availablePositions.value
-  return availablePositions.value.filter(pos => pos.name.toLowerCase().includes(query))
+  const row = positionRows.value.find(item => item.id === rowId)
+  const positions = isWorkbookInternational.value && row?.city
+    ? availablePositions.value.filter(pos => pos.city === row.city)
+    : availablePositions.value
+  if (!query) return positions
+  return positions.filter(pos => pos.name.toLowerCase().includes(query))
 }
 
 // Select city
@@ -1694,8 +1811,8 @@ let nextRowId = 2
 
 // Tabs
 const activeTab = ref('social')
-const ruleTabs = computed(() => isKorea.value
-  ? [{ key: 'social', label: '韩国雇主保险规则' }]
+const ruleTabs = computed(() => isOverseas.value
+  ? [{ key: 'social', label: isKorea.value ? '韩国雇主保险规则' : '属地雇主法定成本' }]
   : [
       { key: 'social', label: '社保规则' },
       { key: 'fund', label: '公积金规则' }
@@ -2035,6 +2152,17 @@ const koreaOtherCostDefaultValues: Record<string, number> = {
   跨境汇款手续费: 0.5
 }
 
+const internationalOtherCostDefaultValues: Record<string, number> = {
+  '商业保险/雇主责任险（医疗10W，身故100W，身残按照比例支付）': 450,
+  '商业保险/意外险10W': 20,
+  体检费摊销: 50,
+  节日福利摊销: 33,
+  招聘成本摊销: 1.5,
+  'PM/交付管理分摊': 1.5,
+  HR分摊: 1.5,
+  劳动纠纷风险准备: 8.33
+}
+
 function isOtherCostGroupCollapsed(category: string): boolean {
   return collapsedOtherCostGroups.value[category] !== false
 }
@@ -2093,6 +2221,12 @@ async function resetHardCostToDefault() {
     return
   }
 
+  if (row.country !== 'china') {
+    await refreshInternationalRules(selectedRowIndex.value)
+    ElMessage.success(`已恢复${currentCountryRule.value?.country_name || '属地'}雇主成本默认值`)
+    return
+  }
+
   // Reset management rules to default
   row.mgmtRules = getDefaultMgmtRules()
 
@@ -2145,6 +2279,13 @@ async function resetAllHardCostToDefault() {
       calculateRow(index)
     })
     ElMessage.success(`已恢复全部 ${positionRows.value.length} 个岗位的韩国雇主保险默认值`)
+    return
+  }
+  if (isWorkbookInternational.value) {
+    for (let index = 0; index < positionRows.value.length; index++) {
+      await refreshInternationalRules(index)
+    }
+    ElMessage.success(`已恢复全部 ${positionRows.value.length} 个岗位的属地雇主成本默认值`)
     return
   }
   // Clear all city cache to force reload from backend
@@ -2480,7 +2621,7 @@ function confirmOtherCostCalculator() {
 
 function getOtherCostValueSuffix(item: OtherCostItem): string {
   if (isCalculatorOtherCost(item)) {
-    return isKorea.value ? 'KRW' : '元'
+    return isOverseas.value ? costCurrencyCode.value : '元'
   }
   if ([
     'salaryRate',
@@ -2493,7 +2634,7 @@ function getOtherCostValueSuffix(item: OtherCostItem): string {
   if (item.formula === 'severance') {
     return '月'
   }
-  return isKorea.value ? 'KRW' : '元'
+  return isOverseas.value ? costCurrencyCode.value : '元'
 }
 
 function getOtherCostStep(item: OtherCostItem): string {
@@ -2538,7 +2679,11 @@ function toggleSuggestedOtherCostValues() {
         item.calculatorParams = undefined
         return
       }
-      const defaults = isKorea.value ? koreaOtherCostDefaultValues : otherCostWorkbookDefaultValues
+      const defaults = isKorea.value
+        ? koreaOtherCostDefaultValues
+        : isWorkbookInternational.value
+          ? internationalOtherCostDefaultValues
+          : otherCostWorkbookDefaultValues
       item.value = applying ? (defaults[item.name] ?? 0) : 0
     })
     recalculateOtherCostsForRow(row)
@@ -2574,6 +2719,7 @@ function onSelectedRowChange() {
 function updateSelectedRowCalcBase() {
   const row = positionRows.value[selectedRowIndex.value]
   if (!row) return
+  if (row.country !== 'china' && row.country !== 'korea') return
 
   const salary = row.salary || 0
 
@@ -2911,7 +3057,7 @@ const optionalCostMonthly = computed(() => {
 // Computed - Total project amount (without tax and profit)
 // Formula: 单人月成本（工资+社保公司+公积金公司+其他成本）× 人数 × 周期
 const totalSubtotal = computed(() => {
-  if (!isKorea.value) return baseSubtotal.value
+  if (!isOverseas.value) return baseSubtotal.value
   return baseSubtotal.value * (globalParams.value.exchangeRate || 0)
 })
 
@@ -2924,9 +3070,12 @@ const positionSubtotal = computed(() => {
 // Formula: totalSubtotal × (1 + 利润率)
 const baseProjectAmount = computed(() => {
   const profitMultiplier = 1 + (globalParams.value.profitRate || 0) / 100
-  if (!isKorea.value) return totalSubtotal.value * profitMultiplier
+  if (!isOverseas.value) return totalSubtotal.value * profitMultiplier
   const managementMultiplier = 1 + (globalParams.value.managementRate || 0) / 100
-  return totalSubtotal.value * managementMultiplier * profitMultiplier
+  const eorMultiplier = isWorkbookInternational.value
+    ? 1 + (globalParams.value.eorRate || 0) / 100
+    : 1
+  return totalSubtotal.value * eorMultiplier * managementMultiplier * profitMultiplier
 })
 
 // Computed - Funding cost rate for the payment cycle
@@ -2968,8 +3117,9 @@ const totalCycles = computed(() => {
 // Formula: totalSubtotal × 利润率
 const totalGrossProfit = computed(() => {
   const profitRate = (globalParams.value.profitRate || 0) / 100
-  const profitBase = isKorea.value
-    ? totalSubtotal.value * (1 + (globalParams.value.managementRate || 0) / 100)
+  const eorMultiplier = isWorkbookInternational.value ? 1 + (globalParams.value.eorRate || 0) / 100 : 1
+  const profitBase = isOverseas.value
+    ? totalSubtotal.value * eorMultiplier * (1 + (globalParams.value.managementRate || 0) / 100)
     : totalSubtotal.value
   return profitBase * profitRate
 })
@@ -2989,7 +3139,7 @@ const totalDealAmount = computed(() => {
 // 使用项目总额作为分母，所有项占比之和为 100%
 const costBreakdown = computed(() => {
   const projectTotal = finalProjectAmount.value
-  const exchangeRate = isKorea.value ? (globalParams.value.exchangeRate || 0) : 1
+  const exchangeRate = isOverseas.value ? (globalParams.value.exchangeRate || 0) : 1
   const salaryAmountKrw = positionRows.value.reduce((sum, row) => {
     return sum + (row.salary || 0) * (row.personnelCount || 1) * getServiceMonths(row)
   }, 0)
@@ -3001,8 +3151,12 @@ const costBreakdown = computed(() => {
   const salaryAmount = salaryAmountKrw * exchangeRate
   const socialFundAmount = socialFundAmountKrw * exchangeRate
   const otherAmount = otherCostTotal.value * exchangeRate
-  const managementAmount = isKorea.value
-    ? totalSubtotal.value * (globalParams.value.managementRate || 0) / 100
+  const eorAmount = isWorkbookInternational.value
+    ? totalSubtotal.value * (globalParams.value.eorRate || 0) / 100
+    : 0
+  const managementBase = totalSubtotal.value + eorAmount
+  const managementAmount = isOverseas.value
+    ? managementBase * (globalParams.value.managementRate || 0) / 100
     : 0
   const profitAmount = totalGrossProfit.value
   const taxAmount = finalProjectAmount.value - baseProjectAmount.value
@@ -3011,10 +3165,13 @@ const costBreakdown = computed(() => {
 
   const items = [
     { name: '税前工资', percent: percent(salaryAmount), amount: salaryAmount, color: '#3b82f6' },
-    { name: isKorea.value ? '雇主保险' : '社保公积金（公司）', percent: percent(socialFundAmount), amount: socialFundAmount, color: '#14b8a6' },
+    { name: isOverseas.value ? '雇主法定成本' : '社保公积金（公司）', percent: percent(socialFundAmount), amount: socialFundAmount, color: '#14b8a6' },
     { name: '其他成本构成', percent: percent(otherAmount), amount: otherAmount, color: '#a855f7' },
   ]
-  if (isKorea.value) {
+  if (isWorkbookInternational.value) {
+    items.push({ name: 'EOR/当地服务费', percent: percent(eorAmount), amount: eorAmount, color: '#06b6d4' })
+  }
+  if (isOverseas.value) {
     items.push({ name: '我方管理费', percent: percent(managementAmount), amount: managementAmount, color: '#0ea5e9' })
   }
   items.push(
@@ -3028,6 +3185,9 @@ const costBreakdown = computed(() => {
 const aiInsight = computed(() => {
   if (isKorea.value) {
     return '韩国报价已分别计入EOR服务费、汇率风险、跨境手续费、我方管理费及国内开票税费。'
+  }
+  if (isWorkbookInternational.value) {
+    return `${currentCountryRule.value?.country_name || '国际'}报价按属地法定雇主成本测算，并同时显示当地币种成本与人民币开票金额。`
   }
   const margin = parseFloat(totalMargin.value)
   if (margin < 15) {
@@ -3043,7 +3203,8 @@ const aiInsight = computed(() => {
 // rate is stored as percentage number (e.g., 7 for 7%, 16 for 16%)
 function calculateSocialCost(calcBase: number, rate: number): number {
   const amount = (calcBase || 0) * ((rate || 0) / 100)
-  return isKorea.value ? Math.round(amount) : amount
+  const factor = 10 ** costCurrencyPrecision.value
+  return Math.round(amount * factor) / factor
 }
 
 // Computed - Total social insurance cost for company
@@ -3095,6 +3256,14 @@ function getRowCycleUnitText(cycleUnit: string): string {
 }
 
 function getCityName(cityKey: string): string {
+  const option = cityOptions.value.find(item => item.value === cityKey)
+  if (option) return option.label
+
+  if (cityKey.includes('::')) {
+    const [region, city] = cityKey.split('::')
+    return region && region !== city ? `${city}（${region}）` : city
+  }
+
   // If the value is already a Chinese name (contains Chinese characters), return directly
   if (/[\u4e00-\u9fa5]/.test(cityKey)) {
     return cityKey
@@ -3214,10 +3383,10 @@ function formatNumberCompact(num: number): string {
 
 function formatCurrency(num: number): string {
   const value = num || 0
-  if (isKorea.value) {
-    return '₩ ' + Math.round(value).toLocaleString('ko-KR')
-  }
-  return '¥ ' + value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return `${costCurrencySymbol.value} ` + value.toLocaleString('zh-CN', {
+    minimumFractionDigits: costCurrencyPrecision.value,
+    maximumFractionDigits: costCurrencyPrecision.value
+  })
 }
 
 function formatQuoteCurrency(num: number): string {
@@ -3308,9 +3477,11 @@ function recalculateOtherCostsForRow(row: PositionRow) {
   }
   row.otherCosts.forEach(item => {
     const amount = calculateOtherCostItem(item, row)
-    item.amount = row.country === 'korea'
-      ? Math.round(amount)
-      : Math.round(amount * 100) / 100
+    const precision = row.country === 'korea'
+      ? 0
+      : internationalCountryRules.value.find(rule => rule.country_code === row.country)?.currency_precision ?? 2
+    const factor = 10 ** precision
+    item.amount = Math.round(amount * factor) / factor
     if (isCalculatorOtherCost(item)) {
       item.value = item.amount
     }
@@ -3349,7 +3520,11 @@ function calculateRowSubtotal(row: PositionRow): number {
   const monthlySubtotalPerPerson = salary + socialCorpTotalForRow + fundCorpTotalForRow + otherCostTotalForRow
 
   // Round to 2 decimal places to match display precision
-  const roundedMonthlySubtotal = Math.round(monthlySubtotalPerPerson * 100) / 100
+  const precision = row.country === 'korea'
+    ? 0
+    : internationalCountryRules.value.find(rule => rule.country_code === row.country)?.currency_precision ?? 2
+  const factor = 10 ** precision
+  const roundedMonthlySubtotal = Math.round(monthlySubtotalPerPerson * factor) / factor
 
   // Calculate total based on personnel and cycle
   const personnelCount = row.personnelCount || 1
@@ -3371,22 +3546,24 @@ function calculateRow(index: number, skipAfterTaxCalc = false) {
   const salary = row.salary || 0
 
   // Update calcBase for this row's rules when salary changes
-  row.socialRules.forEach((item: any) => {
-    if (item.type === '工伤保险') {
-      item.calcBase = injuryCalcBase(item, salary)
-    } else {
+  if (row.country === 'china' || row.country === 'korea') {
+    row.socialRules.forEach((item: any) => {
+      if (item.type === '工伤保险') {
+        item.calcBase = injuryCalcBase(item, salary)
+      } else {
+        item.calcBase = clampBase(salary, item.minBase, item.maxBase)
+      }
+    })
+    row.fundRules.forEach((item: any) => {
       item.calcBase = clampBase(salary, item.minBase, item.maxBase)
-    }
-  })
-  row.fundRules.forEach((item: any) => {
-    item.calcBase = clampBase(salary, item.minBase, item.maxBase)
-  })
+    })
+  }
 
   recalculateOtherCostsForRow(row)
   row.subtotal = calculateRowSubtotal(row)
 
   // Auto-calculate after-tax salary if not manually editing
-  if (row.country === 'korea') {
+  if (row.country !== 'china') {
     row.afterTaxSalary = 0
   } else if (!skipAfterTaxCalc) {
     const socialIndivTotal = row.socialRules.reduce((sum: number, item: any) => {
@@ -3408,7 +3585,7 @@ function calculateRow(index: number, skipAfterTaxCalc = false) {
 }
 
 // Handle salary change - auto-calculate after-tax salary
-function onSalaryChange(index: number) {
+async function onSalaryChange(index: number) {
   const row = positionRows.value[index]
   if (row) {
     // 用户手动修改薪资后，城市/岗位联动不再自动覆盖
@@ -3418,13 +3595,19 @@ function onSalaryChange(index: number) {
     // 输入过程中只即时限制最高值；最低值在输入完成后校正，避免影响连续输入。
     clampSalaryToPositionBounds(row, false, true)
   }
+  if (row?.country && row.country !== 'china' && row.country !== 'korea') {
+    await refreshInternationalRules(index)
+  }
   calculateRow(index, false)
 }
 
-function enforceSalaryBounds(index: number) {
+async function enforceSalaryBounds(index: number) {
   const row = positionRows.value[index]
   if (!row) return
   clampSalaryToPositionBounds(row, true, true)
+  if (row.country !== 'china' && row.country !== 'korea') {
+    await refreshInternationalRules(index)
+  }
   calculateRow(index, false)
 }
 
@@ -3501,10 +3684,10 @@ function calculateAll() {
 
 // Add a new position row
 function addPositionRow() {
-  const defaultOption = isKorea.value ? availablePositions.value[0] : undefined
-  const row = createPositionRow(selectedCountry.value, defaultOption)
+  const row = createPositionRow(selectedCountry.value)
   positionRows.value.push(row)
-  calculateRow(positionRows.value.length - 1)
+  const index = positionRows.value.length - 1
+  calculateRow(index)
 }
 
 // Remove a position row
@@ -3522,6 +3705,30 @@ async function onRowCityChange(index: number) {
     row.socialRules = getDefaultKoreaSocialRules(row.salary)
     row.fundRules = []
     calculateRow(index)
+    return
+  }
+  if (row.country !== 'china') {
+    const previous = availablePositions.value.find(item => item.id === Number(row.position))
+    const nextPosition = previous
+      ? availablePositions.value.find(item =>
+          item.city === row.city && item.position === previous.position && item.level === previous.level
+        )
+      : undefined
+    if (nextPosition) {
+      row.position = String(nextPosition.id)
+      row.salaryManuallyEdited = false
+      row.salary = nextPosition.monthlySalary || 0
+      row.salarySource = 'exact'
+      row.salarySourceCity = nextPosition.cityName || nextPosition.city
+      await refreshInternationalRules(index)
+    } else {
+      row.position = ''
+      row.salary = 0
+      row.salarySource = undefined
+      row.salarySourceCity = undefined
+      row.socialRules = []
+      calculateRow(index)
+    }
     return
   }
   // 城市变化时按 岗位+城市 重新取薪（未手动改薪时）
@@ -3544,6 +3751,7 @@ async function loadCitySocialRulesForRow(row: PositionRow, city: string) {
     row.fundRules = []
     return
   }
+  if (row.country !== 'china') return
 
   // If city is not selected, use default values
   if (!city) {
@@ -3589,6 +3797,14 @@ async function onRowPositionChange(index: number) {
     row.socialRules = getDefaultKoreaSocialRules(row.salary)
     row.fundRules = []
     calculateRow(index)
+    return
+  }
+  if (row.country !== 'china') {
+    row.city = position.city || row.city
+    row.salary = position.monthlySalary || 0
+    row.salarySource = 'exact'
+    row.salarySourceCity = position.cityName || position.city
+    await refreshInternationalRules(index)
     return
   }
   const result = await fetchPositionSalary(position.id, row.city || '')
@@ -3759,6 +3975,105 @@ async function fetchKoreaPositions() {
   }
 }
 
+async function fetchInternationalCountries() {
+  try {
+    const response = await axios.get(`${API_URL}/international-quote/countries`)
+    internationalCountryRules.value = (response.data || []).map((item: any) => ({
+      ...item,
+      exchange_rate_cny: Number(item.exchange_rate_cny),
+      eor_rate: Number(item.eor_rate),
+      management_rate: Number(item.management_rate),
+      profit_rate: Number(item.profit_rate),
+      vat_rate: Number(item.vat_rate),
+      local_vat_rate: Number(item.local_vat_rate)
+    }))
+    internationalCountryRules.value.forEach(rule => {
+      countryGlobalParams[rule.country_code] = {
+        vatRate: rule.vat_rate,
+        paymentCycle: 0,
+        profitRate: rule.profit_rate,
+        fundingCostRate: 0,
+        managementRate: rule.management_rate,
+        eorRate: rule.eor_rate,
+        exchangeRate: rule.exchange_rate_cny
+      }
+    })
+  } catch (error: any) {
+    console.error('获取国际国家规则失败:', error)
+    ElMessage.error(error.response?.data?.detail || '获取国际国家规则失败，请检查后端服务')
+  }
+}
+
+async function fetchInternationalPositions(countryCode: string) {
+  try {
+    const response = await axios.get(`${API_URL}/international-quote/salaries/options`, {
+      params: { country_code: countryCode }
+    })
+    availablePositions.value = (response.data || []).map((item: any) => {
+      const cityKey = `${item.region || ''}::${item.city}`
+      return {
+        id: item.id,
+        name: `${item.position_name} - ${item.level_name}`,
+        position: item.position_name,
+        level: item.level_name,
+        levelRank: item.level_rank,
+        sequenceType: item.sequence_type,
+        category: item.category,
+        systemSalaryMax: null,
+        systemSalaryMin: null,
+        city: cityKey,
+        cityName: item.city,
+        region: item.region,
+        currency: item.currency,
+        monthlySalary: Number(item.monthly_salary)
+      }
+    })
+    const uniqueCities = new Map<string, string>()
+    availablePositions.value.forEach(item => {
+      if (!item.city) return
+      const label = item.region ? `${item.cityName}（${item.region}）` : item.cityName || item.city
+      uniqueCities.set(item.city, label)
+    })
+    cityOptions.value = Array.from(uniqueCities.entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'))
+  } catch (error: any) {
+    console.error('获取国际岗位薪资失败:', error)
+    ElMessage.error(error.response?.data?.detail || '获取国际岗位薪资失败')
+    availablePositions.value = []
+    cityOptions.value = []
+  }
+}
+
+async function refreshInternationalRules(index: number) {
+  const row = positionRows.value[index]
+  if (!row || row.country === 'china' || row.country === 'korea') return
+  try {
+    const response = await axios.post(`${API_URL}/international-quote/calculate`, {
+      country_code: row.country,
+      monthly_salary: Number(row.salary) || 0,
+      parameters: row.countryParams || {}
+    })
+    row.socialRules = (response.data.employer_rules || []).map((item: any) => ({
+      type: item.type,
+      minBase: Number(item.min_base) || 0,
+      maxBase: Number(item.max_base) || 0,
+      corpRate: Number(item.corp_rate) || 0,
+      indivRate: 0,
+      calcBase: Number(item.calc_base) || 0
+    }))
+    row.fundRules = []
+    calculateRow(index)
+  } catch (error: any) {
+    console.error('获取属地雇主成本规则失败:', error)
+    ElMessage.error(error.response?.data?.detail || '属地雇主成本计算失败')
+  }
+}
+
+async function onInternationalParameterChange() {
+  await refreshInternationalRules(selectedRowIndex.value)
+}
+
 // Query salary for a position in a city (with fallback chain on backend)
 async function fetchPositionSalary(positionId: number, city: string): Promise<{ salary: number | null, source: string, source_city: string | null } | null> {
   try {
@@ -3790,6 +4105,14 @@ async function refreshRowSalary(index: number) {
     row.salarySourceCity = koreaPosition.city
     row.socialRules = getDefaultKoreaSocialRules(row.salary)
     calculateRow(index)
+    return
+  }
+
+  if (row.country !== 'china') {
+    row.salary = position.monthlySalary || 0
+    row.salarySource = 'exact'
+    row.salarySourceCity = position.cityName || position.city
+    await refreshInternationalRules(index)
     return
   }
 
@@ -3837,26 +4160,28 @@ async function onCountryChange() {
 
   if (nextCountry === 'korea') {
     await fetchKoreaPositions()
+  } else if (nextCountry !== 'china') {
+    await fetchInternationalPositions(nextCountry)
   } else {
     await Promise.all([fetchPositions(), fetchCities()])
   }
 
-  globalParams.value = { ...countryGlobalParams[nextCountry] }
+  globalParams.value = { ...(countryGlobalParams[nextCountry] || countryGlobalParams.china) }
   const savedRows = countryRowSnapshots[nextCountry]
   positionRows.value = savedRows
     ? clonePositionRows(savedRows)
-    : [createPositionRow(nextCountry, nextCountry === 'korea' ? availablePositions.value[0] : undefined)]
+    : [createPositionRow(nextCountry)]
   activeCountryState = nextCountry
   resetSelectedIndexes()
   calculateAll()
 }
 
-function resetForm() {
+async function resetForm() {
   closeOtherCostCalculator()
   positionRows.value = [
-    createPositionRow(selectedCountry.value, isKorea.value ? availablePositions.value[0] : undefined)
+    createPositionRow(selectedCountry.value)
   ]
-  globalParams.value = { ...countryGlobalParams[selectedCountry.value] }
+  globalParams.value = { ...(countryGlobalParams[selectedCountry.value] || countryGlobalParams.china) }
   countryRowSnapshots[selectedCountry.value] = clonePositionRows(positionRows.value)
   resetSelectedIndexes()
   calculateAll()
@@ -3899,7 +4224,10 @@ async function startCalculation() {
   // Prepare preview data
   previewData.value = {
     country: selectedCountry.value,
-    costCurrency: isKorea.value ? 'KRW' : 'CNY',
+    countryName: isKorea.value ? '韩国' : currentCountryRule.value?.country_name || '中国大陆',
+    costCurrency: costCurrencyCode.value,
+    costCurrencySymbol: costCurrencySymbol.value,
+    costCurrencyPrecision: costCurrencyPrecision.value,
     quoteCurrency: 'CNY',
     positionRows: positionRows.value.map(row => {
       // 获取岗位名称：如果 position 是 ID，查找对应的名称；否则直接使用 position 值
@@ -3954,9 +4282,12 @@ async function startCalculation() {
       otherCostTotal: otherCostTotal.value,              // 其他成本合计
       grossProfit: totalGrossProfit.value,               // 预估毛利
       vatRate: globalParams.value.vatRate ?? 6,          // 增值税率
+      costTotalLocal: isOverseas.value ? baseSubtotal.value : null,
       costTotalKrw: isKorea.value ? baseSubtotal.value : null,
-      exchangeRate: isKorea.value ? globalParams.value.exchangeRate : null,
-      managementRate: isKorea.value ? globalParams.value.managementRate : null
+      exchangeRate: isOverseas.value ? globalParams.value.exchangeRate : null,
+      exchangeRateDate: currentCountryRule.value?.exchange_rate_date || null,
+      eorRate: isWorkbookInternational.value ? globalParams.value.eorRate : null,
+      managementRate: isOverseas.value ? globalParams.value.managementRate : null
     }
   }
   // Open modal
@@ -3985,6 +4316,7 @@ function handleClickOutside(event: MouseEvent) {
 }
 
 onMounted(async () => {
+  await fetchInternationalCountries()
   await fetchPositions()
   await fetchCities()
   // Load city rules for each row
@@ -4297,8 +4629,8 @@ input[type="number"] {
   transition: background-color 0.2s;
 }
 
-.korea-mode .position-table-header,
-.korea-mode .position-row {
+.overseas-mode .position-table-header,
+.overseas-mode .position-row {
   grid-template-columns: 0.5fr 1fr 1.2fr 1.35fr 0.8fr 1fr 1fr 50px;
 }
 
@@ -5781,8 +6113,83 @@ input:checked + .slider:before {
   gap: 0.75rem;
 }
 
-.korea-mode .global-params-grid {
+.overseas-mode .global-params-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.converted-total {
+  margin-left: 0.75rem;
+  color: #93c5fd;
+  font-size: 0.78rem;
+}
+
+.international-parameter-panel {
+  padding: 0.9rem 1.25rem;
+  border-top: 1px solid #2d3748;
+  background: rgba(19, 91, 236, 0.05);
+}
+
+.international-parameter-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.65rem;
+  color: #bfdbfe;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.international-parameter-title .material-symbols-outlined {
+  font-size: 1rem;
+}
+
+.international-parameter-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.international-parameter-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  color: #94a3b8;
+  font-size: 0.72rem;
+}
+
+.international-parameter-item select,
+.international-parameter-item input {
+  width: 100%;
+  min-width: 0;
+  padding: 0.5rem;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  background: #1b2435;
+  color: #f8fafc;
+}
+
+.dual-currency-summary {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.8rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid #334155;
+  color: #94a3b8;
+  font-size: 0.75rem;
+}
+
+.dual-currency-summary span {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.dual-currency-summary strong {
+  color: #e2e8f0;
+}
+
+.dual-currency-summary small {
+  color: #64748b;
 }
 
 .global-param-item {

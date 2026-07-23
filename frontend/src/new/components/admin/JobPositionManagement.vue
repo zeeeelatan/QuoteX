@@ -17,6 +17,14 @@
       >
         韩国
       </button>
+      <button
+        type="button"
+        class="country-module-tab"
+        :class="{ active: activeCountryModule === 'international' }"
+        @click="activeCountryModule = 'international'"
+      >
+        国际
+      </button>
     </div>
 
     <!-- Top Filter Bar -->
@@ -74,7 +82,7 @@
       </div>
     </div>
 
-    <div v-else class="filter-bar">
+    <div v-else-if="activeCountryModule === 'korea'" class="filter-bar">
       <div class="filter-left">
         <div class="search-box">
           <span class="material-symbols-outlined search-icon">search</span>
@@ -91,6 +99,42 @@
           刷新
         </el-button>
         <el-button type="success" @click="openKoreaEditDialog()">
+          <span class="material-symbols-outlined btn-icon">add</span>
+          新增岗位
+        </el-button>
+      </div>
+    </div>
+
+    <div v-else class="filter-bar">
+      <div class="filter-left">
+        <div class="filter-group">
+          <label>国家</label>
+          <select v-model="internationalCountryCode" @change="fetchInternationalData">
+            <option
+              v-for="country in internationalCountries"
+              :key="country.country_code"
+              :value="country.country_code"
+            >
+              {{ country.country_name }}（{{ country.currency }}）
+            </option>
+          </select>
+        </div>
+        <div class="search-box">
+          <span class="material-symbols-outlined search-icon">search</span>
+          <input
+            v-model="internationalSearchKeyword"
+            type="text"
+            placeholder="搜索岗位名称..."
+            @keyup.enter="fetchInternationalData"
+          />
+        </div>
+      </div>
+      <div class="filter-right actions">
+        <el-button type="primary" @click="fetchInternationalData">
+          <span class="material-symbols-outlined btn-icon">refresh</span>
+          刷新
+        </el-button>
+        <el-button type="success" @click="openInternationalEditDialog()">
           <span class="material-symbols-outlined btn-icon">add</span>
           新增岗位
         </el-button>
@@ -159,7 +203,7 @@
       </table>
     </div>
 
-    <div v-else class="table-container">
+    <div v-else-if="activeCountryModule === 'korea'" class="table-container">
       <table class="data-table">
         <thead>
           <tr>
@@ -195,6 +239,51 @@
           </tr>
           <tr v-if="filteredKoreaData.length === 0">
             <td colspan="7" class="empty-state">暂无韩国岗位薪资数据</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div v-else class="table-container">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>国家/地区</th>
+            <th>城市</th>
+            <th>序列</th>
+            <th>岗位名称</th>
+            <th>级别</th>
+            <th class="text-right">税前月薪</th>
+            <th class="text-center">状态</th>
+            <th class="text-center">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="item in internationalData" :key="item.id">
+            <td><span class="seq-badge seq-international">{{ item.country_name }}</span></td>
+            <td :title="item.region">{{ item.city }}</td>
+            <td>{{ item.sequence_type }}</td>
+            <td class="position-cell" :title="item.position_name">{{ item.position_name }}</td>
+            <td :title="item.level_name">{{ item.level_name }}</td>
+            <td class="text-right salary-text">
+              {{ formatInternationalSalary(item) }} {{ item.currency }}
+            </td>
+            <td class="text-center">
+              <span class="status-badge" :class="item.is_active ? 'status-active' : 'status-inactive'">
+                {{ item.is_active ? '启用' : '停用' }}
+              </span>
+            </td>
+            <td class="text-center">
+              <button class="action-btn edit-btn" @click="openInternationalEditDialog(item)" title="编辑">
+                <span class="material-symbols-outlined">edit</span>
+              </button>
+              <button class="action-btn delete-btn" @click="deleteInternationalSalary(item)" title="删除">
+                <span class="material-symbols-outlined">delete</span>
+              </button>
+            </td>
+          </tr>
+          <tr v-if="internationalData.length === 0">
+            <td colspan="8" class="empty-state">暂无国际岗位薪资数据</td>
           </tr>
         </tbody>
       </table>
@@ -284,6 +373,83 @@
       <template #footer>
         <el-button @click="koreaEditDialogVisible = false">取消</el-button>
         <el-button type="primary" @click="saveKoreaSalary">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="internationalEditDialogVisible"
+      :title="internationalEditId == null ? '新增国际岗位薪资' : '编辑国际岗位薪资'"
+      width="680px"
+      :close-on-click-modal="false"
+    >
+      <el-form :model="internationalFormData" label-width="120px">
+        <el-form-item label="国家">
+          <el-select
+            v-model="internationalFormData.country_code"
+            :disabled="internationalEditId != null"
+            style="width: 100%"
+            @change="syncInternationalCountry"
+          >
+            <el-option
+              v-for="country in internationalCountries"
+              :key="country.country_code"
+              :label="`${country.country_name}（${country.currency}）`"
+              :value="country.country_code"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="地区">
+          <el-input v-model="internationalFormData.region" placeholder="如：法兰西岛大区" />
+        </el-form-item>
+        <el-form-item label="城市">
+          <el-input v-model="internationalFormData.city" placeholder="如：巴黎" />
+        </el-form-item>
+        <el-form-item label="序列类型">
+          <el-select
+            v-model="internationalFormData.sequence_type"
+            :disabled="internationalEditId != null"
+            style="width: 100%"
+          >
+            <el-option label="技术序列" value="技术序列" />
+            <el-option label="管理序列" value="管理序列" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="类别">
+          <el-input v-model="internationalFormData.category" :disabled="internationalEditId != null" />
+        </el-form-item>
+        <el-form-item label="岗位名称">
+          <el-input v-model="internationalFormData.position_name" :disabled="internationalEditId != null" />
+        </el-form-item>
+        <el-form-item label="级别名称">
+          <el-input v-model="internationalFormData.level_name" :disabled="internationalEditId != null" />
+        </el-form-item>
+        <el-form-item label="级别排序">
+          <el-input-number
+            v-model="internationalFormData.level_rank"
+            :disabled="internationalEditId != null"
+            :min="1"
+            :max="10"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item :label="`税前月薪（${internationalFormData.currency}）`">
+          <el-input-number
+            v-model="internationalFormData.monthly_salary"
+            :min="0.01"
+            :precision="selectedInternationalPrecision"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="状态">
+          <el-switch v-model="internationalFormData.is_active" active-text="启用" inactive-text="停用" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="internationalFormData.notes" type="textarea" :rows="2" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="internationalEditDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveInternationalSalary">确定</el-button>
       </template>
     </el-dialog>
 
@@ -499,8 +665,32 @@ interface KoreaJobSalaryItem {
   is_active: boolean
 }
 
+interface InternationalCountryItem {
+  country_code: string
+  country_name: string
+  currency: string
+  currency_precision: number
+}
+
+interface InternationalSalaryItem {
+  id: number
+  country_code: string
+  country_name: string
+  region: string
+  city: string
+  currency: string
+  sequence_type: string
+  category: string
+  position_name: string
+  level_name: string
+  level_rank: number
+  monthly_salary: number
+  notes: string | null
+  is_active: boolean
+}
+
 // State
-const activeCountryModule = ref<'china' | 'korea'>('china')
+const activeCountryModule = ref<'china' | 'korea' | 'international'>('china')
 const allData = ref<JobPositionItem[]>([])
 const categories = ref<string[]>([])
 const filters = ref({ sequenceType: '', category: '' })
@@ -530,6 +720,33 @@ const filteredKoreaData = computed(() => {
     item.position_name.toLowerCase().includes(keyword)
   )
 })
+
+const internationalCountries = ref<InternationalCountryItem[]>([])
+const internationalCountryCode = ref('france')
+const internationalSearchKeyword = ref('')
+const internationalData = ref<InternationalSalaryItem[]>([])
+const internationalEditDialogVisible = ref(false)
+const internationalEditId = ref<number | null>(null)
+const internationalFormData = ref({
+  country_code: 'france',
+  country_name: '法国',
+  region: '',
+  city: '巴黎',
+  currency: 'EUR',
+  sequence_type: '技术序列',
+  category: '',
+  position_name: '',
+  level_name: '',
+  level_rank: 1,
+  monthly_salary: 0,
+  notes: '',
+  is_active: true
+})
+const selectedInternationalPrecision = computed(() =>
+  internationalCountries.value.find(
+    country => country.country_code === internationalFormData.value.country_code
+  )?.currency_precision ?? 2
+)
 
 // Detail dialog
 const detailDialogVisible = ref(false)
@@ -704,6 +921,141 @@ async function deleteKoreaSalary(item: KoreaJobSalaryItem) {
   } catch (error: any) {
     ElMessage.error(error.response?.data?.detail || '删除失败')
   }
+}
+
+async function fetchInternationalCountries() {
+  try {
+    const response = await axios.get(`${API_URL}/international-quote/countries`)
+    internationalCountries.value = response.data
+    if (!internationalCountries.value.some(item => item.country_code === internationalCountryCode.value)) {
+      internationalCountryCode.value = internationalCountries.value[0]?.country_code || 'france'
+    }
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '获取国际国家配置失败')
+  }
+}
+
+async function fetchInternationalData() {
+  if (!internationalCountryCode.value) return
+  try {
+    const response = await axios.get(`${API_URL}/international-quote/salaries`, {
+      params: {
+        country_code: internationalCountryCode.value,
+        keyword: internationalSearchKeyword.value.trim() || undefined,
+        limit: 10000
+      }
+    })
+    internationalData.value = response.data.map((item: any) => ({
+      ...item,
+      monthly_salary: Number(item.monthly_salary)
+    }))
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '获取国际岗位薪资失败')
+  }
+}
+
+function syncInternationalCountry() {
+  const country = internationalCountries.value.find(
+    item => item.country_code === internationalFormData.value.country_code
+  )
+  if (!country) return
+  internationalFormData.value.country_name = country.country_name
+  internationalFormData.value.currency = country.currency
+}
+
+function openInternationalEditDialog(item?: InternationalSalaryItem) {
+  internationalEditId.value = item?.id ?? null
+  const country = internationalCountries.value.find(
+    entry => entry.country_code === (item?.country_code || internationalCountryCode.value)
+  )
+  internationalFormData.value = item
+    ? {
+        country_code: item.country_code,
+        country_name: item.country_name,
+        region: item.region || '',
+        city: item.city,
+        currency: item.currency,
+        sequence_type: item.sequence_type,
+        category: item.category,
+        position_name: item.position_name,
+        level_name: item.level_name,
+        level_rank: item.level_rank,
+        monthly_salary: Number(item.monthly_salary),
+        notes: item.notes || '',
+        is_active: item.is_active
+      }
+    : {
+        country_code: country?.country_code || 'france',
+        country_name: country?.country_name || '法国',
+        region: '',
+        city: '',
+        currency: country?.currency || 'EUR',
+        sequence_type: '技术序列',
+        category: '',
+        position_name: '',
+        level_name: '',
+        level_rank: 1,
+        monthly_salary: 0,
+        notes: '',
+        is_active: true
+      }
+  internationalEditDialogVisible.value = true
+}
+
+async function saveInternationalSalary() {
+  syncInternationalCountry()
+  const payload = {
+    ...internationalFormData.value,
+    region: internationalFormData.value.region.trim(),
+    city: internationalFormData.value.city.trim(),
+    category: internationalFormData.value.category.trim(),
+    position_name: internationalFormData.value.position_name.trim(),
+    level_name: internationalFormData.value.level_name.trim()
+  }
+  if (!payload.city || !payload.position_name || !payload.level_name || payload.monthly_salary <= 0) {
+    ElMessage.warning('请完整填写城市、岗位、级别和税前月薪')
+    return
+  }
+  try {
+    if (internationalEditId.value == null) {
+      await axios.post(`${API_URL}/international-quote/salaries`, payload)
+      ElMessage.success('国际岗位薪资已新增')
+    } else {
+      await axios.put(`${API_URL}/international-quote/salaries/${internationalEditId.value}`, {
+        region: payload.region,
+        city: payload.city,
+        monthly_salary: payload.monthly_salary,
+        notes: payload.notes,
+        is_active: payload.is_active
+      })
+      ElMessage.success('国际岗位薪资已更新')
+    }
+    internationalEditDialogVisible.value = false
+    internationalCountryCode.value = payload.country_code
+    await fetchInternationalData()
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '保存失败')
+  }
+}
+
+async function deleteInternationalSalary(item: InternationalSalaryItem) {
+  try {
+    await axios.delete(`${API_URL}/international-quote/salaries/${item.id}`)
+    ElMessage.success('国际岗位薪资已删除')
+    await fetchInternationalData()
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '删除失败')
+  }
+}
+
+function formatInternationalSalary(item: InternationalSalaryItem): string {
+  const precision = internationalCountries.value.find(
+    country => country.country_code === item.country_code
+  )?.currency_precision ?? 2
+  return Number(item.monthly_salary).toLocaleString('zh-CN', {
+    minimumFractionDigits: precision,
+    maximumFractionDigits: precision
+  })
 }
 
 async function refreshData() {
@@ -948,6 +1300,7 @@ onMounted(() => {
   fetchData()
   fetchCategories()
   fetchKoreaData()
+  fetchInternationalCountries().then(fetchInternationalData)
 })
 </script>
 
@@ -992,6 +1345,11 @@ onMounted(() => {
 .seq-korea {
   background: rgba(16, 185, 129, 0.15);
   color: #6ee7b7;
+}
+
+.seq-international {
+  background: rgba(59, 130, 246, 0.16);
+  color: #93c5fd;
 }
 
 .status-badge {

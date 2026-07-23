@@ -168,6 +168,18 @@ jobs:
             fi
             echo "岗位薪资上下限同步完成"
 
+            echo "校验新增省会城市技术序列薪资..."
+            if ! docker exec AI_Quote_Backend python -m scripts.sync_job_position_capital_salaries_2025; then
+              echo "省会城市薪资 dry-run 校验失败！"
+              exit 1
+            fi
+            echo "增量同步新增省会城市技术序列薪资..."
+            if ! docker exec AI_Quote_Backend python -m scripts.sync_job_position_capital_salaries_2025 --apply; then
+              echo "省会城市薪资同步失败！"
+              exit 1
+            fi
+            echo "省会城市薪资同步完成"
+
             # 迁移后重启后端使中间件生效
             docker compose restart backend
             sleep 10
@@ -272,6 +284,18 @@ jobs:
               exit 1
             fi
             echo "岗位薪资上下限同步完成"
+
+            echo "校验新增省会城市技术序列薪资..."
+            if ! docker exec AI_Quote_Backend python -m scripts.sync_job_position_capital_salaries_2025; then
+              echo "省会城市薪资 dry-run 校验失败！"
+              exit 1
+            fi
+            echo "增量同步新增省会城市技术序列薪资..."
+            if ! docker exec AI_Quote_Backend python -m scripts.sync_job_position_capital_salaries_2025 --apply; then
+              echo "省会城市薪资同步失败！"
+              exit 1
+            fi
+            echo "省会城市薪资同步完成"
 
             docker compose restart backend
             sleep 10

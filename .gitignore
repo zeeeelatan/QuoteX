@@ -13,6 +13,9 @@ backups/
 
 # 本地源数据 / 一次性脚本产物（不入仓库）
 data/
+!backend/app/data/
+backend/app/data/*
+!backend/app/data/international_salary_matrix.json
 outputs/
 
 # 日志与 PID

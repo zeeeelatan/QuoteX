@@ -25,6 +25,7 @@ from app.routers import pricing_parameter
 from app.routers import single_service
 from app.routers import job_position
 from app.routers import korea_job_salary
+from app.routers import international_quote
 from app.routers import dispatch_service
 from app.routers import superimposed_price
 from app.routers import city_social_insurance
@@ -89,6 +90,13 @@ def on_startup():
         logger.error(f"Alembic 迁移失败，退回 create_all: {e}")
         Base.metadata.create_all(bind=engine)
     ensure_default_user()
+    from app.database import SessionLocal
+    from app.seed_international_quote import ensure_international_quote_data
+    db = SessionLocal()
+    try:
+        ensure_international_quote_data(db)
+    finally:
+        db.close()
 
 app.add_middleware(
     CORSMiddleware,
@@ -261,6 +269,7 @@ app.include_router(pricing_parameter.router)
 app.include_router(single_service.router)
 app.include_router(job_position.router)
 app.include_router(korea_job_salary.router)
+app.include_router(international_quote.router)
 app.include_router(dispatch_service.router)
 app.include_router(superimposed_price.router)
 app.include_router(city_social_insurance.router)

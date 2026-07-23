@@ -1,8 +1,14 @@
 from io import BytesIO
 
 from openpyxl import Workbook
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-from app.routers.job_position import _parse_workbook
+from app.database import Base
+from app.models.china_city_tier import ChinaCityTier
+from app.models.city_social_insurance import CitySocialInsurance
+from app.models.job_position import JobPosition, JobPositionSalary
+from app.routers.job_position import _parse_workbook, _query_salary_with_fallback
 from scripts.sync_job_position_salary_bounds_2025 import (
     EXPECTED_POSITION_COUNT,
     _source_map,
@@ -85,3 +91,66 @@ def test_salary_bounds_sync_source_is_complete():
         33600,
         120000,
     )
+
+
+def test_salary_fallback_uses_provincial_capital_from_social_insurance_city():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(
+        bind=engine,
+        tables=[
+            JobPosition.__table__,
+            JobPositionSalary.__table__,
+            ChinaCityTier.__table__,
+            CitySocialInsurance.__table__,
+        ],
+    )
+    db = sessionmaker(bind=engine)()
+    try:
+        position = JobPosition(
+            sequence_type="技术序列",
+            category="运维类",
+            position_name="桌面工程师",
+            level_name="初级 (Junior/P1-P2)",
+            level_rank=1,
+        )
+        db.add(position)
+        db.flush()
+        db.add_all(
+            [
+                JobPositionSalary(
+                    position_id=position.id,
+                    province="内蒙古",
+                    city="呼和浩特市",
+                    salary=6000,
+                ),
+                JobPositionSalary(
+                    position_id=position.id,
+                    province="北京",
+                    city="北京市",
+                    salary=12000,
+                ),
+                JobPositionSalary(
+                    position_id=position.id,
+                    province="上海",
+                    city="上海市",
+                    salary=14000,
+                ),
+                CitySocialInsurance(
+                    province="内蒙古自治区",
+                    city="阿拉善盟",
+                    upper_limit=10000,
+                    lower_limit=1000,
+                    calc_base=1000,
+                ),
+            ]
+        )
+        db.commit()
+
+        result = _query_salary_with_fallback(db, position.id, "阿拉善盟")
+
+        assert result.salary == 6000
+        assert result.source == "provincial_capital"
+        assert result.source_city == "呼和浩特市"
+    finally:
+        db.close()
+        engine.dispose()

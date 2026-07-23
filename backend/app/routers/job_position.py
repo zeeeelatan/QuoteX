@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.china_city_tier import ChinaCityTier
+from app.models.city_social_insurance import CitySocialInsurance
 from app.models.job_position import JobPosition, JobPositionSalary
 from app.schemas.job_position import (
     JobPositionCreate,
@@ -88,7 +89,7 @@ def _normalize_province(province: Optional[str]) -> Optional[str]:
 
 
 def _find_province_of_city(db: Session, city: str) -> Optional[str]:
-    """通过薪资表/城市分级表反查城市所属省份"""
+    """通过薪资表、城市分级表或社保基准表反查所属省份。"""
     variants = _city_variants(city)
     row = (
         db.query(JobPositionSalary.province)
@@ -104,6 +105,14 @@ def _find_province_of_city(db: Session, city: str) -> Optional[str]:
     )
     if tier and tier[0]:
         return _normalize_province(tier[0])
+
+    social_insurance = (
+        db.query(CitySocialInsurance.province)
+        .filter(CitySocialInsurance.city.in_(variants))
+        .first()
+    )
+    if social_insurance and social_insurance[0]:
+        return _normalize_province(social_insurance[0])
     return None
 
 

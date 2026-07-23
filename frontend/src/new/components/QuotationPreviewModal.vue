@@ -155,13 +155,16 @@
                     <!-- Summary Section -->
                     <div class="summary-section">
                       <div class="summary-card">
-                        <div v-if="isKoreaQuote" class="summary-row">
-                          <span>完全成本（KRW）</span>
-                          <span class="summary-value">₩ {{ formatKrw(data.calculatedAmounts?.costTotalKrw) }}</span>
+                        <div v-if="isOverseasQuote" class="summary-row">
+                          <span>完全成本（{{ costCurrency }}）</span>
+                          <span class="summary-value">{{ costCurrencySymbol }} {{ formatLocalCost(data.calculatedAmounts?.costTotalLocal ?? data.calculatedAmounts?.costTotalKrw) }}</span>
                         </div>
-                        <div v-if="isKoreaQuote" class="summary-row">
-                          <span>KRW/CNY 汇率</span>
-                          <span class="summary-value">{{ data.calculatedAmounts?.exchangeRate }}</span>
+                        <div v-if="isOverseasQuote" class="summary-row">
+                          <span>{{ costCurrency }}/CNY 汇率</span>
+                          <span class="summary-value">
+                            {{ data.calculatedAmounts?.exchangeRate }}
+                            <template v-if="data.calculatedAmounts?.exchangeRateDate">（{{ data.calculatedAmounts.exchangeRateDate }}）</template>
+                          </span>
                         </div>
                         <div class="summary-row">
                           <span>项目总价（未税）</span>
@@ -444,8 +447,12 @@ const emit = defineEmits<{
   close: []
 }>()
 
-const isKoreaQuote = computed(() => props.data?.country === 'korea')
-const documentTitle = computed(() => isKoreaQuote.value ? '韩国驻场服务报价单' : '驻场服务报价单')
+const isOverseasQuote = computed(() => Boolean(props.data?.country && props.data.country !== 'china'))
+const quoteCountryName = computed(() => props.data?.countryName || (props.data?.country === 'korea' ? '韩国' : '中国大陆'))
+const costCurrency = computed(() => props.data?.costCurrency || (props.data?.country === 'korea' ? 'KRW' : 'CNY'))
+const costCurrencySymbol = computed(() => props.data?.costCurrencySymbol || (props.data?.country === 'korea' ? '₩' : '¥'))
+const costCurrencyPrecision = computed(() => Number(props.data?.costCurrencyPrecision ?? (props.data?.country === 'korea' ? 0 : 2)))
+const documentTitle = computed(() => isOverseasQuote.value ? `${quoteCountryName.value}驻场服务报价单` : '驻场服务报价单')
 
 // 公司和客户数据
 interface CompanyInfo {
@@ -1113,8 +1120,11 @@ function formatCurrency(num: number): string {
   return '¥ ' + (num || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
-function formatKrw(num: number): string {
-  return Math.round(num || 0).toLocaleString('ko-KR')
+function formatLocalCost(num: number): string {
+  return Number(num || 0).toLocaleString('zh-CN', {
+    minimumFractionDigits: costCurrencyPrecision.value,
+    maximumFractionDigits: costCurrencyPrecision.value
+  })
 }
 
 function close() {
@@ -1147,7 +1157,7 @@ async function downloadQuotation() {
 function getFileNameBase(): string {
   const date = new Date()
   const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
-  const prefix = isKoreaQuote.value ? '韩国驻场服务报价单' : '驻场服务报价单'
+  const prefix = isOverseasQuote.value ? `${quoteCountryName.value}驻场服务报价单` : '驻场服务报价单'
   return `${prefix}_${selectedCompanyInfo.value.companyName}_${dateStr}`
 }
 
@@ -1612,9 +1622,15 @@ async function downloadExcel() {
     const finalAmount = getFinalProjectAmount()
 
     const summaryItems = [
-      ...(isKoreaQuote.value ? [
-        { label: '完全成本（KRW）', value: `₩${formatKrw(props.data.calculatedAmounts?.costTotalKrw)}` },
-        { label: 'KRW/CNY 汇率', value: String(props.data.calculatedAmounts?.exchangeRate || 0) },
+      ...(isOverseasQuote.value ? [
+        {
+          label: `完全成本（${costCurrency.value}）`,
+          value: `${costCurrencySymbol.value}${formatLocalCost(props.data.calculatedAmounts?.costTotalLocal ?? props.data.calculatedAmounts?.costTotalKrw)}`
+        },
+        {
+          label: `${costCurrency.value}/CNY 汇率`,
+          value: `${props.data.calculatedAmounts?.exchangeRate || 0}${props.data.calculatedAmounts?.exchangeRateDate ? `（${props.data.calculatedAmounts.exchangeRateDate}）` : ''}`
+        },
         { label: '我方管理费率', value: `${props.data.calculatedAmounts?.managementRate || 0}%` }
       ] : []),
       { label: '项目总价（未税）', value: formatNumber(laborBeforeVat) },
