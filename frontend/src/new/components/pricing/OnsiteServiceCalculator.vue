@@ -142,11 +142,7 @@
                     v-model.number="row.salary"
                     class="row-input"
                     type="number"
-                    :min="getSalaryMin(row)"
-                    :max="getSalaryMax(row)"
-                    :title="getSalaryRangeTitle(row)"
                     @input="onSalaryChange(index)"
-                    @blur="enforceSalaryBounds(index)"
                   />
                 </div>
                 <div
@@ -155,13 +151,6 @@
                   :title="getSalarySourceTitle(row)"
                 >
                   参考值{{ row.salarySourceCity ? `（${row.salarySourceCity}）` : '' }}
-                </div>
-                <div
-                  v-if="getSalaryRangeTitle(row)"
-                  class="salary-range-hint"
-                  :title="getSalaryRangeTitle(row)"
-                >
-                  {{ getSalaryRangeTitle(row) }}
                 </div>
               </div>
               <div v-if="!hideAfterTaxSalary" class="col-salary">
@@ -1167,7 +1156,6 @@ const currentCountryRule = computed(() =>
 )
 const countryOptions = computed(() => [
   { label: '中国大陆', value: 'china' },
-  { label: '韩国', value: 'korea' },
   ...internationalCountryRules.value.map(item => ({ label: item.country_name, value: item.country_code }))
 ])
 const costCurrencyCode = computed(() => isKorea.value ? 'KRW' : currentCountryRule.value?.currency || 'CNY')
@@ -1235,14 +1223,11 @@ interface PositionOption {
   levelRank: number
   sequenceType: string
   category: string
-  systemSalaryMax: number | null
-  systemSalaryMin: number | null
   city?: string
   cityName?: string
   region?: string
   currency?: string
   monthlySalary?: number
-  monthlySalaryKrw?: number
 }
 
 // Social rule item
@@ -1629,7 +1614,7 @@ function getFilteredCities(rowId: string) {
 function getFilteredPositions(rowId: string) {
   const query = getSearchQuery(rowId, 'position').toLowerCase()
   const row = positionRows.value.find(item => item.id === rowId)
-  const positions = isWorkbookInternational.value && row?.city
+  const positions = isOverseas.value && row?.city
     ? availablePositions.value.filter(pos => pos.city === row.city)
     : availablePositions.value
   if (!query) return positions
@@ -1829,57 +1814,6 @@ const optionalCostTabs = [
 
 // Position data
 const availablePositions = ref<PositionOption[]>([])
-
-function getPositionSalaryBounds(row: PositionRow): { min: number | null; max: number | null } {
-  const position = availablePositions.value.find(item => item.id === Number(row.position))
-  if (!position) return { min: null, max: null }
-
-  const min = position.systemSalaryMin == null ? Number.NaN : Number(position.systemSalaryMin)
-  const max = position.systemSalaryMax == null ? Number.NaN : Number(position.systemSalaryMax)
-  return {
-    min: Number.isFinite(min) && min >= 0 ? min : null,
-    max: Number.isFinite(max) && max >= 0 ? max : null
-  }
-}
-
-function getSalaryMin(row: PositionRow): number | undefined {
-  return getPositionSalaryBounds(row).min ?? undefined
-}
-
-function getSalaryMax(row: PositionRow): number | undefined {
-  return getPositionSalaryBounds(row).max ?? undefined
-}
-
-function getSalaryRangeTitle(row: PositionRow): string {
-  const { min, max } = getPositionSalaryBounds(row)
-  if (min == null && max == null) return ''
-  if (min != null && max != null) {
-    return `允许范围 ¥${formatNumber(min)} - ¥${formatNumber(max)}`
-  }
-  return min != null
-    ? `最低 ¥${formatNumber(min)}`
-    : `最高 ¥${formatNumber(max as number)}`
-}
-
-function clampSalaryToPositionBounds(
-  row: PositionRow,
-  enforceMinimum: boolean,
-  notify = false
-): boolean {
-  const { min, max } = getPositionSalaryBounds(row)
-  const currentSalary = Number(row.salary) || 0
-  let nextSalary = Math.max(0, currentSalary)
-
-  if (max != null && nextSalary > max) nextSalary = max
-  if (enforceMinimum && min != null && nextSalary < min) nextSalary = min
-
-  if (nextSalary === currentSalary) return false
-  row.salary = nextSalary
-  if (notify) {
-    ElMessage.warning(`税前月薪已调整为岗位允许范围：${getSalaryRangeTitle(row)}`)
-  }
-  return true
-}
 
 // City social rules cache
 const citySocialRulesCache = ref<Record<string, any>>({})
@@ -3592,20 +3526,8 @@ async function onSalaryChange(index: number) {
     row.salaryManuallyEdited = true
     row.salarySource = 'manual'
     row.salarySourceCity = undefined
-    // 输入过程中只即时限制最高值；最低值在输入完成后校正，避免影响连续输入。
-    clampSalaryToPositionBounds(row, false, true)
   }
   if (row?.country && row.country !== 'china' && row.country !== 'korea') {
-    await refreshInternationalRules(index)
-  }
-  calculateRow(index, false)
-}
-
-async function enforceSalaryBounds(index: number) {
-  const row = positionRows.value[index]
-  if (!row) return
-  clampSalaryToPositionBounds(row, true, true)
-  if (row.country !== 'china' && row.country !== 'korea') {
     await refreshInternationalRules(index)
   }
   calculateRow(index, false)
@@ -3622,8 +3544,7 @@ function onAfterTaxSalaryChange(index: number) {
 
   if (afterTaxSalary <= 0) {
     row.salary = 0
-    const adjusted = clampSalaryToPositionBounds(row, true, true)
-    calculateRow(index, adjusted ? false : true)
+    calculateRow(index, true)
     return
   }
 
@@ -3650,8 +3571,6 @@ function onAfterTaxSalaryChange(index: number) {
     row.salary = Math.round((afterTaxSalary / denominator) * 100) / 100
   }
 
-  const salaryAdjusted = clampSalaryToPositionBounds(row, true, true)
-
   // Update calcBase for all rules to match the new salary
   const newSalary = row.salary
   row.socialRules.forEach((item: any) => {
@@ -3664,7 +3583,7 @@ function onAfterTaxSalaryChange(index: number) {
   })
 
   // Recalculate the row (skip after-tax calc to avoid loop)
-  calculateRow(index, salaryAdjusted ? false : true)
+  calculateRow(index, true)
 }
 
 // Calculate all rows
@@ -3700,13 +3619,6 @@ function removePositionRow(index: number) {
 // Handle city change for a specific row
 async function onRowCityChange(index: number) {
   const row = positionRows.value[index]
-  if (row.country === 'korea') {
-    await refreshRowSalary(index)
-    row.socialRules = getDefaultKoreaSocialRules(row.salary)
-    row.fundRules = []
-    calculateRow(index)
-    return
-  }
   if (row.country !== 'china') {
     const previous = availablePositions.value.find(item => item.id === Number(row.position))
     const nextPosition = previous
@@ -3720,13 +3632,20 @@ async function onRowCityChange(index: number) {
       row.salary = nextPosition.monthlySalary || 0
       row.salarySource = 'exact'
       row.salarySourceCity = nextPosition.cityName || nextPosition.city
-      await refreshInternationalRules(index)
+      if (row.country === 'korea') {
+        row.socialRules = getDefaultKoreaSocialRules(row.salary)
+        row.fundRules = []
+        calculateRow(index)
+      } else {
+        await refreshInternationalRules(index)
+      }
     } else {
       row.position = ''
       row.salary = 0
       row.salarySource = undefined
       row.salarySourceCity = undefined
-      row.socialRules = []
+      row.socialRules = row.country === 'korea' ? getDefaultKoreaSocialRules(0) : []
+      row.fundRules = []
       calculateRow(index)
     }
     return
@@ -3789,28 +3708,23 @@ async function onRowPositionChange(index: number) {
   if (!position) return
   // 重新选择岗位后恢复自动取薪
   row.salaryManuallyEdited = false
-  if (row.country === 'korea') {
-    row.city = position.city || row.city || '首尔'
-    row.salary = position.monthlySalaryKrw || 0
-    row.salarySource = 'exact'
-    row.salarySourceCity = position.city
-    row.socialRules = getDefaultKoreaSocialRules(row.salary)
-    row.fundRules = []
-    calculateRow(index)
-    return
-  }
   if (row.country !== 'china') {
     row.city = position.city || row.city
     row.salary = position.monthlySalary || 0
     row.salarySource = 'exact'
     row.salarySourceCity = position.cityName || position.city
-    await refreshInternationalRules(index)
+    if (row.country === 'korea') {
+      row.socialRules = getDefaultKoreaSocialRules(row.salary)
+      row.fundRules = []
+      calculateRow(index)
+    } else {
+      await refreshInternationalRules(index)
+    }
     return
   }
   const result = await fetchPositionSalary(position.id, row.city || '')
   if (result && result.salary != null) {
     row.salary = result.salary
-    clampSalaryToPositionBounds(row, true)
     row.salarySource = result.source
     row.salarySourceCity = result.source_city || undefined
     // 薪资变化后刷新该行社保基数
@@ -3931,9 +3845,7 @@ async function fetchPositions() {
         level: item.level_name,
         levelRank: item.level_rank,
         sequenceType: item.sequence_type,
-        category: item.category,
-        systemSalaryMax: item.system_salary_max == null ? null : Number(item.system_salary_max),
-        systemSalaryMin: item.system_salary_min == null ? null : Number(item.system_salary_min)
+        category: item.category
       }
     })
 
@@ -3944,34 +3856,6 @@ async function fetchPositions() {
       console.error('响应状态:', error.response.status, '响应数据:', error.response.data)
     }
     ElMessage.error('获取岗位职级数据失败，请检查后端服务是否正常运行')
-  }
-}
-
-async function fetchKoreaPositions() {
-  try {
-    const response = await axios.get(`${API_URL}/korea-job-salaries/options`)
-    availablePositions.value = response.data.map((item: any) => ({
-      id: item.id,
-      name: item.position_name,
-      position: item.position_name,
-      level: '',
-      levelRank: 1,
-      sequenceType: '韩国',
-      category: '驻场服务',
-      systemSalaryMax: null,
-      systemSalaryMin: null,
-      city: item.city,
-      monthlySalaryKrw: Number(item.monthly_salary_krw)
-    }))
-    const uniqueCities = new Set<string>(
-      availablePositions.value.map(item => item.city || '').filter(Boolean)
-    )
-    cityOptions.value = Array.from(uniqueCities).map(city => ({ label: city, value: city }))
-  } catch (error: any) {
-    console.error('获取韩国岗位薪资失败:', error)
-    ElMessage.error(error.response?.data?.detail || '获取韩国岗位薪资失败')
-    availablePositions.value = []
-    cityOptions.value = []
   }
 }
 
@@ -4019,8 +3903,6 @@ async function fetchInternationalPositions(countryCode: string) {
         levelRank: item.level_rank,
         sequenceType: item.sequence_type,
         category: item.category,
-        systemSalaryMax: null,
-        systemSalaryMin: null,
         city: cityKey,
         cityName: item.city,
         region: item.region,
@@ -4096,30 +3978,23 @@ async function refreshRowSalary(index: number) {
   const position = availablePositions.value.find(p => p.id === Number(row.position))
   if (!position) return
 
-  if (row.country === 'korea') {
-    const koreaPosition = availablePositions.value.find(
-      item => item.id === Number(row.position) && (!row.city || item.city === row.city)
-    ) || position
-    row.salary = koreaPosition.monthlySalaryKrw || 0
-    row.salarySource = 'exact'
-    row.salarySourceCity = koreaPosition.city
-    row.socialRules = getDefaultKoreaSocialRules(row.salary)
-    calculateRow(index)
-    return
-  }
-
   if (row.country !== 'china') {
     row.salary = position.monthlySalary || 0
     row.salarySource = 'exact'
     row.salarySourceCity = position.cityName || position.city
-    await refreshInternationalRules(index)
+    if (row.country === 'korea') {
+      row.socialRules = getDefaultKoreaSocialRules(row.salary)
+      row.fundRules = []
+      calculateRow(index)
+    } else {
+      await refreshInternationalRules(index)
+    }
     return
   }
 
   const result = await fetchPositionSalary(position.id, row.city || '')
   if (result && result.salary != null) {
     row.salary = result.salary
-    clampSalaryToPositionBounds(row, true)
     row.salarySource = result.source
     row.salarySourceCity = result.source_city || undefined
   }
@@ -4158,9 +4033,7 @@ async function onCountryChange() {
   countryRowSnapshots[activeCountryState] = clonePositionRows(positionRows.value)
   countryGlobalParams[activeCountryState] = { ...globalParams.value }
 
-  if (nextCountry === 'korea') {
-    await fetchKoreaPositions()
-  } else if (nextCountry !== 'china') {
+  if (nextCountry !== 'china') {
     await fetchInternationalPositions(nextCountry)
   } else {
     await Promise.all([fetchPositions(), fetchCities()])
@@ -4771,17 +4644,6 @@ input[type="number"] {
   font-size: 0.625rem;
   line-height: 1.2;
   color: #d97706;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: help;
-}
-
-.salary-range-hint {
-  margin-top: 2px;
-  font-size: 0.625rem;
-  line-height: 1.2;
-  color: #7dd3fc;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

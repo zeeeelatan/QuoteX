@@ -11,6 +11,7 @@ from openpyxl import load_workbook
 
 
 COUNTRIES = {
+    "韩国": ("korea", "KRW"),
     "日本": ("japan", "JPY"),
     "越南": ("vietnam", "VND"),
     "泰国": ("thailand", "THB"),
@@ -36,7 +37,7 @@ SHEETS = (
 
 
 def build(source: Path) -> dict:
-    workbook = load_workbook(source, read_only=True, data_only=True)
+    workbook = load_workbook(source, data_only=True)
     locations = []
     location_columns = []
     positions = []

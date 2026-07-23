@@ -9,10 +9,6 @@ from app.models.china_city_tier import ChinaCityTier
 from app.models.city_social_insurance import CitySocialInsurance
 from app.models.job_position import JobPosition, JobPositionSalary
 from app.routers.job_position import _parse_workbook, _query_salary_with_fallback
-from scripts.sync_job_position_salary_bounds_2025 import (
-    EXPECTED_POSITION_COUNT,
-    _source_map,
-)
 
 
 BASE_HEADERS = [
@@ -66,12 +62,12 @@ def _workbook_bytes() -> bytes:
     return output.getvalue()
 
 
-def test_parse_workbook_imports_system_salary_bounds():
+def test_parse_workbook_ignores_legacy_salary_bound_columns():
     records = _parse_workbook(_workbook_bytes())
 
     assert len(records) == 2
-    assert records[0]["system_salary_max"] == 19200
-    assert records[0]["system_salary_min"] == 5200
+    assert "system_salary_max" not in records[0]
+    assert "system_salary_min" not in records[0]
     assert records[0]["salaries"] == [
         {"province": "北京", "city": "北京市", "salary": 16000.0}
     ]
@@ -80,19 +76,6 @@ def test_parse_workbook_imports_system_salary_bounds():
         for record in records
         for salary in record["salaries"]
     )
-
-
-def test_salary_bounds_sync_source_is_complete():
-    source = _source_map()
-
-    assert len(source) == EXPECTED_POSITION_COUNT == 119
-    assert source[("前端开发工程师", "初级 (Junior/P1-P2)")][1:] == (5200, 19200)
-    assert source[("技术总监/CTO", "高级管理 (总监/VP及以上)")][1:] == (
-        33600,
-        120000,
-    )
-
-
 def test_salary_fallback_uses_provincial_capital_from_social_insurance_city():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(

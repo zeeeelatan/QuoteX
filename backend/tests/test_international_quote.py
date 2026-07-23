@@ -16,6 +16,7 @@ def setup_database():
     ("country_code", "salary", "parameters", "expected_total"),
     [
         ("france", 2500, {}, 1028),
+        ("korea", 5640000, {}, 571558),
         ("netherlands", 3500, {}, 1012.2),
         ("spain", 2500, {}, 803.75),
         ("hungary", 600000, {}, 78000),
@@ -42,11 +43,22 @@ def test_international_salary_matrix_is_complete():
     data_file = Path(__file__).resolve().parents[1] / "app" / "data" / "international_salary_matrix.json"
     matrix = json.loads(data_file.read_text(encoding="utf-8"))
 
-    assert len(COUNTRY_DEFAULTS) == 16
-    assert len(matrix["locations"]) == 49
+    assert len(COUNTRY_DEFAULTS) == 17
+    assert len(matrix["locations"]) == 54
     assert len(matrix["positions"]) == 119
-    assert all(len(position["salaries"]) == 49 for position in matrix["positions"])
-    assert len(matrix["locations"]) * len(matrix["positions"]) == 5831
+    assert all(len(position["salaries"]) == 54 for position in matrix["positions"])
+    assert len(matrix["locations"]) * len(matrix["positions"]) == 6426
     assert {item["country_code"] for item in matrix["locations"]} == {
         item["country_code"] for item in COUNTRY_DEFAULTS
     }
+
+    korea_locations = [
+        item for item in matrix["locations"] if item["country_code"] == "korea"
+    ]
+    assert [item["city"] for item in korea_locations] == [
+        "首尔",
+        "釜山",
+        "仁川",
+        "水原",
+        "春川",
+    ]

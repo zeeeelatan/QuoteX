@@ -207,46 +207,7 @@ CITY_START_COL = 10  # J列起为城市薪资
 PROVINCE_ROW = 2
 HEADER_ROW = 3
 DATA_START_ROW = 4
-SYSTEM_SALARY_MAX_HEADER = "系统取值最大值"
-SYSTEM_SALARY_MIN_HEADER = "系统取值最小值"
-
-
-def _find_header_index(header_row: tuple, header_name: str) -> Optional[int]:
-    for idx, value in enumerate(header_row):
-        if value is not None and str(value).strip() == header_name:
-            return idx
-    return None
-
-
-def _numeric_value(value) -> Optional[float]:
-    if value is None or isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    text = str(value).strip().replace(",", "")
-    if not text or text == "-":
-        return None
-    try:
-        return float(text)
-    except ValueError:
-        return None
-
-
-def _validate_salary_bounds(
-    system_salary_min: Optional[float],
-    system_salary_max: Optional[float],
-    *,
-    error_type=HTTPException,
-) -> None:
-    if (
-        system_salary_min is not None
-        and system_salary_max is not None
-        and system_salary_min > system_salary_max
-    ):
-        message = "系统取值最小值不能大于系统取值最大值"
-        if error_type is HTTPException:
-            raise HTTPException(status_code=400, detail=message)
-        raise error_type(message)
+LEGACY_SALARY_BOUND_HEADERS = {"系统取值最大值", "系统取值最小值"}
 
 
 def _parse_workbook(file_bytes: bytes) -> list:
@@ -267,11 +228,10 @@ def _parse_workbook(file_bytes: bytes) -> list:
 
         province_row = rows[PROVINCE_ROW - 1]
         header_row = rows[HEADER_ROW - 1]
-        system_salary_max_idx = _find_header_index(header_row, SYSTEM_SALARY_MAX_HEADER)
-        system_salary_min_idx = _find_header_index(header_row, SYSTEM_SALARY_MIN_HEADER)
-
         boundary_indexes = [
-            idx for idx in (system_salary_max_idx, system_salary_min_idx) if idx is not None
+            idx
+            for idx, value in enumerate(header_row)
+            if value is not None and str(value).strip() in LEGACY_SALARY_BOUND_HEADERS
         ]
         city_end_idx = min(boundary_indexes) if boundary_indexes else len(header_row)
 
@@ -313,35 +273,12 @@ def _parse_workbook(file_bytes: bytes) -> list:
                     continue
                 salaries.append({"province": province, "city": city, "salary": float(value)})
 
-            system_salary_max = (
-                _numeric_value(row[system_salary_max_idx])
-                if system_salary_max_idx is not None and system_salary_max_idx < len(row)
-                else None
-            )
-            system_salary_min = (
-                _numeric_value(row[system_salary_min_idx])
-                if system_salary_min_idx is not None and system_salary_min_idx < len(row)
-                else None
-            )
-            try:
-                _validate_salary_bounds(
-                    system_salary_min,
-                    system_salary_max,
-                    error_type=ValueError,
-                )
-            except ValueError as exc:
-                raise ValueError(
-                    f"工作表「{sheet_name}」岗位「{position_name} - {level_name}」: {exc}"
-                ) from exc
-
             results.append({
                 "sequence_type": config["sequence_type"],
                 "category": _text(1) or "",
                 "position_name": position_name,
                 "level_name": level_name,
                 "level_rank": _level_rank(level_name),
-                "system_salary_max": system_salary_max,
-                "system_salary_min": system_salary_min,
                 "core_requirements": _text(4),
                 "certifications": _text(5),
                 "work_content": _text(6),
@@ -423,8 +360,6 @@ def list_job_positions(
             position_name=p.position_name,
             level_name=p.level_name,
             level_rank=p.level_rank,
-            system_salary_max=float(p.system_salary_max) if p.system_salary_max is not None else None,
-            system_salary_min=float(p.system_salary_min) if p.system_salary_min is not None else None,
             salary_city_count=cnt,
         )
         for p, cnt in rows
@@ -538,7 +473,6 @@ def list_salaries(position_id: int, db: Session = Depends(get_db)):
 @router.post("/", response_model=JobPositionOut)
 def create_job_position(position: JobPositionCreate, db: Session = Depends(get_db)):
     """创建岗位职级"""
-    _validate_salary_bounds(position.system_salary_min, position.system_salary_max)
     db_position = JobPosition(**position.model_dump())
     db.add(db_position)
     db.commit()
@@ -557,12 +491,6 @@ def update_job_position(
     if not db_position:
         raise HTTPException(status_code=404, detail="岗位职级不存在")
     update_data = position.model_dump(exclude_unset=True)
-    next_min = update_data.get("system_salary_min", db_position.system_salary_min)
-    next_max = update_data.get("system_salary_max", db_position.system_salary_max)
-    _validate_salary_bounds(
-        float(next_min) if next_min is not None else None,
-        float(next_max) if next_max is not None else None,
-    )
     for key, value in update_data.items():
         setattr(db_position, key, value)
     db.commit()

@@ -12,18 +12,10 @@
       <button
         type="button"
         class="country-module-tab"
-        :class="{ active: activeCountryModule === 'korea' }"
-        @click="activeCountryModule = 'korea'"
-      >
-        韩国
-      </button>
-      <button
-        type="button"
-        class="country-module-tab"
         :class="{ active: activeCountryModule === 'international' }"
         @click="activeCountryModule = 'international'"
       >
-        国际
+        国际（含韩国）
       </button>
     </div>
 
@@ -82,29 +74,6 @@
       </div>
     </div>
 
-    <div v-else-if="activeCountryModule === 'korea'" class="filter-bar">
-      <div class="filter-left">
-        <div class="search-box">
-          <span class="material-symbols-outlined search-icon">search</span>
-          <input
-            v-model="koreaSearchKeyword"
-            type="text"
-            placeholder="搜索城市、岗位..."
-          />
-        </div>
-      </div>
-      <div class="filter-right actions">
-        <el-button type="primary" @click="fetchKoreaData">
-          <span class="material-symbols-outlined btn-icon">refresh</span>
-          刷新
-        </el-button>
-        <el-button type="success" @click="openKoreaEditDialog()">
-          <span class="material-symbols-outlined btn-icon">add</span>
-          新增岗位
-        </el-button>
-      </div>
-    </div>
-
     <div v-else class="filter-bar">
       <div class="filter-left">
         <div class="filter-group">
@@ -150,8 +119,6 @@
             <th>类别</th>
             <th>岗位名称</th>
             <th>级别</th>
-            <th class="text-right">系统最低薪资</th>
-            <th class="text-right">系统最高薪资</th>
             <th class="text-center">薪资城市数</th>
             <th class="text-center">职级详情</th>
             <th class="text-center">城市薪资</th>
@@ -170,8 +137,6 @@
             <td>
               <span class="level-badge" :class="getLevelClass(item)">{{ item.level_name }}</span>
             </td>
-            <td class="text-right salary-text">{{ formatSalaryBound(item.system_salary_min) }}</td>
-            <td class="text-right salary-text">{{ formatSalaryBound(item.system_salary_max) }}</td>
             <td class="text-center">
               <span class="salary-count" :class="{ 'salary-count-empty': !item.salary_city_count }">
                 {{ item.salary_city_count }}
@@ -197,48 +162,7 @@
             </td>
           </tr>
           <tr v-if="paginatedData.length === 0">
-            <td colspan="10" class="empty-state">暂无数据，请点击「导入数据」上传《IT岗位技术与管理序列分级表》</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div v-else-if="activeCountryModule === 'korea'" class="table-container">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>国家/地区</th>
-            <th>城市</th>
-            <th>岗位名称</th>
-            <th class="text-right">税前月薪（KRW）</th>
-            <th>备注</th>
-            <th class="text-center">状态</th>
-            <th class="text-center">操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="item in filteredKoreaData" :key="item.id">
-            <td><span class="seq-badge seq-korea">韩国</span></td>
-            <td>{{ item.city }}</td>
-            <td class="position-cell" :title="item.position_name">{{ item.position_name }}</td>
-            <td class="text-right salary-text">₩{{ formatNumber(item.monthly_salary_krw) }}</td>
-            <td :title="item.notes || ''">{{ item.notes || '-' }}</td>
-            <td class="text-center">
-              <span class="status-badge" :class="item.is_active ? 'status-active' : 'status-inactive'">
-                {{ item.is_active ? '启用' : '停用' }}
-              </span>
-            </td>
-            <td class="text-center">
-              <button class="action-btn edit-btn" @click="openKoreaEditDialog(item)" title="编辑">
-                <span class="material-symbols-outlined">edit</span>
-              </button>
-              <button class="action-btn delete-btn" @click="deleteKoreaSalary(item)" title="删除">
-                <span class="material-symbols-outlined">delete</span>
-              </button>
-            </td>
-          </tr>
-          <tr v-if="filteredKoreaData.length === 0">
-            <td colspan="7" class="empty-state">暂无韩国岗位薪资数据</td>
+            <td colspan="8" class="empty-state">暂无数据，请点击「导入数据」上传《IT岗位技术与管理序列分级表》</td>
           </tr>
         </tbody>
       </table>
@@ -339,40 +263,6 @@
       </div>
       <template #footer>
         <el-button type="primary" @click="detailDialogVisible = false">关闭</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog
-      v-model="koreaEditDialogVisible"
-      :title="koreaEditId == null ? '新增韩国岗位薪资' : '编辑韩国岗位薪资'"
-      width="560px"
-      :close-on-click-modal="false"
-    >
-      <el-form :model="koreaFormData" label-width="130px">
-        <el-form-item label="城市">
-          <el-input v-model="koreaFormData.city" placeholder="如：首尔" />
-        </el-form-item>
-        <el-form-item label="岗位名称">
-          <el-input v-model="koreaFormData.position_name" placeholder="如：桌面运维（3年+）" />
-        </el-form-item>
-        <el-form-item label="税前月薪（KRW）">
-          <el-input-number
-            v-model="koreaFormData.monthly_salary_krw"
-            :min="1"
-            :precision="0"
-            style="width: 100%"
-          />
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-switch v-model="koreaFormData.is_active" active-text="启用" inactive-text="停用" />
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="koreaFormData.notes" type="textarea" :rows="3" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="koreaEditDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveKoreaSalary">确定</el-button>
       </template>
     </el-dialog>
 
@@ -478,23 +368,6 @@
         </el-form-item>
         <el-form-item label="级别排序">
           <el-input-number v-model="formData.level_rank" :min="1" :max="10" style="width: 100%" />
-        </el-form-item>
-        <el-form-item label="系统最低薪资">
-          <el-input-number
-            v-model="formData.system_salary_min"
-            :min="0"
-            :max="formData.system_salary_max ?? undefined"
-            :precision="0"
-            style="width: 100%"
-          />
-        </el-form-item>
-        <el-form-item label="系统最高薪资">
-          <el-input-number
-            v-model="formData.system_salary_max"
-            :min="formData.system_salary_min ?? 0"
-            :precision="0"
-            style="width: 100%"
-          />
         </el-form-item>
         <el-form-item label="级别核心要求">
           <el-input v-model="formData.core_requirements" type="textarea" :rows="3" />
@@ -636,8 +509,6 @@ interface JobPositionItem {
   position_name: string
   level_name: string
   level_rank: number
-  system_salary_max: number | null
-  system_salary_min: number | null
   salary_city_count: number
 }
 
@@ -654,15 +525,6 @@ interface SalaryItem {
   province: string | null
   city: string
   salary: number
-}
-
-interface KoreaJobSalaryItem {
-  id: number
-  city: string
-  position_name: string
-  monthly_salary_krw: number
-  notes: string | null
-  is_active: boolean
 }
 
 interface InternationalCountryItem {
@@ -690,7 +552,7 @@ interface InternationalSalaryItem {
 }
 
 // State
-const activeCountryModule = ref<'china' | 'korea' | 'international'>('china')
+const activeCountryModule = ref<'china' | 'international'>('china')
 const allData = ref<JobPositionItem[]>([])
 const categories = ref<string[]>([])
 const filters = ref({ sequenceType: '', category: '' })
@@ -700,29 +562,8 @@ const pageSize = ref(15)
 
 const fileInput = ref<HTMLInputElement | null>(null)
 
-const koreaData = ref<KoreaJobSalaryItem[]>([])
-const koreaSearchKeyword = ref('')
-const koreaEditDialogVisible = ref(false)
-const koreaEditId = ref<number | null>(null)
-const koreaFormData = ref({
-  city: '首尔',
-  position_name: '',
-  monthly_salary_krw: 5640000,
-  notes: '',
-  is_active: true
-})
-
-const filteredKoreaData = computed(() => {
-  const keyword = koreaSearchKeyword.value.trim().toLowerCase()
-  if (!keyword) return koreaData.value
-  return koreaData.value.filter(item =>
-    item.city.toLowerCase().includes(keyword) ||
-    item.position_name.toLowerCase().includes(keyword)
-  )
-})
-
 const internationalCountries = ref<InternationalCountryItem[]>([])
-const internationalCountryCode = ref('france')
+const internationalCountryCode = ref('korea')
 const internationalSearchKeyword = ref('')
 const internationalData = ref<InternationalSalaryItem[]>([])
 const internationalEditDialogVisible = ref(false)
@@ -852,74 +693,6 @@ async function fetchCategories() {
     categories.value = response.data.categories || []
   } catch {
     // 类别筛选失败不阻塞主流程
-  }
-}
-
-async function fetchKoreaData() {
-  try {
-    const response = await axios.get(`${API_URL}/korea-job-salaries/`)
-    koreaData.value = response.data.map((item: any) => ({
-      ...item,
-      monthly_salary_krw: Number(item.monthly_salary_krw)
-    }))
-  } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '获取韩国岗位薪资失败')
-  }
-}
-
-function openKoreaEditDialog(item?: KoreaJobSalaryItem) {
-  koreaEditId.value = item?.id ?? null
-  koreaFormData.value = item
-    ? {
-        city: item.city,
-        position_name: item.position_name,
-        monthly_salary_krw: Number(item.monthly_salary_krw),
-        notes: item.notes || '',
-        is_active: item.is_active
-      }
-    : {
-        city: '首尔',
-        position_name: '',
-        monthly_salary_krw: 5640000,
-        notes: '',
-        is_active: true
-      }
-  koreaEditDialogVisible.value = true
-}
-
-async function saveKoreaSalary() {
-  const payload = {
-    ...koreaFormData.value,
-    city: koreaFormData.value.city.trim(),
-    position_name: koreaFormData.value.position_name.trim()
-  }
-  if (!payload.city || !payload.position_name || payload.monthly_salary_krw <= 0) {
-    ElMessage.warning('请完整填写城市、岗位名称和税前月薪')
-    return
-  }
-
-  try {
-    if (koreaEditId.value == null) {
-      await axios.post(`${API_URL}/korea-job-salaries/`, payload)
-      ElMessage.success('韩国岗位薪资已新增')
-    } else {
-      await axios.put(`${API_URL}/korea-job-salaries/${koreaEditId.value}`, payload)
-      ElMessage.success('韩国岗位薪资已更新')
-    }
-    koreaEditDialogVisible.value = false
-    await fetchKoreaData()
-  } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '保存失败')
-  }
-}
-
-async function deleteKoreaSalary(item: KoreaJobSalaryItem) {
-  try {
-    await axios.delete(`${API_URL}/korea-job-salaries/${item.id}`)
-    ElMessage.success('韩国岗位薪资已删除')
-    await fetchKoreaData()
-  } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '删除失败')
   }
 }
 
@@ -1086,10 +859,6 @@ function formatNumber(num: number): string {
   return Number(num).toLocaleString('zh-CN')
 }
 
-function formatSalaryBound(value: number | null): string {
-  return value == null ? '-' : `¥${formatNumber(value)}`
-}
-
 // Detail
 async function showDetail(item: JobPositionItem) {
   try {
@@ -1115,12 +884,6 @@ async function openEditDialog(item: JobPositionItem) {
 
 async function saveData() {
   if (!currentEditId.value) return
-  const minSalary = formData.value.system_salary_min
-  const maxSalary = formData.value.system_salary_max
-  if (minSalary != null && maxSalary != null && minSalary > maxSalary) {
-    ElMessage.warning('系统最低薪资不能大于系统最高薪资')
-    return
-  }
   try {
     await axios.put(`${API_URL}/job-positions/${currentEditId.value}`, formData.value)
     ElMessage.success('更新成功')
@@ -1272,13 +1035,12 @@ async function downloadTemplate() {
   ]
   const cityProvinces = ['北京', '上海', '广东', '四川']
   const cityNames = ['北京市', '上海市', '广州市', '成都市']
-  const boundHeaders = ['系统取值最大值', '系统取值最小值']
 
   const techSheet = XLSX.utils.aoa_to_sheet([
     ['技术序列 —— 各岗位分级详情(要求/认证/内容/产出/KPI)；城市薪资列可按需增删，城市名需与城市社保表一致'],
-    [...Array(9).fill(null), ...cityProvinces, null, null],
-    [...baseHeaders, ...cityNames, ...boundHeaders],
-    [1, '研发类', '前端开发工程师', '初级 (Junior/P1-P2)', '本科及以上，1-2年经验', '无强制认证', '页面开发与Bug修复', '可上线的页面/组件源代码', '需求交付准时率≥90%', 16000, 16000, 12000, 9500, 19200, 5200]
+    [...Array(9).fill(null), ...cityProvinces],
+    [...baseHeaders, ...cityNames],
+    [1, '研发类', '前端开发工程师', '初级 (Junior/P1-P2)', '本科及以上，1-2年经验', '无强制认证', '页面开发与Bug修复', '可上线的页面/组件源代码', '需求交付准时率≥90%', 16000, 16000, 12000, 9500]
   ])
   XLSX.utils.book_append_sheet(wb, techSheet, '技术序列分级详情')
 
@@ -1287,9 +1049,9 @@ async function downloadTemplate() {
   mgmtHeaders[3] = '管理级别'
   const mgmtSheet = XLSX.utils.aoa_to_sheet([
     ['管理序列 —— 各管理方向分级详情'],
-    [...Array(9).fill(null), ...cityProvinces, null, null],
-    [...mgmtHeaders, ...cityNames, ...boundHeaders],
-    [1, '研发管理', '研发经理/技术总监', '初级管理 (团队负责人/Team Lead)', '5年以上研发经验', '建议PMP', '团队任务分配与进度把控', '团队周报/月报', '团队任务按期交付率≥90%', 35000, 35000, 28000, 21000, 42000, 11600]
+    [...Array(9).fill(null), ...cityProvinces],
+    [...mgmtHeaders, ...cityNames],
+    [1, '研发管理', '研发经理/技术总监', '初级管理 (团队负责人/Team Lead)', '5年以上研发经验', '建议PMP', '团队任务分配与进度把控', '团队周报/月报', '团队任务按期交付率≥90%', 35000, 35000, 28000, 21000]
   ])
   XLSX.utils.book_append_sheet(wb, mgmtSheet, '管理序列分级详情')
 
@@ -1299,7 +1061,6 @@ async function downloadTemplate() {
 onMounted(() => {
   fetchData()
   fetchCategories()
-  fetchKoreaData()
   fetchInternationalCountries().then(fetchInternationalData)
 })
 </script>
@@ -1340,11 +1101,6 @@ onMounted(() => {
 .country-module-tab.active {
   border-bottom-color: #3b82f6;
   color: #ffffff;
-}
-
-.seq-korea {
-  background: rgba(16, 185, 129, 0.15);
-  color: #6ee7b7;
 }
 
 .seq-international {

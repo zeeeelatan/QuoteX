@@ -138,7 +138,7 @@ jobs:
             cd /opt/quotex
 
             mkdir -p backups
-            backup_file="backups/pre_salary_bounds_$(date +%Y%m%d_%H%M%S).sql"
+            backup_file="backups/pre_onsite_update_$(date +%Y%m%d_%H%M%S).sql"
             echo "发布前备份正式数据库..."
             if ! docker exec AI_Quote_DB sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > "$backup_file"; then
               echo "数据库备份失败，终止发布！"
@@ -161,24 +161,29 @@ jobs:
             fi
             echo "数据库迁移完成"
 
-            echo "同步驻场岗位薪资上下限..."
-            if ! docker exec AI_Quote_Backend python -m scripts.sync_job_position_salary_bounds_2025 --apply; then
-              echo "岗位薪资上下限同步失败！"
-              exit 1
-            fi
-            echo "岗位薪资上下限同步完成"
-
-            echo "校验新增省会城市技术序列薪资..."
+            echo "校验新增省会城市岗位薪资..."
             if ! docker exec AI_Quote_Backend python -m scripts.sync_job_position_capital_salaries_2025; then
               echo "省会城市薪资 dry-run 校验失败！"
               exit 1
             fi
-            echo "增量同步新增省会城市技术序列薪资..."
+            echo "增量同步新增省会城市岗位薪资..."
             if ! docker exec AI_Quote_Backend python -m scripts.sync_job_position_capital_salaries_2025 --apply; then
               echo "省会城市薪资同步失败！"
               exit 1
             fi
             echo "省会城市薪资同步完成"
+
+            echo "校验韩国国际岗位薪资..."
+            if ! docker exec AI_Quote_Backend python -m scripts.sync_international_salary_matrix_2025; then
+              echo "韩国国际岗位薪资 dry-run 校验失败！"
+              exit 1
+            fi
+            echo "增量同步韩国国际岗位薪资..."
+            if ! docker exec AI_Quote_Backend python -m scripts.sync_international_salary_matrix_2025 --apply; then
+              echo "韩国国际岗位薪资同步失败！"
+              exit 1
+            fi
+            echo "韩国国际岗位薪资同步完成"
 
             # 迁移后重启后端使中间件生效
             docker compose restart backend
@@ -255,7 +260,7 @@ jobs:
             cd /opt/quotex
 
             mkdir -p backups
-            backup_file="backups/pre_salary_bounds_$(date +%Y%m%d_%H%M%S).sql"
+            backup_file="backups/pre_onsite_update_$(date +%Y%m%d_%H%M%S).sql"
             echo "发布前备份正式数据库..."
             if ! docker exec AI_Quote_DB sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > "$backup_file"; then
               echo "数据库备份失败，终止发布！"
@@ -278,24 +283,29 @@ jobs:
             fi
             echo "数据库迁移完成"
 
-            echo "同步驻场岗位薪资上下限..."
-            if ! docker exec AI_Quote_Backend python -m scripts.sync_job_position_salary_bounds_2025 --apply; then
-              echo "岗位薪资上下限同步失败！"
-              exit 1
-            fi
-            echo "岗位薪资上下限同步完成"
-
-            echo "校验新增省会城市技术序列薪资..."
+            echo "校验新增省会城市岗位薪资..."
             if ! docker exec AI_Quote_Backend python -m scripts.sync_job_position_capital_salaries_2025; then
               echo "省会城市薪资 dry-run 校验失败！"
               exit 1
             fi
-            echo "增量同步新增省会城市技术序列薪资..."
+            echo "增量同步新增省会城市岗位薪资..."
             if ! docker exec AI_Quote_Backend python -m scripts.sync_job_position_capital_salaries_2025 --apply; then
               echo "省会城市薪资同步失败！"
               exit 1
             fi
             echo "省会城市薪资同步完成"
+
+            echo "校验韩国国际岗位薪资..."
+            if ! docker exec AI_Quote_Backend python -m scripts.sync_international_salary_matrix_2025; then
+              echo "韩国国际岗位薪资 dry-run 校验失败！"
+              exit 1
+            fi
+            echo "增量同步韩国国际岗位薪资..."
+            if ! docker exec AI_Quote_Backend python -m scripts.sync_international_salary_matrix_2025 --apply; then
+              echo "韩国国际岗位薪资同步失败！"
+              exit 1
+            fi
+            echo "韩国国际岗位薪资同步完成"
 
             docker compose restart backend
             sleep 10

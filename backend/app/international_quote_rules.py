@@ -20,6 +20,7 @@ def number_param(key: str, label: str, default: float, suffix: str = "%") -> dic
 
 
 COUNTRY_DEFAULTS: List[dict] = [
+    {"country_code": "korea", "country_name": "韩国", "default_city": "首尔", "currency": "KRW", "currency_symbol": "₩", "currency_precision": 0, "exchange_rate_cny": 0.004403, "eor_rate": 0, "effective_label": "2026年·普通办公室员工", "employee_profile": "韩国本地普通员工", "parameter_config": []},
     {"country_code": "france", "country_name": "法国", "default_city": "巴黎", "currency": "EUR", "currency_symbol": "€", "currency_precision": 2, "exchange_rate_cny": 7.757, "effective_label": "2026.1起·普通非干部员工", "employee_profile": "普通非干部员工", "parameter_config": []},
     {"country_code": "netherlands", "country_name": "荷兰", "default_city": "阿姆斯特丹", "currency": "EUR", "currency_symbol": "€", "currency_precision": 2, "exchange_rate_cny": 7.757, "effective_label": "2026.1起·永久合同雇员", "employee_profile": "永久合同雇员", "parameter_config": [select_param("contract_type", "合同类型", "permanent", (("permanent", "永久合同"), ("temporary", "临时合同"))), select_param("company_size", "企业规模", "small", (("small", "中小企业"), ("large", "大型企业")))]},
     {"country_code": "spain", "country_name": "西班牙", "default_city": "马德里", "currency": "EUR", "currency_symbol": "€", "currency_precision": 2, "exchange_rate_cny": 7.757, "effective_label": "2026.1起·普通永久合同雇员", "employee_profile": "普通永久合同雇员", "parameter_config": [select_param("contract_type", "合同类型", "permanent", (("permanent", "永久合同"), ("temporary", "临时合同")))]},
@@ -74,7 +75,13 @@ def _salary_rules(country_code: str, salary: float, params: Dict[str, Any], prec
         _rule(name, base, rate, precision, basis, minimum, maximum)
     )
 
-    if country_code == "france":
+    if country_code == "korea":
+        pension_base = _clamp(s, 0, 6170000)
+        add("国民年金（NPS）", pension_base, 4.5, "月基数上限6170000 KRW", 0, 6170000)
+        add("国民健康保险（NHI）", s, 4.004, "全额工资")
+        add("就业保险", s, 0.9, "全额工资")
+        add("工伤保险", s, 0.73, "办公室行业参考值")
+    elif country_code == "france":
         capped = _clamp(s, 0, 4005)
         for name, base, rate, basis, maximum in [
             ("医疗保险（疾病/生育/伤残）", s, 13, "全额工资", 0), ("基础养老保险（封顶）", capped, 8.55, "PMSS上限4005 EUR", 4005),
