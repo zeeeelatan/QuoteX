@@ -82,6 +82,7 @@ export interface PriceAdjustmentState {
   tableData: any[]
   sheetGroups?: Record<string, any[]>
   activeSheetName?: string
+  priceCaliber?: 'standard' | 'lenovo'
   hasData: boolean
 }
 

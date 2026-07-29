@@ -117,8 +117,11 @@
                         >{{ editableProjectLabel }}</p>
                         <p
                           class="info-value-bold editable-field"
+                          :class="{ 'project-name-placeholder': !editableProjectName }"
                           contenteditable="true"
                           spellcheck="false"
+                          data-placeholder="请输入项目名称"
+                          @input="onProjectNameInput"
                           @blur="onProjectNameBlur"
                           @keydown.enter.prevent="blurEditableField"
                         >{{ editableProjectName }}</p>
@@ -763,7 +766,7 @@ async function loadServiceTerms() {
 watch(() => props.isOpen, (newVal) => {
   if (newVal) {
     editableProjectLabel.value = '项目信息'
-    editableProjectName.value = props.data?.projectName?.trim() || '项目名称'
+    editableProjectName.value = props.data?.projectName?.trim() || ''
     loadCompaniesAndCustomers()
     loadServiceTerms()
   }
@@ -873,7 +876,7 @@ const currentServiceTermsLines = computed(() => {
 
 // 可编辑的项目信息（使用与客户信息相同的 p 标签样式，保证字体一致）
 const editableProjectLabel = ref('项目信息')
-const editableProjectName = ref('项目名称')
+const editableProjectName = ref('')
 
 function blurEditableField(event: Event) {
   ;(event.target as HTMLElement)?.blur()
@@ -887,8 +890,12 @@ function onProjectLabelBlur(event: FocusEvent) {
 
 function onProjectNameBlur(event: FocusEvent) {
   const text = (event.target as HTMLElement).innerText.replace(/\n/g, '').trim()
-  editableProjectName.value = text || '项目名称'
-  ;(event.target as HTMLElement).innerText = editableProjectName.value
+  editableProjectName.value = text
+  ;(event.target as HTMLElement).innerText = text
+}
+
+function onProjectNameInput(event: Event) {
+  editableProjectName.value = (event.target as HTMLElement).innerText.replace(/\n/g, '').trim()
 }
 
 // Logo 上传相关
@@ -1254,6 +1261,12 @@ async function downloadPDF() {
           node.removeAttribute('contenteditable')
           node.classList.remove('editable-field')
         })
+        clonedEl.querySelectorAll('.project-name-placeholder').forEach((el) => {
+          const node = el as HTMLElement
+          node.textContent = '-'
+          node.classList.remove('project-name-placeholder')
+          node.removeAttribute('data-placeholder')
+        })
 
         clonedEl.querySelectorAll('.logo-upload-hint').forEach(
           (el) => ((el as HTMLElement).style.display = 'none')
@@ -1552,7 +1565,7 @@ async function downloadExcel() {
 
     // 项目信息 & 有效期
     ws.mergeCells(`A${rowNum}:C${rowNum}`)
-    ws.getCell(`A${rowNum}`).value = `${editableProjectLabel.value}：${editableProjectName.value}`
+    ws.getCell(`A${rowNum}`).value = `${editableProjectLabel.value}：${editableProjectName.value.trim() || '-'}`
     ws.getCell(`A${rowNum}`).font = normalFont
     ws.mergeCells(`E${rowNum}:G${rowNum}`)
     ws.getCell(`E${rowNum}`).value = `有效期至：${expiryDate.value}`
@@ -2128,6 +2141,12 @@ function sendEmail() {
 
 .editable-field:focus {
   background-color: rgba(59, 130, 246, 0.12);
+}
+
+.project-name-placeholder::before {
+  content: attr(data-placeholder);
+  color: #c0c7d1;
+  font-weight: 400;
 }
 
 .info-expiry {

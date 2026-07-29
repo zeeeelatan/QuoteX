@@ -8,47 +8,18 @@ from app.schemas.user_profile import (
 )
 from app.models.user_profile import UserProfile, CompanyInfo, Customer
 from app.database import get_db
-from app.auth import get_current_user_required, get_current_user_id, get_current_user_profile
+from app.auth import get_current_user_required, get_current_user_profile
 
 router = APIRouter(prefix="/user-profile", tags=["用户资料管理"])
-
-# 未登录时返回的默认资料，避免前端 500
-DEFAULT_PROFILE = UserProfileOut(
-    id=0,
-    name="访客",
-    employee_id=None,
-    department=None,
-    position="",
-    avatar=None,
-    phone=None,
-    email=None,
-    email_verified=0,
-    sales_region="east",
-    currency="CNY",
-    permission_level="普通报价师",
-    tags=None,
-    created_at=None,
-    updated_at=None,
-)
-
 
 # ============ 用户资料 ============
 
 @router.get("/", response_model=UserProfileOut)
 def get_user_profile(
-    user_id: Optional[int] = Depends(get_current_user_id),
-    db: Session = Depends(get_db),
+    profile: UserProfile = Depends(get_current_user_profile),
 ):
-    """获取当前登录用户资料；未登录时返回默认访客资料，避免前端报错。"""
-    if user_id is None:
-        return DEFAULT_PROFILE
-    try:
-        profile = db.query(UserProfile).filter(UserProfile.id == user_id).first()
-        if not profile:
-            return DEFAULT_PROFILE
-        return profile
-    except Exception:
-        return DEFAULT_PROFILE
+    """获取当前登录用户资料；无效登录态返回 401/404。"""
+    return profile
 
 
 @router.put("/", response_model=UserProfileOut)

@@ -49,7 +49,7 @@
       <!-- Stats Cards -->
       <div class="stats-grid">
         <div class="stat-card">
-          <span class="stat-label">参考成本平均价</span>
+          <span class="stat-label">{{ priceCaliber === 'lenovo' ? '联想框架平均单价' : '参考成本平均价' }}</span>
           <div class="stat-content">
             <span class="stat-value">¥{{ avgReferenceCost.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',') }}</span>
             <span class="material-symbols-outlined stat-icon">payments</span>
@@ -58,7 +58,7 @@
 
         <div class="stat-card success">
           <div class="stat-bar"></div>
-          <span class="stat-label">平均利润率</span>
+          <span class="stat-label">{{ priceCaliber === 'lenovo' ? '平均调整幅度' : '平均利润率' }}</span>
           <div class="stat-content">
             <div class="stat-value-group">
               <span class="stat-value">{{ avgProfitMargin.toFixed(1) }}%</span>
@@ -68,7 +68,7 @@
         </div>
 
         <div class="stat-card info">
-          <span class="stat-label">总利润</span>
+          <span class="stat-label">{{ priceCaliber === 'lenovo' ? '调价金额合计' : '总利润' }}</span>
           <div class="stat-content">
             <span class="stat-value">¥{{ totalProfit.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',') }}</span>
             <span class="material-symbols-outlined stat-icon">account_balance_wallet</span>
@@ -78,7 +78,7 @@
         <div class="stat-card error">
           <div class="stat-bar"></div>
           <div class="stat-header">
-            <span class="stat-label">低利润预警 (<6%)</span>
+            <span class="stat-label">{{ priceCaliber === 'lenovo' ? '下调预警 (<-6%)' : '低利润预警 (<6%)' }}</span>
             <span class="stat-badge">Attention</span>
           </div>
           <div class="stat-content">
@@ -119,6 +119,13 @@
                 <option>已手动修改</option>
                 <option>低利润商品</option>
                 <option>高价值商品 (>1w)</option>
+              </select>
+            </div>
+            <div class="filter-select caliber-select">
+              <span class="material-symbols-outlined">currency_exchange</span>
+              <select v-model="priceCaliber" @change="onPriceCaliberChange">
+                <option value="standard">标准维保单价</option>
+                <option value="lenovo">联想框架单价</option>
               </select>
             </div>
             <div class="search-input">
@@ -163,10 +170,10 @@
   <span class="header-with-dropdown">服务周期单位</span>
   <span class="material-symbols-outlined dropdown-icon">arrow_drop_down</span>
   </th>
-                <th class="col-cost">参考成本（未税）</th>
-                <th class="col-suggested">建议售价</th>
-                <th class="col-final">最终报价 (CNY)</th>
-                <th class="col-profit">预估利润</th>
+                <th class="col-cost">{{ priceCaliber === 'lenovo' ? '联想框架原单价（含税13%）' : '参考成本（未税）' }}</th>
+                <th class="col-suggested">{{ priceCaliber === 'lenovo' ? '调整基准价' : '建议售价' }}</th>
+                <th class="col-final">{{ priceCaliber === 'lenovo' ? '联想框架调整单价 (CNY)' : '最终报价 (CNY)' }}</th>
+                <th class="col-profit">{{ priceCaliber === 'lenovo' ? '调整幅度' : '预估利润' }}</th>
                 <th class="col-actions">操作</th>
               </tr>
             </thead>
@@ -178,7 +185,7 @@
                 class="table-row"
                 :style="{ height: ROW_HEIGHT + 'px' }"
                 :class="{
-                  'warning-row': item.profitMargin !== undefined && item.profitMargin < 10
+                  'warning-row': getActiveProfitMargin(item) !== undefined && Number(getActiveProfitMargin(item)) < (priceCaliber === 'lenovo' ? -6 : 10)
                 }"
               >
                 <td><input type="checkbox" v-model="item.selected" /></td>
@@ -210,10 +217,10 @@
                   </select>
                 </td>
                 <td class="text-right">
-                  <div class="price-value">{{ item.referenceCost !== undefined ? '¥' + item.referenceCost.toFixed(2) : '-' }}</div>
+                  <div class="price-value">{{ getActiveReferencePrice(item) > 0 ? '¥' + getActiveReferencePrice(item).toFixed(2) : '-' }}</div>
                 </td>
                 <td class="text-right">
-                  <div class="price-value">{{ item.suggestedPrice ? '¥' + item.suggestedPrice.toFixed(2) : '-' }}</div>
+                  <div class="price-value">{{ getActiveSuggestedPrice(item) > 0 ? '¥' + getActiveSuggestedPrice(item).toFixed(2) : '-' }}</div>
                 </td>
                 <td class="text-right">
                   <div class="price-input-wrapper">
@@ -221,33 +228,33 @@
                     <input
                       type="text"
                       class="price-input"
-                      :value="item.finalPrice ? item.finalPrice.toFixed(2) : ''"
+                      :value="getActiveFinalPrice(item) > 0 ? getActiveFinalPrice(item).toFixed(2) : ''"
                       @input="updateFinalPrice(item, $event)"
                     />
                   </div>
                   <div
                     class="price-diff"
                     :class="{
-                      'up': item.profitMargin > 0,
-                      'down': item.profitMargin < 0,
-                      'neutral': item.profitMargin === 0
+                      'up': getActiveProfitMargin(item) > 0,
+                      'down': getActiveProfitMargin(item) < 0,
+                      'neutral': getActiveProfitMargin(item) === 0
                     }"
-                    v-if="item.profitMargin !== undefined"
+                    v-if="getActiveProfitMargin(item) !== undefined"
                   >
-                    <span class="material-symbols-outlined" v-if="item.profitMargin > 0">arrow_upward</span>
-                    <span class="material-symbols-outlined" v-else-if="item.profitMargin < 0">arrow_downward</span>
-                    <span>{{ Math.abs(item.profitMargin).toFixed(1) }}%</span>
+                    <span class="material-symbols-outlined" v-if="Number(getActiveProfitMargin(item)) > 0">arrow_upward</span>
+                    <span class="material-symbols-outlined" v-else-if="Number(getActiveProfitMargin(item)) < 0">arrow_downward</span>
+                    <span>{{ Math.abs(Number(getActiveProfitMargin(item))).toFixed(1) }}%</span>
                   </div>
                 </td>
                 <td class="text-center">
                   <span
                     class="profit-badge"
                     :class="{
-                      'positive': item.profitMargin !== undefined && item.profitMargin >= 0,
-                      'negative': item.profitMargin !== undefined && item.profitMargin < 0
+                      'positive': getActiveProfitMargin(item) !== undefined && Number(getActiveProfitMargin(item)) >= 0,
+                      'negative': getActiveProfitMargin(item) !== undefined && Number(getActiveProfitMargin(item)) < 0
                     }"
                   >
-                    {{ item.profitMargin !== undefined ? item.profitMargin.toFixed(1) + '%' : '-' }}
+                    {{ getActiveProfitMargin(item) !== undefined ? Number(getActiveProfitMargin(item)).toFixed(1) + '%' : '-' }}
                   </span>
                 </td>
                 <td class="text-center">
@@ -318,7 +325,7 @@
         <div class="bottom-info">
           <div class="info-item">
             <span class="material-symbols-outlined">monetization_on</span>
-            <span>预计总利润: <strong>¥{{ totalProfit.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',') }}</strong> ({{ avgProfitMargin.toFixed(1) }}%)</span>
+            <span>{{ priceCaliber === 'lenovo' ? '调价金额合计' : '预计总利润' }}: <strong>¥{{ totalProfit.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',') }}</strong> ({{ avgProfitMargin.toFixed(1) }}%)</span>
           </div>
           <div class="divider-vertical"></div>
           <div class="info-item">
@@ -360,7 +367,7 @@
           </div>
           <div class="batch-adjust-body">
             <p class="batch-adjust-hint">
-              已选中 <strong>{{ selectedCount }}</strong> 条数据，将对其"最终报价"按百分比{{ batchAdjustDirection === 'up' ? '上调' : '下调' }}。
+              已选中 <strong>{{ selectedCount }}</strong> 条数据，将对其“{{ priceCaliber === 'lenovo' ? '联想框架单价' : '最终报价' }}”按百分比{{ batchAdjustDirection === 'up' ? '上调' : '下调' }}。
             </p>
             <div class="batch-adjust-input-group">
               <label class="batch-adjust-label">调整比例 (%)</label>
@@ -446,6 +453,82 @@ const isLoadingData = ref(false)
 const periodUnitDropdownVisible = ref(false)
 const periodDropdownPosition = ref({ top: '0px', left: '0px' })
 const modelSearchQuery = ref('')
+const priceCaliber = ref<'standard' | 'lenovo'>('standard')
+
+function ensureLenovoPriceState(item: any) {
+  const currentPrice = Number(item?.lenovo_unit_price) || 0
+  if (item.lenovoSuggestedPrice === undefined || item.lenovoSuggestedPrice === null) {
+    item.lenovoSuggestedPrice = currentPrice
+  }
+  if (item.lenovoProfitMargin === undefined && currentPrice > 0) {
+    const base = Number(item.lenovoSuggestedPrice) || 0
+    item.lenovoProfitMargin = base > 0 ? ((currentPrice - base) / base) * 100 : 0
+  }
+}
+
+function getActiveReferencePrice(item: any): number {
+  if (priceCaliber.value === 'lenovo') {
+    ensureLenovoPriceState(item)
+    return Number(item.lenovoSuggestedPrice) || 0
+  }
+  return Number(item.referenceCost) || 0
+}
+
+function getActiveSuggestedPrice(item: any): number {
+  if (priceCaliber.value === 'lenovo') {
+    ensureLenovoPriceState(item)
+    return Number(item.lenovoSuggestedPrice) || 0
+  }
+  return Number(item.suggestedPrice) || 0
+}
+
+function getActiveFinalPrice(item: any): number {
+  return priceCaliber.value === 'lenovo'
+    ? Number(item.lenovo_unit_price) || 0
+    : Number(item.finalPrice) || 0
+}
+
+function getActiveProfitMargin(item: any): number | undefined {
+  if (priceCaliber.value === 'lenovo') {
+    ensureLenovoPriceState(item)
+    return item.lenovo_unit_price > 0 ? Number(item.lenovoProfitMargin) || 0 : undefined
+  }
+  return item.profitMargin
+}
+
+function setActiveFinalPrice(item: any, value: number | null) {
+  if (priceCaliber.value === 'lenovo') {
+    ensureLenovoPriceState(item)
+    item.lenovo_unit_price = value
+    const quantity = Number(item.quantity) || 1
+    item.lenovo_total_price = value === null ? null : Math.round(value * quantity * 100) / 100
+    const base = Number(item.lenovoSuggestedPrice) || 0
+    item.lenovoProfitMargin = value !== null && base > 0
+      ? ((value - base) / base) * 100
+      : undefined
+    return
+  }
+
+  item.finalPrice = value
+  item.profitMargin = value !== null && item.suggestedPrice > 0
+    ? ((value - item.suggestedPrice) / item.suggestedPrice) * 100
+    : undefined
+}
+
+function onPriceCaliberChange() {
+  if (priceCaliber.value === 'lenovo') {
+    const hasLenovoPrices = tableData.value.some(item => Number(item?.lenovo_unit_price) > 0)
+    if (!hasLenovoPrices) {
+      priceCaliber.value = 'standard'
+      seqMsg.warning('当前数据没有联想框架单价，请先在“智能匹配”完成联想框架报价')
+      return
+    }
+    tableData.value.forEach(ensureLenovoPriceState)
+  }
+  allSelected.value = false
+  tableData.value.forEach(item => { item.selected = false })
+  triggerRef(tableData)
+}
 
 /** 模糊检索归一化：忽略大小写、空白与常见分隔符 */
 function normalizeModelSearch(text: string): string {
@@ -539,22 +622,18 @@ function confirmBatchAdjust() {
 
   tableData.value.forEach(item => {
     if (!item.selected) return
-    const currentPrice = item.finalPrice || item.suggestedPrice || 0
+    const currentPrice = getActiveFinalPrice(item) || getActiveSuggestedPrice(item)
     if (currentPrice <= 0) return
 
+    let adjustedPrice = 0
     if (direction === 'up') {
-      item.finalPrice = Math.round(currentPrice * (1 + percent / 100) * 100) / 100
+      adjustedPrice = Math.round(currentPrice * (1 + percent / 100) * 100) / 100
     } else {
-      item.finalPrice = Math.round(currentPrice * (1 - percent / 100) * 100) / 100
-      if (item.finalPrice < 0) item.finalPrice = 0
+      adjustedPrice = Math.round(currentPrice * (1 - percent / 100) * 100) / 100
+      if (adjustedPrice < 0) adjustedPrice = 0
     }
 
-    // 重新计算利润率
-    if (item.suggestedPrice && item.suggestedPrice > 0) {
-      item.profitMargin = ((item.finalPrice - item.suggestedPrice) / item.suggestedPrice) * 100
-    } else {
-      item.profitMargin = 0
-    }
+    setActiveFinalPrice(item, adjustedPrice)
     adjustedCount++
   })
 
@@ -647,16 +726,15 @@ function switchSheet(sheetName: string) {
 // 参考成本平均价：计算"参考成本（未税）"列的平均值
 const avgReferenceCost = computed(() => {
   if (tableData.value.length === 0) return 0
-  const total = tableData.value.reduce((sum, item) => {
-    return sum + (item.referenceCost || 0)
-  }, 0)
-  return total / tableData.value.length
+  const prices = tableData.value.map(getActiveReferencePrice).filter(price => price > 0)
+  if (prices.length === 0) return 0
+  return prices.reduce((sum, price) => sum + price, 0) / prices.length
 })
 
 // 平均利润率：计算"预估利润"列的平均值
 const avgProfitMargin = computed(() => {
   const validMargins = tableData.value
-    .map(item => item.profitMargin)
+    .map(getActiveProfitMargin)
     .filter(m => m !== undefined && m !== null)
   if (validMargins.length === 0) return 0
   const sum = validMargins.reduce((a, b) => a + b, 0)
@@ -666,8 +744,8 @@ const avgProfitMargin = computed(() => {
 // 总利润：计算"最终报价 (CNY)" - "参考成本（未税）"的总和
 const totalProfit = computed(() => {
   return tableData.value.reduce((sum, item) => {
-    const finalPrice = item.finalPrice || 0
-    const referenceCost = item.referenceCost || 0
+    const finalPrice = getActiveFinalPrice(item)
+    const referenceCost = getActiveReferencePrice(item)
     return sum + (finalPrice - referenceCost)
   }, 0)
 })
@@ -675,7 +753,8 @@ const totalProfit = computed(() => {
 // 低利润预警 (<6%)：统计"预估利润"列中小于6%的数据数量
 const lowProfitCount = computed(() => {
   return tableData.value.filter(item =>
-    item.profitMargin !== undefined && item.profitMargin < 6
+    getActiveProfitMargin(item) !== undefined &&
+    Number(getActiveProfitMargin(item)) < (priceCaliber.value === 'lenovo' ? -6 : 6)
   ).length
 })
 
@@ -685,6 +764,7 @@ function getCurrentState(): PriceAdjustmentState {
     tableData: flattenSheetGroups(),
     sheetGroups: sheetGroups.value,
     activeSheetName: activeSheetName.value,
+    priceCaliber: priceCaliber.value,
     hasData: flattenSheetGroups().length > 0
   }
 }
@@ -841,16 +921,9 @@ function updateFinalPrice(item: any, event: Event) {
   const value = parseFloat(input.value.replace(/[^0-9.]/g, ''))
 
   if (!isNaN(value)) {
-    item.finalPrice = value
-    // 重新计算价格调整比率（相较于建议售价的上调/下调比率）
-    if (item.suggestedPrice && item.suggestedPrice > 0) {
-      item.profitMargin = ((item.finalPrice - item.suggestedPrice) / item.suggestedPrice) * 100
-    } else {
-      item.profitMargin = 0
-    }
+    setActiveFinalPrice(item, value)
   } else {
-    item.finalPrice = null
-    item.profitMargin = undefined
+    setActiveFinalPrice(item, null)
   }
   // 使用 shallowRef 时需要手动触发更新
   syncActiveSheetGroup()
@@ -860,9 +933,7 @@ function updateFinalPrice(item: any, event: Event) {
 // Reset to suggested price
 function resetToSuggested(item: any) {
   if (!item) return
-  item.finalPrice = item.suggestedPrice
-  // 重置为建议售价时，比率为 0%
-  item.profitMargin = 0
+  setActiveFinalPrice(item, getActiveSuggestedPrice(item))
   // 使用 shallowRef 时需要手动触发更新
   syncActiveSheetGroup()
   triggerRef(tableData)
@@ -871,8 +942,7 @@ function resetToSuggested(item: any) {
 // Reset all prices to suggested prices
 function resetAllPrices() {
   tableData.value.forEach(item => {
-    item.finalPrice = item.suggestedPrice
-    item.profitMargin = 0
+    setActiveFinalPrice(item, getActiveSuggestedPrice(item))
   })
   // 使用 shallowRef 时需要手动触发更新
   syncActiveSheetGroup()
@@ -1013,6 +1083,7 @@ function calculatePrices(): Promise<void> {
     } else {
       item.profitMargin = undefined
     }
+    ensureLenovoPriceState(item)
     }
 
     currentIndex = endIndex
@@ -1121,6 +1192,7 @@ onMounted(async () => {
     const savedState = restorePageState<PriceAdjustmentState>(PAGE_STATE_KEYS.PRICE_ADJUSTMENT)
     if (savedState && savedState.hasData && savedState.tableData && savedState.tableData.length > 0) {
       console.log('Restoring saved page state:', savedState.tableData.length, 'items')
+      priceCaliber.value = savedState.priceCaliber || 'standard'
       if (savedState.sheetGroups && Object.keys(savedState.sheetGroups).length > 0) {
         setSheetGroupsFromSavedGroups(savedState.sheetGroups)
         const needsRecalc = Object.values(sheetGroups.value).some((rows: any) =>
@@ -1213,6 +1285,7 @@ watch(tableData, (newData) => {
       tableData: flattenSheetGroups(),
       sheetGroups: sheetGroups.value,
       activeSheetName: activeSheetName.value,
+      priceCaliber: priceCaliber.value,
       hasData: true
     })
   }

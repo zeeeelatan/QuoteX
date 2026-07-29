@@ -8,15 +8,22 @@ import os
 import re
 import json
 import logging
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 from typing import List, Dict, Any, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/document", tags=["文档解析"])
 
 MAX_FILE_SIZE = 30 * 1024 * 1024  # 30 MB
+OLE_COMPOUND_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
 # Ollama 配置（用于 OCR 后处理）
 OLLAMA_BASE = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -561,6 +568,88 @@ def _llm_standardize_fields(headers: List[str], data: List[Dict[str, Any]]) -> O
 # ──────────────────────────────────────────────
 #  主接口
 # ──────────────────────────────────────────────
+
+def _find_libreoffice() -> Optional[str]:
+    """查找 LibreOffice/soffice，可通过 LIBREOFFICE_PATH 显式配置。"""
+    configured = os.getenv("LIBREOFFICE_PATH", "").strip()
+    candidates = [
+        configured,
+        shutil.which("libreoffice") or "",
+        shutil.which("soffice") or "",
+        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+    ]
+    return next((path for path in candidates if path and Path(path).exists()), None)
+
+
+@router.post("/convert-excel")
+async def convert_legacy_excel(file: UploadFile = File(...)):
+    """将旧版 BIFF/OLE .xls 转换为完整保留格式的 .xlsx。"""
+    filename = file.filename or "source.xls"
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="上传的文件为空")
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail=f"文件过大（上限 {MAX_FILE_SIZE // 1024 // 1024}MB）")
+    if not content.startswith(OLE_COMPOUND_SIGNATURE):
+        raise HTTPException(status_code=400, detail="该文件不是旧版 OLE/BIFF .xls 文件")
+
+    soffice = _find_libreoffice()
+    if not soffice:
+        raise HTTPException(
+            status_code=503,
+            detail="服务器未安装 LibreOffice，无法转换旧版 .xls；请安装后配置 LIBREOFFICE_PATH"
+        )
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="ai_quote_xls_") as temp_dir:
+            temp_path = Path(temp_dir)
+            input_path = temp_path / "source.xls"
+            output_path = temp_path / "source.xlsx"
+            profile_dir = temp_path / "lo_profile"
+            input_path.write_bytes(content)
+
+            result = subprocess.run(
+                [
+                    soffice,
+                    "--headless",
+                    f"-env:UserInstallation={profile_dir.as_uri()}",
+                    "--convert-to",
+                    "xlsx",
+                    "--outdir",
+                    str(temp_path),
+                    str(input_path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+            if result.returncode != 0 or not output_path.exists():
+                detail = (result.stderr or result.stdout or "未生成转换文件").strip()
+                logger.error("旧版 Excel 转换失败: %s", detail)
+                raise HTTPException(status_code=422, detail=f"旧版 .xls 转换失败：{detail}")
+
+            converted = output_path.read_bytes()
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="旧版 .xls 转换超时")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("旧版 Excel 转换异常: %s", filename)
+        raise HTTPException(status_code=500, detail=f"旧版 .xls 转换异常：{exc}")
+
+    output_name = re.sub(r"\.xls$", ".xlsx", filename, flags=re.IGNORECASE)
+    if output_name == filename:
+        output_name = f"{Path(filename).stem}.xlsx"
+    headers = {
+        "Content-Disposition": 'attachment; filename="converted.xlsx"',
+        "X-Converted-Filename": quote(output_name),
+    }
+    return StreamingResponse(
+        io.BytesIO(converted),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
 
 @router.post("/parse", response_model=ParseResponse)
 async def parse_document(

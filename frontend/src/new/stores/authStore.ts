@@ -31,8 +31,11 @@ function loadStored(): { token: string | null; user: AuthUser | null } {
   }
 }
 
-const token = ref<string | null>(loadStored().token)
-const user = ref<AuthUser | null>(loadStored().user)
+const storedAuth = loadStored()
+const token = ref<string | null>(storedAuth.token)
+const user = ref<AuthUser | null>(storedAuth.user)
+// 存在历史 token 时，必须先向后端确认其有效性，避免渲染伪登录状态。
+const authValidated = ref(!storedAuth.token)
 
 /** 用户资料（全局缓存，避免组件重建时闪烁） */
 const userProfile = ref<UserProfile>({ name: '', position: '', avatar: '' })
@@ -57,11 +60,13 @@ export async function loadUserProfile(): Promise<void> {
         avatar: res.data.avatar || '',
       }
       profileLoaded = true
+    } else {
+      clearAuth()
     }
   } catch (err: any) {
     // 401/403 = token 已失效 → 主动清掉本地认证，回到"未登录"态
     const status = err?.response?.status
-    if (status === 401 || status === 403) {
+    if (status === 401 || status === 403 || status === 404) {
       console.warn('Token 已失效，清除本地登录状态')
       clearAuth()
     } else {
@@ -88,16 +93,70 @@ export function getUserName(): string {
 }
 
 export function isLoggedIn(): boolean {
-  return !!token.value
+  return authValidated.value && !!token.value && !!user.value?.user_id
 }
 
 /** 供模板用：登录态变化时视图会更新 */
-export const isLoggedInRef = computed(() => !!token.value)
+export const isLoggedInRef = computed(() => isLoggedIn())
+
+/**
+ * 应用启动时校验本地 token，并用后端返回值重建用户信息。
+ * 使用独立 axios 实例，避免启动校验失败触发全局 401 弹窗。
+ */
+export async function validateStoredAuth(): Promise<boolean> {
+  const currentToken = token.value
+  if (!currentToken) {
+    authValidated.value = true
+    return false
+  }
+
+  authValidated.value = false
+  try {
+    const API_URL = import.meta.env.VITE_API_BASE_URL || '/api'
+    const validator = axios.create()
+    const res = await validator.get(`${API_URL}/auth/me`, {
+      headers: { Authorization: `Bearer ${currentToken}` }
+    })
+    const data = res.data
+    if (!data?.user_id) {
+      clearAuth()
+      return false
+    }
+
+    user.value = {
+      user_id: Number(data.user_id),
+      username: data.username || '',
+      name: data.name || '',
+    }
+    localStorage.setItem(USER_KEY, JSON.stringify(user.value))
+    userProfile.value = {
+      ...userProfile.value,
+      name: data.name || '',
+    }
+    authValidated.value = true
+    return true
+  } catch (err: any) {
+    const status = err?.response?.status
+    if (status === 401 || status === 403 || status === 404) {
+      clearAuth()
+    } else {
+      // 后端暂时不可用时不冒充已登录，也不删除仍可能有效的凭据。
+      authValidated.value = false
+      console.error('登录状态校验失败', err)
+    }
+    return false
+  }
+}
 
 /** 登录/注册成功后调用，持久化 token 与用户信息 */
 export function setAuth(accessToken: string, authUser: AuthUser): void {
   token.value = accessToken
   user.value = authUser
+  authValidated.value = true
+  userProfile.value = {
+    ...userProfile.value,
+    name: authUser.name || '',
+  }
   localStorage.setItem(TOKEN_KEY, accessToken)
   localStorage.setItem(USER_KEY, JSON.stringify(authUser))
   axios.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`
@@ -107,6 +166,7 @@ export function setAuth(accessToken: string, authUser: AuthUser): void {
 export function clearAuth(): void {
   token.value = null
   user.value = null
+  authValidated.value = true
   userProfile.value = { name: '', position: '', avatar: '' }
   profileLoaded = false
   localStorage.removeItem(TOKEN_KEY)

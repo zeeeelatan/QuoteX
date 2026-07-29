@@ -486,43 +486,46 @@
                               {{ getMappedOriginalHeader(header) }}
                             </span>
                             <!-- 下拉框 -->
-                            <div
-                              v-if="activeDropdownForColumn === header"
-                              class="column-mapping-dropdown"
-                              @click.stop
-                            >
-                              <div class="dropdown-header">
-                                <span class="dropdown-title">选择对应列</span>
-                                <button
-                                  v-if="columnMappings[header]"
-                                  class="clear-mapping-btn"
-                                  @click="clearMapping(header)"
-                                  title="清除映射"
-                                >
-                                  <span class="material-symbols-outlined">close</span>
-                                </button>
-                              </div>
-                              <div class="dropdown-options">
-                                <div
-                                  v-for="originalHeader in activeOriginalHeaders"
-                                  :key="originalHeader"
-                                  class="dropdown-option"
-                                  :class="{ selected: columnMappings[header] === originalHeader }"
-                                  @click="selectOriginalHeader(header, originalHeader)"
-                                >
-                                  <span class="material-symbols-outlined option-icon">
-                                    {{ columnMappings[header] === originalHeader ? 'check_circle' : 'radio_button_unchecked' }}
-                                  </span>
-                                  <span class="option-text">{{ originalHeader }}</span>
+                            <Teleport to="body">
+                              <div
+                                v-if="activeDropdownForColumn === header && !isFullscreenModalOpen"
+                                class="column-mapping-dropdown column-mapping-dropdown-portal"
+                                :style="columnMappingDropdownStyle"
+                                @click.stop
+                              >
+                                <div class="dropdown-header">
+                                  <span class="dropdown-title">选择对应列</span>
+                                  <button
+                                    v-if="columnMappings[header]"
+                                    class="clear-mapping-btn"
+                                    @click="clearMapping(header)"
+                                    title="清除映射"
+                                  >
+                                    <span class="material-symbols-outlined">close</span>
+                                  </button>
                                 </div>
-                                <div
-                                  v-if="activeOriginalHeaders.length === 0"
-                                  class="dropdown-empty"
-                                >
-                                  请先上传Excel文件
+                                <div class="dropdown-options" @wheel.stop>
+                                  <div
+                                    v-for="originalHeader in activeOriginalHeaders"
+                                    :key="originalHeader"
+                                    class="dropdown-option"
+                                    :class="{ selected: columnMappings[header] === originalHeader }"
+                                    @click="selectOriginalHeader(header, originalHeader)"
+                                  >
+                                    <span class="material-symbols-outlined option-icon">
+                                      {{ columnMappings[header] === originalHeader ? 'check_circle' : 'radio_button_unchecked' }}
+                                    </span>
+                                    <span class="option-text">{{ originalHeader }}</span>
+                                  </div>
+                                  <div
+                                    v-if="activeOriginalHeaders.length === 0"
+                                    class="dropdown-empty"
+                                  >
+                                    请先上传Excel文件
+                                  </div>
                                 </div>
                               </div>
-                            </div>
+                            </Teleport>
                           </div>
                         </th>
                         <th class="actions-header">操作</th>
@@ -794,40 +797,43 @@
                               {{ getMappedOriginalHeader(header) }}
                             </span>
                             <!-- 下拉框 -->
-                            <div
-                              v-if="activeDropdownForColumn === header"
-                              class="modal-column-mapping-dropdown"
-                              @click.stop
-                            >
-                              <div class="modal-dropdown-header">
-                                <span class="modal-dropdown-title">选择对应列</span>
-                                <button
-                                  v-if="columnMappings[header]"
-                                  class="modal-clear-mapping-btn"
-                                  @click="clearMapping(header)"
-                                  title="清除映射"
-                                >
-                                  <span class="material-symbols-outlined">close</span>
-                                </button>
-                              </div>
-                              <div class="modal-dropdown-options">
-                                <div
-                                  v-for="originalHeader in activeOriginalHeaders"
-                                  :key="originalHeader"
-                                  class="modal-dropdown-option"
-                                  :class="{ selected: columnMappings[header] === originalHeader }"
-                                  @click="selectOriginalHeader(header, originalHeader)"
-                                >
-                                  <span class="material-symbols-outlined modal-option-icon">
-                                    {{ columnMappings[header] === originalHeader ? 'check_circle' : 'radio_button_unchecked' }}
-                                  </span>
-                                  <span class="modal-option-text">{{ originalHeader }}</span>
+                            <Teleport to="body">
+                              <div
+                                v-if="activeDropdownForColumn === header && isFullscreenModalOpen"
+                                class="modal-column-mapping-dropdown column-mapping-dropdown-portal"
+                                :style="columnMappingDropdownStyle"
+                                @click.stop
+                              >
+                                <div class="modal-dropdown-header">
+                                  <span class="modal-dropdown-title">选择对应列</span>
+                                  <button
+                                    v-if="columnMappings[header]"
+                                    class="modal-clear-mapping-btn"
+                                    @click="clearMapping(header)"
+                                    title="清除映射"
+                                  >
+                                    <span class="material-symbols-outlined">close</span>
+                                  </button>
                                 </div>
-                                <div v-if="activeOriginalHeaders.length === 0" class="modal-dropdown-empty">
-                                  请先上传Excel文件
+                                <div class="modal-dropdown-options" @wheel.stop>
+                                  <div
+                                    v-for="originalHeader in activeOriginalHeaders"
+                                    :key="originalHeader"
+                                    class="modal-dropdown-option"
+                                    :class="{ selected: columnMappings[header] === originalHeader }"
+                                    @click="selectOriginalHeader(header, originalHeader)"
+                                  >
+                                    <span class="material-symbols-outlined modal-option-icon">
+                                      {{ columnMappings[header] === originalHeader ? 'check_circle' : 'radio_button_unchecked' }}
+                                    </span>
+                                    <span class="modal-option-text">{{ originalHeader }}</span>
+                                  </div>
+                                  <div v-if="activeOriginalHeaders.length === 0" class="modal-dropdown-empty">
+                                    请先上传Excel文件
+                                  </div>
                                 </div>
                               </div>
-                            </div>
+                            </Teleport>
                           </div>
                         </th>
                         <th class="modal-actions-th">操作</th>
@@ -961,6 +967,11 @@ import {
   type DocumentRecognitionState
 } from '../stores/quotationStore'
 import { persistOriginalExcelCache } from '../utils/originalExcelCache'
+import {
+  bytesToBase64,
+  convertLegacyXls,
+  isLegacyXls
+} from '../utils/legacyExcelConversion'
 import {
   saveDraft,
   getCurrentDraftId,
@@ -1212,6 +1223,7 @@ function toggleNoHeaderMode() {
   }
 }
 const activeDropdownForColumn = ref<string | null>(null)  // 当前打开下拉框的列名
+const columnMappingDropdownStyle = ref<Record<string, string>>({})
 
 // Excel-like table state
 const excelTableRef = ref<HTMLElement | null>(null)
@@ -1803,9 +1815,16 @@ async function loadRecentUpload(record: UploadRecord) {
   try {
     // Decode base64 to binary
     const binaryString = atob(record.fileData)
-    const bytes = new Uint8Array(binaryString.length)
+    let bytes = new Uint8Array(binaryString.length)
     for (let i = 0; i < binaryString.length; i++) {
       bytes[i] = binaryString.charCodeAt(i)
+    }
+    let workingFileName = record.fileName
+    if (isLegacyXls(bytes)) {
+      ElMessage.info('检测到缓存中的旧版 .xls，正在转换为 .xlsx…')
+      const converted = await convertLegacyXls(bytes, record.fileName, API_URL)
+      bytes = converted.bytes
+      workingFileName = converted.fileName
     }
 
     const workbook = XLSX.read(bytes, { type: 'array' })
@@ -1817,8 +1836,9 @@ async function loadRecentUpload(record: UploadRecord) {
     // Store workbook and sheet names for multi-sheet support
     workbookRef.value = workbook
     sheetNames.value = workbook.SheetNames
-    currentFileName.value = record.fileName
-    currentFileBase64.value = record.fileData  // 保存当前文件的base64数据
+    const workingBase64 = bytesToBase64(bytes)
+    currentFileName.value = workingFileName
+    currentFileBase64.value = workingBase64
     selectedSheetNames.value = workbook.SheetNames.length ? [workbook.SheetNames[0]] : []
     sheetRecognitionCache.value = {}
     excelSheetDataCache.value = {}
@@ -1832,13 +1852,13 @@ async function loadRecentUpload(record: UploadRecord) {
     loadSheetData(firstSheet)
 
     void persistOriginalExcelCache({
-      fileName: record.fileName,
-      base64: record.fileData,
+      fileName: workingFileName,
+      base64: workingBase64,
       selectedSheetName: firstSheet,
       selectedSheetNames: selectedSheetNames.value.slice()
     })
-    saveFlowData(FLOW_DATA_KEYS.ORIGINAL_EXCEL_FILE, record.fileData)
-    saveFlowData(FLOW_DATA_KEYS.ORIGINAL_FILE_NAME, record.fileName)
+    saveFlowData(FLOW_DATA_KEYS.ORIGINAL_EXCEL_FILE, workingBase64)
+    saveFlowData(FLOW_DATA_KEYS.ORIGINAL_FILE_NAME, workingFileName)
     saveFlowData(FLOW_DATA_KEYS.SELECTED_SHEET_NAME, firstSheet)
     saveFlowData(FLOW_DATA_KEYS.SELECTED_SHEET_NAMES, selectedSheetNames.value.slice())
 
@@ -2639,9 +2659,18 @@ function processIncomingFile(file: File) {
 // Excel 文件前端解析（原有逻辑）
 function handleExcelFile(file: File) {
   const reader = new FileReader()
-  reader.onload = (e) => {
+  reader.onload = async (e) => {
     try {
-      const data = new Uint8Array(e.target?.result as ArrayBuffer)
+      let data = new Uint8Array(e.target?.result as ArrayBuffer)
+      let workingFileName = file.name
+      if (isLegacyXls(data)) {
+        ElMessage.info('检测到旧版 .xls，正在转换为可保留格式的 .xlsx…')
+        const converted = await convertLegacyXls(data, file.name, API_URL)
+        data = converted.bytes
+        workingFileName = converted.fileName
+        currentFileName.value = workingFileName
+        ElMessage.success('旧版 .xls 已转换为 .xlsx，导出时将尽量保留原始格式')
+      }
       const workbook = XLSX.read(data, { type: 'array' })
 
       if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
@@ -2663,19 +2692,18 @@ function handleExcelFile(file: File) {
       loadSheetData(firstSheet)
 
       // Convert file data to base64 and save to recent uploads
-      const binaryString = Array.from(data, byte => String.fromCharCode(byte)).join('')
-      const base64Data = btoa(binaryString)
+      const base64Data = bytesToBase64(data)
       currentFileBase64.value = base64Data  // 保存当前文件的base64数据
-      addToRecentUploads(file.name, base64Data, originalTableData.value.length)
+      addToRecentUploads(workingFileName, base64Data, originalTableData.value.length)
       // 上传成功即持久化，避免用户中途刷新后丢失原始附件
       void persistOriginalExcelCache({
-        fileName: file.name,
+        fileName: workingFileName,
         base64: base64Data,
         selectedSheetName: firstSheet,
         selectedSheetNames: selectedSheetNames.value.slice()
       })
       saveFlowData(FLOW_DATA_KEYS.ORIGINAL_EXCEL_FILE, base64Data)
-      saveFlowData(FLOW_DATA_KEYS.ORIGINAL_FILE_NAME, file.name)
+      saveFlowData(FLOW_DATA_KEYS.ORIGINAL_FILE_NAME, workingFileName)
       saveFlowData(FLOW_DATA_KEYS.SELECTED_SHEET_NAME, firstSheet)
       saveFlowData(FLOW_DATA_KEYS.SELECTED_SHEET_NAMES, selectedSheetNames.value.slice())
 
@@ -2978,7 +3006,38 @@ function toggleHeaderDropdown(headerName: string, event: Event) {
   if (activeDropdownForColumn.value === headerName) {
     activeDropdownForColumn.value = null
   } else {
-    // 否则打开新的下拉框
+    // 下拉层 Teleport 到 body，按视口计算位置，避免被表格 overflow 容器裁剪
+    const trigger = event.currentTarget as HTMLElement | null
+    if (trigger) {
+      const rect = trigger.getBoundingClientRect()
+      const viewportPadding = 12
+      const gap = 4
+      const dropdownWidth = Math.min(280, window.innerWidth - viewportPadding * 2)
+      const left = Math.min(
+        Math.max(viewportPadding, rect.left),
+        window.innerWidth - dropdownWidth - viewportPadding
+      )
+      const availableBelow = window.innerHeight - rect.bottom - gap - viewportPadding
+      const availableAbove = rect.top - gap - viewportPadding
+      const openUpward = availableBelow < 220 && availableAbove > availableBelow
+      const maxHeight = Math.max(140, Math.min(360, openUpward ? availableAbove : availableBelow))
+
+      columnMappingDropdownStyle.value = openUpward
+        ? {
+            position: 'fixed',
+            left: `${left}px`,
+            bottom: `${window.innerHeight - rect.top + gap}px`,
+            width: `${dropdownWidth}px`,
+            maxHeight: `${maxHeight}px`
+          }
+        : {
+            position: 'fixed',
+            left: `${left}px`,
+            top: `${rect.bottom + gap}px`,
+            width: `${dropdownWidth}px`,
+            maxHeight: `${maxHeight}px`
+          }
+    }
     activeDropdownForColumn.value = headerName
   }
 }
@@ -5160,6 +5219,27 @@ const getTotalAmount = () => {
   max-height: 240px;
   overflow-y: auto;
   padding: 0.25rem;
+}
+
+/* Teleport 到 body，脱离表格 overflow 裁剪，并在小窗口内保持完整可滚动 */
+.column-mapping-dropdown-portal {
+  position: fixed !important;
+  z-index: 10000 !important;
+  margin-top: 0 !important;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+.column-mapping-dropdown-portal .dropdown-options,
+.column-mapping-dropdown-portal .modal-dropdown-options {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .dropdown-option {

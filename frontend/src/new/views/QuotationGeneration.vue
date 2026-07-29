@@ -117,8 +117,8 @@
               </div>
 
               <!-- Items Table -->
-              <div class="items-table" :class="{ 'is-scrolling': !isGeneratingPDF }">
-                <div class="items-table-scroll" ref="itemsWrapperRef">
+              <div class="items-table">
+                <div class="items-table-scroll">
                   <table class="quote-table" :class="{ 'is-pdf-export': isGeneratingPDF, 'caliber-lenovo': quoteCaliber === 'lenovo' }">
                     <thead>
                       <tr>
@@ -142,14 +142,12 @@
                           暂无数据，请先完成价格调整
                         </td>
                       </tr>
-                      <tr v-if="qTopPadding > 0" :style="{ height: qTopPadding + 'px' }" class="virtual-spacer"><td></td></tr>
                       <tr
-                        v-for="(item, i) in qVisibleItems"
-                        :key="qStartIndex + i"
+                        v-for="(item, i) in tableData"
+                        :key="i"
                         class="item-row"
-                        :style="isGeneratingPDF ? undefined : { height: QUOTE_ROW_HEIGHT + 'px' }"
                       >
-                        <td class="text-center col-no">{{ qStartIndex + i + 1 }}</td>
+                        <td class="text-center col-no">{{ i + 1 }}</td>
                         <td class="item-desc">
                           <p class="item-name">{{ getItemDisplayModel(item) }}</p>
                           <p class="item-detail">
@@ -164,7 +162,6 @@
                         <td class="text-right col-price">¥{{ getItemUnitPrice(item).toFixed(2) }}</td>
                         <td class="text-right col-total item-total">¥{{ getItemTotalPrice(item).toFixed(2) }}</td>
                       </tr>
-                      <tr v-if="qBottomPadding > 0" :style="{ height: qBottomPadding + 'px' }" class="virtual-spacer"><td></td></tr>
                     </tbody>
                   </table>
                 </div>
@@ -652,7 +649,6 @@ import api from '../../api/index'
 import BranchPageHeader from '../components/BranchPageHeader.vue'
 import ProductDatabaseModal from '../components/ProductDatabaseModal.vue'
 import { getStorageKeyPrefix } from '../stores/authStore'
-import { useVirtualList } from '../composables/useVirtualList'
 import {
   PAGE_STATE_KEYS,
   FLOW_DATA_KEYS,
@@ -675,8 +671,14 @@ import {
   resolveOriginalExcel,
   persistOriginalExcelCache
 } from '../utils/originalExcelCache'
+import {
+  bytesToBase64,
+  convertLegacyXls,
+  isLegacyXls
+} from '../utils/legacyExcelConversion'
 
 const router = useRouter()
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 
 // State
 const tableData = ref<any[]>([])
@@ -688,20 +690,6 @@ const isExporting = ref(false)
 const sourceFileName = ref('')  // 源文件名（来自智能识别模块导入的文件）
 const isGeneratingPDF = ref(false)  // PDF生成状态
 const quotationDocRef = ref<HTMLElement | null>(null)  // 报价单预览区域引用
-
-// ============ 虚拟滚动（仅在预览态生效，PDF 导出时关闭以让 html2canvas 抓全量 DOM）============
-const itemsWrapperRef = ref<HTMLElement | null>(null)
-const QUOTE_ROW_HEIGHT = 56
-const quoteVirtualItems = computed(() => {
-  // PDF 生成时返回完整列表，使虚拟化退化为全量渲染
-  return isGeneratingPDF.value ? [] : tableData.value
-})
-const { visibleItems: qVisibleItemsRaw, topPadding: qTopPaddingRaw, bottomPadding: qBottomPaddingRaw, startIndex: qStartIndexRaw } =
-  useVirtualList(quoteVirtualItems, QUOTE_ROW_HEIGHT, itemsWrapperRef)
-const qVisibleItems = computed(() => isGeneratingPDF.value ? tableData.value : qVisibleItemsRaw.value)
-const qTopPadding = computed(() => isGeneratingPDF.value ? 0 : qTopPaddingRaw.value)
-const qBottomPadding = computed(() => isGeneratingPDF.value ? 0 : qBottomPaddingRaw.value)
-const qStartIndex = computed(() => isGeneratingPDF.value ? 0 : qStartIndexRaw.value)
 
 // Logo 上传相关
 const logoInputRef = ref<HTMLInputElement | null>(null)
@@ -2592,14 +2580,34 @@ async function exportQuotationExcel() {
     // ===== 文件1：保留原始格式的报价表（仅在空白列添加价格） =====
     // 使用 JSZip 直接操作 xlsx 内部 XML，避免 ExcelJS load→save 丢失主题色/样式
     let hasOriginalFile = false
+    let originalFormatFailureReason = ''
     if (originalExcelBase64 && selectedSheetName) {
       try {
         console.log('[Export] 生成文件1：原始格式报价表（JSZip 方式保留样式）')
 
         const binaryString = atob(originalExcelBase64)
-        const bytes = new Uint8Array(binaryString.length)
+        let bytes = new Uint8Array(binaryString.length)
         for (let i = 0; i < binaryString.length; i++) {
           bytes[i] = binaryString.charCodeAt(i)
+        }
+        if (isLegacyXls(bytes)) {
+          console.log('[Export] 检测到缓存中的旧版 .xls，导出前自动转换为 .xlsx')
+          const converted = await convertLegacyXls(
+            bytes,
+            originalFileName || 'source.xls',
+            API_BASE_URL
+          )
+          bytes = converted.bytes
+          originalFileName = converted.fileName
+          originalExcelBase64 = bytesToBase64(bytes)
+          saveFlowData(FLOW_DATA_KEYS.ORIGINAL_EXCEL_FILE, originalExcelBase64)
+          saveFlowData(FLOW_DATA_KEYS.ORIGINAL_FILE_NAME, originalFileName)
+          void persistOriginalExcelCache({
+            fileName: originalFileName,
+            base64: originalExcelBase64,
+            selectedSheetName,
+            selectedSheetNames
+          })
         }
 
         const JSZip = (await import('jszip')).default
@@ -2668,11 +2676,17 @@ async function exportQuotationExcel() {
           return { col, row: parseInt(match[2]) }
         }
 
-        // 找最大列号
+        // 找有实际内容的最大列号。LibreOffice 转换旧版 .xls 时，可能为整行 256 列
+        // 生成仅含样式的空单元格；这些列不能视为数据末列，否则价格会被追加到 IW/IX 等远端列。
         let maxCol = 0
         for (let i = 0; i < rows.length; i++) {
           const cells = rows[i].getElementsByTagNameNS(nsResolver, 'c')
           for (let j = 0; j < cells.length; j++) {
+            const hasContent =
+              cells[j].getElementsByTagNameNS(nsResolver, 'v').length > 0 ||
+              cells[j].getElementsByTagNameNS(nsResolver, 'f').length > 0 ||
+              cells[j].getElementsByTagNameNS(nsResolver, 'is').length > 0
+            if (!hasContent) continue
             const ref = cells[j].getAttribute('r') || ''
             const { col } = parseRef(ref)
             if (col > maxCol) maxCol = col
@@ -3388,6 +3402,11 @@ async function exportQuotationExcel() {
           for (let i = 0; i < extraRows.length; i++) {
             const cells = extraRows[i].getElementsByTagNameNS(extraNs, 'c')
             for (let j = 0; j < cells.length; j++) {
+              const hasContent =
+                cells[j].getElementsByTagNameNS(extraNs, 'v').length > 0 ||
+                cells[j].getElementsByTagNameNS(extraNs, 'f').length > 0 ||
+                cells[j].getElementsByTagNameNS(extraNs, 'is').length > 0
+              if (!hasContent) continue
               const ref = cells[j].getAttribute('r') || ''
               const { col } = parseRef(ref)
               if (col > extraMaxCol) extraMaxCol = col
@@ -3572,8 +3591,9 @@ async function exportQuotationExcel() {
       } catch (loadError) {
         console.error('[Export] 加载原始Excel文件失败:', loadError)
         hasOriginalFile = false
+        originalFormatFailureReason = (loadError as Error)?.message || '未知错误'
         ElMessage.error({
-          message: `保留原格式导出失败：${(loadError as Error)?.message || '未知错误'}，将按表格数据重建（底纹/框线等格式会丢失）`,
+          message: `保留原格式导出失败：${originalFormatFailureReason}，将按表格数据重建（底纹/框线等格式会丢失）`,
           duration: 8000,
           showClose: true
         })
@@ -3588,7 +3608,9 @@ async function exportQuotationExcel() {
     if (!hasOriginalFile && previewOriginalData.value && previewOriginalData.value.headers) {
       console.log('[Export] 无原始文件，使用原始表格数据生成文件1')
       ElMessage.warning({
-        message: '未找到原始需求附件，已按表格数据重建报价单，底纹/框线等原格式无法保留。请重新从「智能识别」上传附件后再导出。',
+        message: originalFormatFailureReason
+          ? `原始附件存在，但格式保留处理失败（${originalFormatFailureReason}），已按表格数据重建报价单。`
+          : '未找到原始需求附件，已按表格数据重建报价单，底纹/框线等原格式无法保留。请重新从「智能识别」上传附件后再导出。',
         duration: 8000,
         showClose: true
       })
@@ -4151,7 +4173,7 @@ h1, h2, h3, h4, h5, h6 {
   border-radius: 0.75rem;
   border: 1px solid #232f48;
   padding: 2rem;
-  overflow-y: auto;
+  overflow: visible;
   box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.1);
 }
 
@@ -4359,32 +4381,10 @@ h1, h2, h3, h4, h5, h6 {
   margin-bottom: 2rem;
 }
 
-/* 预览态：表格区固定高度内滚动；PDF 态由 is-scrolling 类移除恢复 auto */
-.items-table.is-scrolling .items-table-scroll {
-  max-height: 60vh;
-  overflow-y: auto;
-  position: relative;
-}
-.items-table:not(.is-scrolling) .items-table-scroll {
-  max-height: none;
-  overflow: visible;
-}
-
-.items-table-scroll .quote-table thead {
-  position: sticky;
-  top: 0;
-  background: white;
-  z-index: 2;
-}
-
-.quote-table tbody tr.virtual-spacer {
-  background: transparent !important;
-  border: none !important;
-  transition: none;
-}
-.quote-table tbody tr.virtual-spacer td {
-  padding: 0;
-  border: none;
+.items-table-scroll {
+  overflow-x: auto;
+  overflow-y: visible;
+  overscroll-behavior: contain;
 }
 
 .quote-table {

@@ -4138,7 +4138,7 @@ async function startCalculation() {
     globalParams: globalParams.value,
     customerName: '客户名称',
     customerAddress: '客户地址',
-    projectName: '项目名称',
+    projectName: '',
     // 报价公司信息（从个人设置读取）
     quoteCompanyInfo: {
       companyName: companyInfo.company_name || '报价公司名称',
