@@ -1377,6 +1377,37 @@ function getActiveOriginalSource() {
   return { headers: selectedColumns, data }
 }
 
+/**
+ * 获取后续“映射报价数据列”应展示的原始需求列。
+ * 未框选时沿用工作表原始表头；框选后以选区首行作为表头。
+ */
+function getMappingHeadersForSheet(sheet: {
+  headers: string[]
+  data: any[]
+  sourceSelectionRange?: OriginalSelectionRange | null
+}): string[] {
+  const range = sheet.sourceSelectionRange
+  if (!range) return [...sheet.headers]
+
+  const selectedColumns = sheet.headers.slice(range.startCol, range.endCol + 1)
+  const headerRow = sheet.data[range.startRow]
+  if (!headerRow || selectedColumns.length === 0) return selectedColumns
+
+  const usedHeaders = new Set<string>()
+  return selectedColumns.map((columnKey, index) => {
+    const rawHeader = String(headerRow[columnKey] ?? '').trim()
+    const fallbackHeader = `列${index + 1}`
+    let nextHeader = rawHeader || fallbackHeader
+    if (usedHeaders.has(nextHeader)) {
+      let duplicateIndex = 2
+      while (usedHeaders.has(`${nextHeader}_${duplicateIndex}`)) duplicateIndex += 1
+      nextHeader = `${nextHeader}_${duplicateIndex}`
+    }
+    usedHeaders.add(nextHeader)
+    return nextHeader
+  })
+}
+
 const hasOriginalSelection = computed(() => !!getCurrentOriginalSelectionRange())
 const hasAppliedOriginalSelection = computed(() => !!appliedOriginalSelection.value)
 const activeOriginalRowCount = computed(() => getActiveOriginalSource().data.length)
@@ -2494,6 +2525,7 @@ const goToSmartMatching = () => {
       sheetName: sheet.sheetName,
       headers: sheet.headers,
       data: sheet.data,
+      mappingHeaders: getMappingHeadersForSheet(sheet),
       worksheetSelection
     }
   })
@@ -2516,7 +2548,8 @@ const goToSmartMatching = () => {
   if (selectedSheets.length > 0) {
     saveFlowData(FLOW_DATA_KEYS.ORIGINAL_TABLE_DATA, {
       headers: selectedSheets[0].headers,
-      data: selectedSheets[0].data
+      data: selectedSheets[0].data,
+      mappingHeaders: getMappingHeadersForSheet(selectedSheets[0])
     })
     saveFlowData(FLOW_DATA_KEYS.ORIGINAL_SHEET_TABLES, originalSheetTables)
   }

@@ -2443,8 +2443,9 @@ function openSearch(item: any) {
   activeModelRow.value = item
   showSearchDialog.value = true
   searchPage.value = 1
-  // 重置搜索数据源为当前行的数据源
-  searchDataSource.value = item.dataSource || 'datacenter'
+  // 手动搜索必须继承当前智能匹配的数据范围。
+  // 匹配结果行通常不保存 dataSource，读取 item.dataSource 会错误回退到 datacenter。
+  searchDataSource.value = dataSource.value
   // Use original model for search (not the matched one)
   searchQuery.value = item.model || ''
   handleSearchInput()

@@ -136,6 +136,7 @@ export function clearAllQuotationStates(): void {
 export interface TableDataWithHeaders {
   headers: string[]
   data: any[]
+  mappingHeaders?: string[]
 }
 
 export interface SheetTableDataWithHeaders extends TableDataWithHeaders {

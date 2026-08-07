@@ -835,7 +835,11 @@ const columnMappingDraft = ref<ExportColumnMapping>(EMPTY_COLUMN_MAPPING())
 const showColumnMappingDialog = ref(false)
 
 const originalColumnOptions = computed(() => {
-  const headers = originalTableData.value?.headers || []
+  // 手动框选后优先使用选区首行推导出的表头；未框选/旧状态则回退原始首行表头。
+  const headers = originalTableData.value?.mappingHeaders
+    || originalSheetTables.value[0]?.mappingHeaders
+    || originalTableData.value?.headers
+    || []
   return headers.filter((h: string) => h && !String(h).startsWith('列'))
 })
 

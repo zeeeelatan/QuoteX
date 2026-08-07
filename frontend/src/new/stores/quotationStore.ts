@@ -99,6 +99,8 @@ export interface QuotationGenerationState {
 export interface TableDataWithHeaders {
   headers: string[]
   data: any[]
+  /** 报价列映射使用的表头；手动框选时为选区首行推导出的表头 */
+  mappingHeaders?: string[]
 }
 
 export interface SheetTableDataWithHeaders extends TableDataWithHeaders {
