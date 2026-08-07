@@ -389,8 +389,9 @@
                   <input
                     v-model.number="selectedPositionRow.countryParams[parameter.key]"
                     type="number"
-                    min="0"
-                    @input="onInternationalParameterChange"
+                    :min="parameter.min ?? 0"
+                    :max="parameter.max"
+                    @change="onInternationalParameterChange(parameter)"
                   />
                   <span class="input-suffix">{{ parameter.suffix || '' }}</span>
                 </div>
@@ -1122,6 +1123,8 @@ interface CountryParameter {
   type: 'select' | 'number'
   default: string | number
   suffix?: string
+  min?: number
+  max?: number
   options?: CountryParameterOption[]
 }
 
@@ -3952,7 +3955,14 @@ async function refreshInternationalRules(index: number) {
   }
 }
 
-async function onInternationalParameterChange() {
+async function onInternationalParameterChange(parameter?: CountryParameter) {
+  if (parameter?.type === 'number') {
+    const currentValue = Number(selectedPositionRow.value.countryParams[parameter.key])
+    let normalizedValue = Number.isFinite(currentValue) ? currentValue : Number(parameter.default) || 0
+    if (parameter.min != null) normalizedValue = Math.max(normalizedValue, parameter.min)
+    if (parameter.max != null) normalizedValue = Math.min(normalizedValue, parameter.max)
+    selectedPositionRow.value.countryParams[parameter.key] = normalizedValue
+  }
   await refreshInternationalRules(selectedRowIndex.value)
 }
 
