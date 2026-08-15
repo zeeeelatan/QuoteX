@@ -1,5 +1,5 @@
 <template>
-  <div class="product-database">
+  <div class="product-database" :class="{ 'filters-expanded': quickFiltersOpen }">
     <!-- Hero Search Section -->
     <section class="hero-section">
       <div class="hero-bg"></div>
@@ -10,7 +10,7 @@
           <p class="hero-subtitle">输入准确型号以获取AI报价数据，支持模糊匹配与多维度筛选</p>
         </div>
 
-        <!-- Search Box and Filter Button Row -->
+        <!-- Search Box -->
         <div class="search-filter-row">
           <!-- Search Box -->
           <div class="search-wrapper">
@@ -21,6 +21,7 @@
               <input
                 v-model="searchKeyword"
                 @input="onSearchInput"
+                @keyup.enter="handleSearch"
                 class="search-input"
                 placeholder="请输入设备型号 (如: iPhone 15 Pro Max)"
               />
@@ -30,20 +31,10 @@
             </div>
           </div>
 
-          <!-- Filter Toggle Button -->
-          <button
-            @click="toggleFilters"
-            class="filter-toggle-btn"
-            :class="{ 'active': hasActiveFilters }"
-          >
-            <span class="material-symbols-outlined">tune</span>
-            <span class="filter-toggle-text">筛选条件</span>
-            <span class="material-symbols-outlined dropdown-arrow" :class="{ 'rotated': filtersOpen }">expand_more</span>
-          </button>
         </div>
 
         <!-- Hot Search Chips -->
-        <div class="hot-chips-row">
+        <div v-if="hotSearches.length" class="hot-chips-row">
           <span class="hot-label">热门:</span>
           <div class="hot-chips-list">
             <button
@@ -57,104 +48,75 @@
           </div>
         </div>
 
-        <!-- Filter Panel (Shown when filtersOpen is true) -->
-        <div v-show="filtersOpen" class="filter-panel">
-          <div class="filter-panel-header">
-            <h3 class="filter-panel-title">筛选条件</h3>
-            <button @click="resetFilters" class="reset-link">
-              <span class="material-symbols-outlined">refresh</span>
-              重置筛选
-            </button>
+        <!-- Always-visible unified filters -->
+        <div class="quick-filter-panel">
+          <div
+            class="quick-filter-header"
+            role="button"
+            tabindex="0"
+            :aria-expanded="quickFiltersOpen"
+            @click="quickFiltersOpen = !quickFiltersOpen"
+            @keyup.enter="quickFiltersOpen = !quickFiltersOpen"
+          >
+            <div class="quick-filter-heading">
+              <span class="material-symbols-outlined">tune</span>
+              <div>
+                <h3>快速筛选</h3>
+                <p>{{ quickFiltersOpen ? '可组合选择设备库中的任意字段' : '点击展开全部筛选条件' }}</p>
+              </div>
+            </div>
+            <div class="quick-filter-header-actions">
+              <span v-if="activeFieldFilterCount" class="active-filter-summary">已选 {{ activeFieldFilterCount }} 项</span>
+              <button v-if="activeFieldFilterCount && quickFiltersOpen" @click.stop="resetAllFilters" class="reset-link">
+                <span class="material-symbols-outlined">refresh</span>
+                清空全部
+              </button>
+              <span class="material-symbols-outlined quick-filter-chevron" :class="{ rotated: quickFiltersOpen }">expand_more</span>
+            </div>
           </div>
-
-          <div class="filter-content">
-            <!-- Data Source Filter -->
-            <div class="filter-item">
-              <label class="filter-label">数据来源</label>
-              <div class="radio-group">
-                <label class="radio-label">
-                  <input v-model="filters.source" value="datacenter" type="radio" name="source" />
-                  <span class="radio-dot"></span>
-                  <span class="radio-text">数据中心设备</span>
-                </label>
-                <label class="radio-label">
-                  <input v-model="filters.source" value="office" type="radio" name="source" />
-                  <span class="radio-dot"></span>
-                  <span class="radio-text">办公设备</span>
-                </label>
-                <label class="radio-label">
-                  <input v-model="filters.source" value="hybrid" type="radio" name="source" />
-                  <span class="radio-dot"></span>
-                  <span class="radio-text">全部</span>
-                </label>
-              </div>
-            </div>
-
-            <!-- Category Filter -->
-            <div class="filter-item">
-              <label class="filter-label">一级分类</label>
-              <div class="checkbox-group">
-                <label v-for="cat in primaryCategories" :key="cat" class="checkbox-label">
-                  <div class="checkbox-container">
-                    <input
-                      v-model="filters.categories"
-                      :value="cat"
-                      type="checkbox"
-                      class="checkbox-input"
-                    />
-                    <span class="checkbox-check">
-                      <span class="material-symbols-outlined">check</span>
-                    </span>
-                  </div>
-                  <span class="checkbox-text">{{ cat }}</span>
-                  <span class="checkbox-count">{{ getCategoryCount(cat) }}</span>
-                </label>
-              </div>
-            </div>
-
-            <!-- Price Range Filter -->
-            <div class="filter-item">
-              <label class="filter-label">价格区间 (¥)</label>
-              <div class="price-range-box">
-                <div class="price-inputs">
-                  <input
-                    v-model.number="filters.minPrice"
-                    class="price-input"
-                    type="number"
-                    placeholder="最低价"
-                  />
-                  <span class="price-separator">-</span>
-                  <input
-                    v-model.number="filters.maxPrice"
-                    class="price-input"
-                    type="number"
-                    placeholder="最高价"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <!-- Manufacturer Filter -->
-            <div class="filter-item">
-              <label class="filter-label">厂商</label>
-              <div class="manufacturer-grid">
+          <div v-show="quickFiltersOpen" class="quick-filter-body">
+            <div class="source-filter-row">
+              <span class="source-filter-label">数据来源</span>
+              <div class="source-segments">
                 <button
-                  v-for="mfg in topManufacturers"
-                  :key="mfg"
-                  @click="toggleManufacturer(mfg)"
-                  :class="['manufacturer-chip', { active: filters.manufacturers.includes(mfg) }]"
+                  v-for="source in dataSources"
+                  :key="source.value"
+                  @click="changeDataSource(source.value)"
+                  :class="['source-segment', { active: filters.source === source.value }]"
                 >
-                  {{ mfg }}
+                  <span class="material-symbols-outlined">{{ source.icon }}</span>
+                  {{ source.label }}
                 </button>
               </div>
             </div>
-          </div>
-
-          <!-- Apply Button -->
-          <div class="filter-footer">
-            <button @click="applyFilters" class="apply-filter-btn">
-              应用筛选
-            </button>
+            <div class="field-filter-grid quick-field-grid">
+              <div v-for="field in dataSourceFields" :key="field.key" class="field-filter-item">
+                <button
+                  @click="toggleFieldFilter(field.key)"
+                  class="field-filter-trigger"
+                  :class="{ 'active': activeFilterColumn === field.key, 'has-filter': getFieldSelectedCount(field.key) > 0 }"
+                >
+                  <span class="field-filter-label">{{ field.label }}</span>
+                  <span v-if="getFieldSelectedCount(field.key)" class="field-filter-count">{{ getFieldSelectedCount(field.key) }}</span>
+                  <span class="material-symbols-outlined dropdown-icon" :class="{ 'rotated': activeFilterColumn === field.key }">expand_more</span>
+                </button>
+                <div v-show="activeFilterColumn === field.key" class="field-filter-dropdown">
+                  <div class="field-filter-actions">
+                    <span>{{ getFieldUniqueValues(field.key).length }} 个可选值</span>
+                    <button @click="selectAllFieldValues(field.key)" class="filter-action-btn">全选</button>
+                    <button @click="clearFieldValues(field.key)" class="filter-action-btn">清空</button>
+                  </div>
+                  <div class="field-filter-values">
+                    <div v-if="loadingFieldOptions[field.key]" class="field-empty">正在加载可选值...</div>
+                    <label v-else v-for="value in getFieldUniqueValues(field.key)" :key="value" class="field-value-checkbox">
+                      <input type="checkbox" :checked="fieldValueFilters[field.key]?.includes(value)" @change="toggleFieldValue(field.key, value)" class="fv-checkbox" />
+                      <span class="fv-text">{{ value }}</span>
+                    </label>
+                    <div v-if="!loadingFieldOptions[field.key] && getFieldUniqueValues(field.key).length === 0" class="field-empty">暂无数据</div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -171,11 +133,6 @@
             <span class="count-badge">{{ total }}</span>
           </div>
           <div class="results-controls">
-            <!-- Column Filter Toggle -->
-            <button @click="toggleColumnFilter" class="column-filter-btn" :class="{ 'active': showColumnFilter }">
-              <span class="material-symbols-outlined">view_column</span>
-              <span>列筛选</span>
-            </button>
             <div class="sort-select">
               <span class="sort-label">排序:</span>
               <select v-model="sortBy" class="sort-input">
@@ -184,61 +141,6 @@
                 <option value="price_desc">价格 (高到低)</option>
                 <option value="model">型号名称</option>
               </select>
-            </div>
-          </div>
-        </div>
-
-        <!-- Column Filter Panel (Excel-style Field Filter) -->
-        <div v-show="showColumnFilter" class="column-filter-panel">
-          <div class="column-filter-header">
-            <span class="column-filter-title">字段筛选</span>
-            <button @click="resetColumnFilters" class="reset-column-btn">
-              <span class="material-symbols-outlined">refresh</span>
-              清空筛选
-            </button>
-          </div>
-          <div class="field-filter-grid">
-            <div
-              v-for="field in dataSourceFields"
-              :key="field.key"
-              class="field-filter-item"
-            >
-              <button
-                @click="toggleFieldFilter(field.key)"
-                class="field-filter-trigger"
-                :class="{ 'active': activeFilterColumn === field.key, 'has-filter': getFieldSelectedCount(field.key) > 0 }"
-              >
-                <span class="field-filter-label">{{ field.label }}</span>
-                <span class="field-filter-count">{{ getFieldSelectedCount(field.key) }}</span>
-                <span class="material-symbols-outlined dropdown-icon" :class="{ 'rotated': activeFilterColumn === field.key }">expand_more</span>
-              </button>
-              <div
-                v-show="activeFilterColumn === field.key"
-                class="field-filter-dropdown"
-              >
-                <div class="field-filter-actions">
-                  <button @click="selectAllFieldValues(field.key)" class="filter-action-btn">全选</button>
-                  <button @click="clearFieldValues(field.key)" class="filter-action-btn">清空</button>
-                </div>
-                <div class="field-filter-values">
-                  <label
-                    v-for="value in getFieldUniqueValues(field.key)"
-                    :key="value"
-                    class="field-value-checkbox"
-                  >
-                    <input
-                      type="checkbox"
-                      :checked="fieldValueFilters[field.key]?.includes(value)"
-                      @change="toggleFieldValue(field.key, value)"
-                      class="fv-checkbox"
-                    />
-                    <span class="fv-text">{{ value }}</span>
-                  </label>
-                  <div v-if="getFieldUniqueValues(field.key).length === 0" class="field-empty">
-                    暂无数据
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
         </div>
@@ -458,9 +360,7 @@ const currentPage = ref(1)
 const pageSize = ref(10)
 const sortBy = ref('relevance')
 const selectedDevice = ref<any | null>(null)
-
-// Filter dropdown state
-const filtersOpen = ref(false)
+const quickFiltersOpen = ref(false)
 
 // Maintenance rates cache (for price calculation)
 const maintenanceRatesCache = ref<any[] | null>(null)
@@ -474,34 +374,62 @@ const filters = ref({
   maxPrice: null as number | null
 })
 
-// Computed: check if any filters are active
-const hasActiveFilters = computed(() => {
-  return filters.value.categories.length > 0 ||
-         filters.value.manufacturers.length > 0 ||
-         filters.value.minPrice !== null ||
-         filters.value.maxPrice !== null ||
-         filters.value.source !== 'datacenter'
-})
+const dataSources = [
+  { value: 'datacenter', label: '数据中心设备库', icon: 'dns' },
+  { value: 'office', label: '办公设备库', icon: 'computer' },
+  { value: 'hybrid', label: '全部设备库', icon: 'dataset' }
+]
 
-// Computed: count active filters
-const activeFilterCount = computed(() => {
-  let count = 0
-  if (filters.value.categories.length > 0) count++
-  if (filters.value.manufacturers.length > 0) count++
-  if (filters.value.minPrice !== null) count++
-  if (filters.value.maxPrice !== null) count++
-  if (filters.value.source !== 'datacenter') count++
-  return count
-})
+interface SearchFrequencyEntry {
+  keyword: string
+  count: number
+  lastSearchedAt: number
+}
 
-// Hot searches
-const hotSearches = ref([
-  'iPhone 15 Pro',
-  'MacBook Air M2',
-  'RTX 4090',
-  'H100',
-  'Dell R740'
-])
+const SEARCH_FREQUENCY_STORAGE_KEY = 'product_database_search_frequency'
+const hotSearches = ref<string[]>([])
+
+function loadHotSearches() {
+  try {
+    const stored = localStorage.getItem(SEARCH_FREQUENCY_STORAGE_KEY)
+    const entries: SearchFrequencyEntry[] = stored ? JSON.parse(stored) : []
+    hotSearches.value = entries
+      .filter(entry => entry.keyword && Number.isFinite(entry.count))
+      .sort((a, b) => b.count - a.count || b.lastSearchedAt - a.lastSearchedAt)
+      .slice(0, 5)
+      .map(entry => entry.keyword)
+  } catch (error) {
+    console.warn('Failed to load search frequency:', error)
+    hotSearches.value = []
+  }
+}
+
+function recordSearchKeyword(keyword: string) {
+  const trimmedKeyword = keyword.trim()
+  if (!trimmedKeyword) return
+
+  try {
+    const stored = localStorage.getItem(SEARCH_FREQUENCY_STORAGE_KEY)
+    const entries: SearchFrequencyEntry[] = stored ? JSON.parse(stored) : []
+    const normalizedKeyword = trimmedKeyword.toLocaleLowerCase()
+    const existing = entries.find(
+      entry => entry.keyword.trim().toLocaleLowerCase() === normalizedKeyword
+    )
+
+    if (existing) {
+      existing.keyword = trimmedKeyword
+      existing.count += 1
+      existing.lastSearchedAt = Date.now()
+    } else {
+      entries.push({ keyword: trimmedKeyword, count: 1, lastSearchedAt: Date.now() })
+    }
+
+    localStorage.setItem(SEARCH_FREQUENCY_STORAGE_KEY, JSON.stringify(entries))
+    loadHotSearches()
+  } catch (error) {
+    console.warn('Failed to save search frequency:', error)
+  }
+}
 
 // Primary categories (will be populated from API)
 const primaryCategories = ref<string[]>([])
@@ -512,59 +440,57 @@ const topManufacturers = ref<string[]>([])
 // Category counts
 const categoryCounts = ref<Record<string, number>>({})
 
-// Column filter state
-const showColumnFilter = ref(false)
 const activeFilterColumn = ref<string | null>(null)
 
 // Define all available fields based on data source
 const dataSourceFields = ref<any[]>([])
+const dynamicFieldConfigs = ref<any[]>([])
 
 // Field value filters (for Excel-style filtering)
 const fieldValueFilters = ref<Record<string, string[]>>({})
+const fieldOptions = ref<Record<string, string[]>>({})
+const loadingFieldOptions = ref<Record<string, boolean>>({})
+
+const activeFieldFilterCount = computed(() =>
+  Object.values(fieldValueFilters.value).filter(values => values?.length > 0).length
+)
 
 // Get available fields based on current data source
 function getDataSourceFields(): any[] {
-  const source = filters.value.source
-  if (source === 'office') {
-    return [
-      { key: 'model_number', label: '型号' },
-      { key: 'manufacturer', label: '厂商' },
-      { key: 'primary_category', label: '一级分类' },
-      { key: 'secondary_category', label: '二级分类' },
-      { key: 'tertiary_category', label: '三级分类' },
-      { key: 'device_series', label: '设备系列' },
-      { key: 'device_grade', label: '成色等级' },
-      { key: 'device_price', label: '设备价格' },
-      { key: 'sku', label: 'SKU' },
-      { key: 'remarks', label: '备注' }
-    ]
-  } else {
-    // datacenter and hybrid use same fields
-    return [
-      { key: 'model_number', label: '型号' },
-      { key: 'manufacturer', label: '厂商' },
-      { key: 'primary_category', label: '一级分类' },
-      { key: 'secondary_category', label: '二级分类' },
-      { key: 'tertiary_category', label: '三级分类' },
-      { key: 'device_series', label: '设备系列' },
-      { key: 'device_grade', label: '成色等级' },
-      { key: 'device_price', label: '设备价格' },
-      { key: 'sku', label: 'SKU' },
-      { key: 'remarks', label: '备注' }
-    ]
-  }
+  const baseFields = [
+    { key: 'model_number', label: '型号' },
+    { key: 'manufacturer', label: '厂商' },
+    { key: 'device_series', label: '设备系列' },
+    { key: 'business_scenario', label: '业务场景' },
+    { key: 'primary_category', label: '一级分类' },
+    { key: 'secondary_category', label: '二级分类' },
+    { key: 'tertiary_category', label: '三级分类' },
+    { key: 'device_grade', label: '设备档次' },
+    { key: 'device_price', label: '整机价格' },
+    { key: 'rack_height_u', label: '机架高度(U)' },
+    { key: 'remarks', label: '备注' }
+  ]
+  const dynamicFields = dynamicFieldConfigs.value.map(config => ({
+    key: config.field_key,
+    label: config.field_label || config.field_key,
+    dynamic: true
+  }))
+  return [...baseFields, ...dynamicFields.filter(field => !baseFields.some(base => base.key === field.key))]
 }
 
-// Get unique values for a specific field from the current search results
+async function loadDataSourceFields() {
+  try {
+    const response = await axios.get(`${API_URL}/device-field-configs/`, { params: { scope: 'type' } })
+    dynamicFieldConfigs.value = response.data?.data || []
+  } catch (error) {
+    console.warn('Failed to load dynamic device fields:', error)
+    dynamicFieldConfigs.value = []
+  }
+  dataSourceFields.value = getDataSourceFields()
+}
+
 function getFieldUniqueValues(fieldKey: string): string[] {
-  const values = new Set<string>()
-  devices.value.forEach(device => {
-    const value = device[fieldKey]
-    if (value !== null && value !== undefined && value !== '') {
-      values.add(String(value))
-    }
-  })
-  return Array.from(values).sort()
+  return fieldOptions.value[fieldKey] || []
 }
 
 // Get selected count for a field
@@ -572,20 +498,34 @@ function getFieldSelectedCount(fieldKey: string): number {
   return fieldValueFilters.value[fieldKey]?.length || 0
 }
 
-// Toggle column filter panel
-function toggleColumnFilter() {
-  showColumnFilter.value = !showColumnFilter.value
-  if (showColumnFilter.value) {
-    dataSourceFields.value = getDataSourceFields()
-  }
-}
-
 // Toggle field filter dropdown
-function toggleFieldFilter(fieldKey: string) {
+async function toggleFieldFilter(fieldKey: string) {
   if (activeFilterColumn.value === fieldKey) {
     activeFilterColumn.value = null
   } else {
     activeFilterColumn.value = fieldKey
+    await loadFieldOptions(fieldKey)
+  }
+}
+
+async function loadFieldOptions(fieldKey: string, force = false) {
+  if (!force && fieldOptions.value[fieldKey]) return
+  loadingFieldOptions.value[fieldKey] = true
+  try {
+    const response = await axios.get(`${API_URL}/devices/filter-options/`, {
+      params: {
+        field: fieldKey,
+        source: filters.value.source,
+        model_number: searchKeyword.value || undefined,
+        field_filters: JSON.stringify(fieldValueFilters.value)
+      }
+    })
+    fieldOptions.value[fieldKey] = response.data?.values || []
+  } catch (error) {
+    console.error(`Failed to load filter options for ${fieldKey}:`, error)
+    fieldOptions.value[fieldKey] = []
+  } finally {
+    loadingFieldOptions.value[fieldKey] = false
   }
 }
 
@@ -600,56 +540,49 @@ function toggleFieldValue(fieldKey: string, value: string) {
   } else {
     fieldValueFilters.value[fieldKey].push(value)
   }
+  applyServerFieldFilters(fieldKey)
 }
 
 // Select all values for a field
 function selectAllFieldValues(fieldKey: string) {
   fieldValueFilters.value[fieldKey] = getFieldUniqueValues(fieldKey)
+  applyServerFieldFilters(fieldKey)
 }
 
 // Clear all values for a field
 function clearFieldValues(fieldKey: string) {
   fieldValueFilters.value[fieldKey] = []
+  applyServerFieldFilters(fieldKey)
 }
 
-// Reset column filters
-function resetColumnFilters() {
-  fieldValueFilters.value = {}
-  activeFilterColumn.value = null
-}
-
-// Apply field value filters to filtered devices
-const fieldFilteredDevices = computed(() => {
-  let result = [...filteredDevices.value]
-
-  // Apply field value filters
-  Object.keys(fieldValueFilters.value).forEach(fieldKey => {
-    const selectedValues = fieldValueFilters.value[fieldKey]
-    if (selectedValues && selectedValues.length > 0) {
-      result = result.filter(device => {
-        const value = device[fieldKey]
-        return selectedValues.includes(String(value))
-      })
-    }
+function applyServerFieldFilters(changedField: string) {
+  Object.keys(fieldOptions.value).forEach(field => {
+    if (field !== changedField) delete fieldOptions.value[field]
   })
+  currentPage.value = 1
+  fetchDevices()
+}
 
-  return result
-})
+function resetAllFilters() {
+  fieldValueFilters.value = {}
+  fieldOptions.value = {}
+  activeFilterColumn.value = null
+  currentPage.value = 1
+  fetchDevices()
+}
 
 // Navigate functions
 const navigateToHome = () => router.push('/')
 const navigateToQuotationGeneration = () => router.push('/quotation-generation')
 
-// Toggle filters dropdown
-function toggleFilters() {
-  filtersOpen.value = !filtersOpen.value
-}
-
-// Apply filters
-function applyFilters() {
-  filtersOpen.value = false
+async function changeDataSource(source: string) {
+  if (filters.value.source === source) return
+  filters.value.source = source
+  fieldValueFilters.value = {}
+  fieldOptions.value = {}
+  activeFilterColumn.value = null
   currentPage.value = 1
-  fetchDevices()
+  await Promise.all([fetchDevices(), loadDataSourceFields()])
 }
 
 // Format price
@@ -689,7 +622,10 @@ function resetFilters() {
 }
 
 // Fetch devices from API
+let latestFetchRequestId = 0
+
 async function fetchDevices() {
+  const requestId = ++latestFetchRequestId
   loading.value = true
   try {
     // Load maintenance rates if not already loaded
@@ -705,8 +641,10 @@ async function fetchDevices() {
 
     const params: any = {
       source: filters.value.source,
-      limit: 100, // Get more results for client-side filtering
-      offset: 0
+      limit: pageSize.value,
+      offset: (currentPage.value - 1) * pageSize.value,
+      sort_by: sortBy.value,
+      field_filters: JSON.stringify(fieldValueFilters.value)
     }
 
     if (searchKeyword.value) {
@@ -714,8 +652,9 @@ async function fetchDevices() {
     }
 
     const response = await axios.get(`${API_URL}/devices/search/`, { params })
-    const rawData = response.data.data || []
+    if (requestId !== latestFetchRequestId) return
     total.value = response.data.total || 0
+    const rawData = response.data.data || []
 
     // Calculate maintenance prices for each device
     devices.value = rawData.map((device: any) => {
@@ -745,11 +684,12 @@ async function fetchDevices() {
     // Extract categories and manufacturers
     updateFiltersFromData(devices.value)
   } catch (error) {
+    if (requestId !== latestFetchRequestId) return
     console.error('Failed to fetch devices:', error)
     devices.value = []
     total.value = 0
   } finally {
-    loading.value = false
+    if (requestId === latestFetchRequestId) loading.value = false
   }
 }
 
@@ -814,7 +754,12 @@ function updateFiltersFromData(data: any[]) {
 }
 
 // Handle search
-function handleSearch() {
+function handleSearch(shouldRecord = true) {
+  searchKeyword.value = searchKeyword.value.trim()
+  if (shouldRecord) {
+    recordSearchKeyword(searchKeyword.value)
+  }
+  fieldOptions.value = {}
   currentPage.value = 1
   fetchDevices()
 }
@@ -829,74 +774,15 @@ function onSearchInput() {
   }
   // Debounce for 300ms to avoid too many API calls
   searchDebounceTimer = setTimeout(() => {
-    handleSearch()
+    handleSearch(false)
   }, 300)
 }
 
-// Filtered and sorted devices
-const filteredDevices = computed(() => {
-  let result = [...devices.value]
-
-  // Filter by categories
-  if (filters.value.categories.length > 0) {
-    result = result.filter(d =>
-      filters.value.categories.includes(d.primary_category)
-    )
-  }
-
-  // Filter by manufacturers
-  if (filters.value.manufacturers.length > 0) {
-    result = result.filter(d =>
-      filters.value.manufacturers.includes(d.manufacturer)
-    )
-  }
-
-  // Filter by price range
-  if (filters.value.minPrice !== null) {
-    result = result.filter(d =>
-      d.device_price && parseFloat(d.device_price) >= filters.value.minPrice!
-    )
-  }
-  if (filters.value.maxPrice !== null) {
-    result = result.filter(d =>
-      d.device_price && parseFloat(d.device_price) <= filters.value.maxPrice!
-    )
-  }
-
-  // Sort
-  switch (sortBy.value) {
-    case 'price_asc':
-      result.sort((a, b) =>
-        (parseFloat(a.device_price) || 0) - (parseFloat(b.device_price) || 0)
-      )
-      break
-    case 'price_desc':
-      result.sort((a, b) =>
-        (parseFloat(b.device_price) || 0) - (parseFloat(a.device_price) || 0)
-      )
-      break
-    case 'model':
-      result.sort((a, b) => a.model_number.localeCompare(b.model_number))
-      break
-    default:
-      // relevance - keep original order (server-side sorting)
-      break
-  }
-
-  return result
-})
-
-// Total pages - based on fieldFilteredDevices
 const totalPages = computed(() => {
-  return Math.ceil(fieldFilteredDevices.value.length / pageSize.value)
+  return Math.ceil(total.value / pageSize.value)
 })
 
-// Paginated devices - use fieldFilteredDevices instead of filteredDevices
-const paginatedDevices = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  const end = start + pageSize.value
-  return fieldFilteredDevices.value.slice(start, end)
-})
+const paginatedDevices = computed(() => devices.value)
 
 // Display page numbers
 const displayPages = computed(() => {
@@ -934,6 +820,7 @@ const displayPages = computed(() => {
 function goToPage(page: number) {
   if (page >= 1 && page <= totalPages.value) {
     currentPage.value = page
+    fetchDevices()
   }
 }
 
@@ -978,8 +865,23 @@ watch(() => [filters.value.source, filters.value.categories, filters.value.manuf
   currentPage.value = 1
 }, { deep: true })
 
+watch(fieldValueFilters, () => {
+  currentPage.value = 1
+}, { deep: true })
+
+watch(sortBy, () => {
+  currentPage.value = 1
+  fetchDevices()
+})
+
+watch(quickFiltersOpen, isOpen => {
+  if (!isOpen) activeFilterColumn.value = null
+})
+
 // On mounted
 onMounted(() => {
+  loadHotSearches()
+  loadDataSourceFields()
   fetchDevices()
 })
 </script>
@@ -995,13 +897,14 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   flex: 1;
+  min-height: 100%;
   padding-top: 72px; /* Space for fixed header - reduced */
 }
 
 /* Hero Section */
 .hero-section {
   position: relative;
-  padding: 1rem 1rem 1.5rem 1rem; /* Reduced from 3rem 1rem 2rem */
+  padding: 0.65rem 1rem 0.85rem;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1029,7 +932,7 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1rem; /* Reduced from 2rem */
+  gap: 0.65rem;
   width: 100%;
   max-width: 1200px;
 }
@@ -1045,7 +948,7 @@ onMounted(() => {
 
 .hero-title {
   font-family: "Space Grotesk", "Noto Sans SC", sans-serif;
-  font-size: 1.75rem; /* Reduced from 2.5rem */
+  font-size: 1.5rem;
   font-weight: 700; /* Reduced from 900 */
   letter-spacing: -0.02em;
   color: white;
@@ -1535,12 +1438,13 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  padding: 1rem 2rem 2rem 2rem;
-  flex: 1;
+  padding: 0.5rem 2rem 1.25rem;
+  flex: 1 0 58vh;
+  min-height: 58vh;
   max-width: 1200px;
   margin: 0 auto;
   width: 100%;
-  overflow: hidden; /* Prevent outer scroll */
+  overflow: visible;
 }
 
 /* Results Area */
@@ -1553,6 +1457,16 @@ onMounted(() => {
   background-color: #0d1118;
   border: 1px solid #324467;
   border-radius: 8px;
+  min-height: 55vh;
+}
+
+.product-database.filters-expanded .main-content {
+  flex-basis: 54vh;
+  min-height: 54vh;
+}
+
+.product-database.filters-expanded .results-area {
+  min-height: 52vh;
 }
 
 /* Results Header */
@@ -2527,6 +2441,254 @@ onMounted(() => {
 
 .modal-btn.confirm:hover {
   background-color: #16a34a;
+}
+
+/* Unified quick filters */
+.quick-filter-panel {
+  width: 100%;
+  padding: 1rem;
+  border: 1px solid #2c3d5d;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(25, 34, 51, 0.96), rgba(15, 22, 34, 0.96));
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.16);
+}
+
+.quick-filter-header,
+.source-filter-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.quick-filter-header {
+  padding-bottom: 0.75rem;
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+}
+
+.quick-filter-header[aria-expanded="false"] {
+  padding-bottom: 0;
+}
+
+.quick-filter-header:focus-visible {
+  border-radius: 8px;
+  box-shadow: 0 0 0 2px rgba(19, 91, 236, 0.65);
+}
+
+.quick-filter-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.quick-filter-heading > .material-symbols-outlined {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  color: #6ea0ff;
+  background: rgba(19, 91, 236, 0.14);
+  font-size: 19px;
+}
+
+.quick-filter-heading h3,
+.quick-filter-heading p {
+  margin: 0;
+}
+
+.quick-filter-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.active-filter-summary {
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  color: #93b4ff;
+  background: rgba(19, 91, 236, 0.14);
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.quick-filter-chevron {
+  color: #94a3b8;
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.quick-filter-header:hover .quick-filter-chevron {
+  color: #dbeafe;
+}
+
+.quick-filter-chevron.rotated {
+  transform: rotate(180deg);
+}
+
+.quick-filter-body {
+  animation: quickFilterReveal 0.18s ease-out;
+}
+
+@keyframes quickFilterReveal {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.quick-filter-heading h3 {
+  font-size: 0.9rem;
+  color: #f8fafc;
+}
+
+.quick-filter-heading p {
+  margin-top: 2px;
+  font-size: 0.72rem;
+  color: #71809a;
+}
+
+.source-filter-row {
+  justify-content: flex-start;
+  padding: 0.75rem 0;
+  border-top: 1px solid rgba(50, 68, 103, 0.65);
+  border-bottom: 1px solid rgba(50, 68, 103, 0.65);
+}
+
+.source-filter-label {
+  min-width: 64px;
+  color: #94a3b8;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.source-segments {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.source-segment {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  height: 34px;
+  padding: 0 0.9rem;
+  color: #9aa8bd;
+  background: #111927;
+  border: 1px solid #324467;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 600;
+  transition: 0.2s ease;
+}
+
+.source-segment .material-symbols-outlined {
+  font-size: 17px;
+}
+
+.source-segment:hover {
+  color: #dbeafe;
+  border-color: #5375ac;
+}
+
+.source-segment.active {
+  color: #fff;
+  border-color: #2d6df0;
+  background: #135bec;
+  box-shadow: 0 5px 14px rgba(19, 91, 236, 0.24);
+}
+
+.quick-field-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.55rem;
+  padding-top: 0.75rem;
+}
+
+.quick-field-grid .field-filter-item {
+  width: auto;
+  min-width: 0;
+}
+
+.quick-field-grid .field-filter-trigger {
+  min-height: 38px;
+}
+
+.quick-field-grid .field-filter-dropdown {
+  min-width: 240px;
+  right: auto;
+  width: max(100%, 240px);
+}
+
+.quick-field-grid .field-filter-item:nth-child(5n + 4) .field-filter-dropdown,
+.quick-field-grid .field-filter-item:nth-child(5n + 5) .field-filter-dropdown {
+  right: 0;
+  left: auto;
+}
+
+.field-filter-actions > span {
+  flex: 1;
+  align-self: center;
+  color: #71809a;
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+.field-filter-actions .filter-action-btn {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 980px) {
+  .quick-field-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .quick-field-grid .field-filter-item:nth-child(5n + 4) .field-filter-dropdown {
+    right: auto;
+    left: 0;
+  }
+
+  .quick-field-grid .field-filter-item:nth-child(3n) .field-filter-dropdown {
+    right: 0;
+    left: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .quick-filter-header,
+  .source-filter-row {
+    align-items: flex-start;
+  }
+
+  .source-filter-row {
+    flex-direction: column;
+  }
+
+  .source-segments,
+  .source-segment {
+    width: 100%;
+  }
+
+  .source-segment {
+    justify-content: center;
+  }
+
+  .quick-field-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .quick-field-grid .field-filter-item:nth-child(3n) .field-filter-dropdown {
+    right: auto;
+    left: 0;
+  }
+
+  .quick-field-grid .field-filter-item:nth-child(2n) .field-filter-dropdown {
+    right: 0;
+    left: auto;
+  }
 }
 
 /* Scrollbar */

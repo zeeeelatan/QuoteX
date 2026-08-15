@@ -8,6 +8,7 @@ if _env_file.exists():
     load_dotenv(_env_file, override=False)
 
 from fastapi import FastAPI, Depends
+from sqlalchemy import String
 from sqlalchemy.orm import Session
 from . import models, schemas, matching
 from .database import engine, get_db, Base
@@ -144,6 +145,76 @@ app.add_middleware(UpdateLastActiveMiddleware)
 
 from fastapi import Query
 
+
+def _device_field_expression(field: str):
+    """Return a safe SQL expression for a filterable device field."""
+    from sqlalchemy import func
+
+    device = models.DeviceInventory
+    standard_fields = {
+        "model_number": device.model_number,
+        "manufacturer": func.coalesce(device.manufacturer_name, device.manufacturer),
+        "device_series": device.device_series,
+        "business_scenario": device.business_scenario,
+        "primary_category": device.primary_category,
+        "secondary_category": device.secondary_category,
+        "tertiary_category": device.tertiary_category,
+        "device_grade": device.device_grade,
+        "device_price": device.device_price,
+        "rack_height_u": device.rack_height_u,
+        "remarks": device.remarks,
+    }
+    if field in standard_fields:
+        return standard_fields[field]
+    # Unknown keys are treated as configured JSONB extension fields. The key is
+    # supplied as a bound value by SQLAlchemy rather than interpolated into SQL.
+    return func.coalesce(
+        device.type_attributes[field].astext,
+        device.custom_attributes[field].astext,
+    )
+
+
+def _build_device_search_query(db: Session, source: str, keyword: str | None, field_filters: str | None):
+    from sqlalchemy import or_
+    import json
+    import re
+
+    q = db.query(models.DeviceInventory)
+    if source == 'datacenter':
+        q = q.filter(or_(
+            models.DeviceInventory.business_scenario.is_(None),
+            models.DeviceInventory.business_scenario == '',
+            ~models.DeviceInventory.business_scenario.ilike('%办公%')
+        ))
+    elif source == 'office':
+        q = q.filter(models.DeviceInventory.business_scenario.ilike('%办公%'))
+
+    if keyword:
+        search_variants = [keyword]
+        base_keyword = re.sub(r'[-_]?[A-Za-z]$', '', keyword)
+        if base_keyword and base_keyword != keyword:
+            search_variants.append(base_keyword)
+        if '-' in keyword:
+            base_part = keyword.rsplit('-', 1)[0]
+            if base_part and base_part not in search_variants:
+                search_variants.append(base_part)
+        q = q.filter(or_(*[
+            models.DeviceInventory.model_number.ilike(f"%{variant}%")
+            for variant in search_variants
+        ]))
+
+    if field_filters:
+        try:
+            parsed_filters = json.loads(field_filters)
+        except (TypeError, json.JSONDecodeError):
+            parsed_filters = {}
+        if isinstance(parsed_filters, dict):
+            for field, values in parsed_filters.items():
+                if isinstance(values, list) and values:
+                    expression = _device_field_expression(field)
+                    q = q.filter(expression.cast(String).in_([str(value) for value in values]))
+    return q
+
 @app.get("/search/")
 def search_devices(
     model_number: str = Query(None),
@@ -165,56 +236,33 @@ def devices_search(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     source: str = Query('datacenter'),  # datacenter | office | hybrid
+    field_filters: str = Query(None),
+    sort_by: str = Query('relevance'),
     db: Session = Depends(get_db)
 ):
-    from sqlalchemy import case, or_
-    import re
+    from sqlalchemy import case
 
-    q = db.query(models.DeviceInventory)
-
-    # 通过 business_scenario 过滤数据源
-    if source == 'datacenter':
-        q = q.filter(
-            or_(
-                models.DeviceInventory.business_scenario.is_(None),
-                models.DeviceInventory.business_scenario == '',
-                ~models.DeviceInventory.business_scenario.ilike('%办公%')
-            )
-        )
-    elif source == 'office':
-        q = q.filter(models.DeviceInventory.business_scenario.ilike('%办公%'))
-    # hybrid: 不加过滤
-
-    if model or model_number:
-        keyword = model or model_number
-
-        # 智能搜索：生成多个搜索变体
-        search_variants = [keyword]
-
-        suffix_pattern = r'[-_]?[A-Za-z]$'
-        base_keyword = re.sub(suffix_pattern, '', keyword)
-        if base_keyword and base_keyword != keyword:
-            search_variants.append(base_keyword)
-
-        if '-' in keyword:
-            base_part = keyword.rsplit('-', 1)[0]
-            if base_part and base_part not in search_variants:
-                search_variants.append(base_part)
-
-        filter_conditions = []
-        for variant in search_variants:
-            filter_conditions.append(models.DeviceInventory.model_number.ilike(f"%{variant}%"))
-
-        q = q.filter(or_(*filter_conditions))
-
+    keyword = model or model_number
+    q = _build_device_search_query(db, source, keyword, field_filters)
+    if sort_by == 'price_asc':
+        q = q.order_by(models.DeviceInventory.device_price.asc().nullslast(), models.DeviceInventory.id)
+    elif sort_by == 'price_desc':
+        q = q.order_by(models.DeviceInventory.device_price.desc().nullslast(), models.DeviceInventory.id)
+    elif sort_by == 'model':
+        q = q.order_by(models.DeviceInventory.model_number.asc().nullslast(), models.DeviceInventory.id)
+    elif keyword:
         q = q.order_by(
             case(
                 (models.DeviceInventory.model_number == keyword, 1),
                 (models.DeviceInventory.model_number.ilike(f"{keyword}%"), 2),
                 else_=3
             ),
-            models.DeviceInventory.model_number
+            models.DeviceInventory.model_number,
+            models.DeviceInventory.id
         )
+    else:
+        # Stable ordering is required for reliable offset pagination.
+        q = q.order_by(models.DeviceInventory.id)
 
     total = q.count()
     devices = q.offset(offset).limit(limit).all()
@@ -226,6 +274,41 @@ def devices_search(
         ],
         "total": total
     }
+
+
+@app.get("/devices/filter-options/")
+def device_filter_options(
+    field: str = Query(..., min_length=1, max_length=100),
+    model_number: str = Query(None),
+    source: str = Query('datacenter'),
+    field_filters: str = Query(None),
+    db: Session = Depends(get_db),
+):
+    """Load distinct values for one filter only when its dropdown is opened."""
+    import json
+
+    # Exclude the field itself so users can add/remove values from that field
+    # while all other active filters continue to constrain its options.
+    other_filters = field_filters
+    if field_filters:
+        try:
+            parsed = json.loads(field_filters)
+            if isinstance(parsed, dict):
+                parsed.pop(field, None)
+                other_filters = json.dumps(parsed, ensure_ascii=False)
+        except (TypeError, json.JSONDecodeError):
+            pass
+
+    expression = _device_field_expression(field)
+    q = _build_device_search_query(db, source, model_number, other_filters)
+    rows = (
+        q.with_entities(expression.label("value"))
+        .filter(expression.isnot(None), expression.cast(String) != '')
+        .distinct()
+        .order_by(expression)
+        .all()
+    )
+    return {"field": field, "values": [str(row.value) for row in rows]}
 
 @app.get("/")
 def read_root():

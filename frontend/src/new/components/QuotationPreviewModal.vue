@@ -98,14 +98,44 @@
                     <div class="info-grid">
                       <div class="info-item">
                         <p class="info-label">报价公司信息</p>
-                        <p class="info-value-bold">{{ selectedCompanyInfo.companyName }}</p>
-                        <p class="info-value">联系人：{{ selectedCompanyInfo.contactName }}{{ selectedCompanyInfo.department ? ` (${selectedCompanyInfo.department})` : '' }}</p>
-                        <p class="info-value">联系电话：{{ selectedCompanyInfo.contactPhone }}</p>
+                        <textarea
+                          v-model="editableCompanyInfo.companyName"
+                          class="quote-inline-input quote-wrap-field info-value-bold"
+                          rows="1"
+                          aria-label="报价公司名称"
+                          placeholder="请输入报价公司名称"
+                          @input="autoGrowTextarea"
+                        ></textarea>
+                        <div class="editable-info-row info-value">
+                          <span>联系人：</span>
+                          <input v-model="editableCompanyInfo.contactName" class="quote-inline-input compact" aria-label="报价公司联系人" placeholder="联系人" />
+                        </div>
+                        <label class="editable-info-row info-value">
+                          <span>联系电话：</span>
+                          <input v-model="editableCompanyInfo.contactPhone" class="quote-inline-input" aria-label="报价公司联系电话" placeholder="联系电话" />
+                        </label>
                       </div>
                       <div class="info-item">
                         <p class="info-label">客户信息</p>
-                        <p class="info-value-bold">{{ selectedCustomerInfo.customerName }}</p>
-                        <p class="info-value">地址：{{ selectedCustomerInfo.customerAddress }}</p>
+                        <textarea
+                          v-model="editableCustomerInfo.customerName"
+                          class="quote-inline-input quote-wrap-field info-value-bold"
+                          rows="1"
+                          aria-label="客户名称"
+                          placeholder="请输入客户名称"
+                          @input="autoGrowTextarea"
+                        ></textarea>
+                        <label class="editable-info-row info-value">
+                          <span>地址：</span>
+                          <textarea
+                            v-model="editableCustomerInfo.customerAddress"
+                            class="quote-inline-input quote-wrap-field"
+                            rows="1"
+                            aria-label="客户地址"
+                            placeholder="客户地址"
+                            @input="autoGrowTextarea"
+                          ></textarea>
+                        </label>
                       </div>
                       <div class="info-item info-item-right">
                         <p
@@ -116,15 +146,18 @@
                           @keydown.enter.prevent="blurEditableField"
                         >{{ editableProjectLabel }}</p>
                         <p
+                          ref="projectNameElement"
                           class="info-value-bold editable-field"
                           :class="{ 'project-name-placeholder': !editableProjectName }"
                           contenteditable="true"
                           spellcheck="false"
                           data-placeholder="请输入项目名称"
                           @input="onProjectNameInput"
+                          @compositionstart="onProjectNameCompositionStart"
+                          @compositionend="onProjectNameCompositionEnd"
                           @blur="onProjectNameBlur"
                           @keydown.enter.prevent="blurEditableField"
-                        >{{ editableProjectName }}</p>
+                        ></p>
                         <p class="info-value">报价日期：{{ quotationDate }}</p>
                         <p class="info-value info-expiry">有效期至：{{ expiryDate }}</p>
                       </div>
@@ -167,6 +200,7 @@
                           <span class="summary-value">
                             {{ data.calculatedAmounts?.exchangeRate }}
                             <template v-if="data.calculatedAmounts?.exchangeRateDate">（{{ data.calculatedAmounts.exchangeRateDate }}）</template>
+                            <template v-if="data.calculatedAmounts?.exchangeRateSource"> · {{ data.calculatedAmounts.exchangeRateSource }}</template>
                           </span>
                         </div>
                         <div class="summary-row">
@@ -351,6 +385,7 @@
       title="新增报价公司"
       width="480px"
       append-to-body
+      :z-index="11000"
       destroy-on-close
       class="quick-add-dialog"
       @closed="resetAddCompanyForm"
@@ -391,6 +426,7 @@
       title="新增客户信息"
       width="480px"
       append-to-body
+      :z-index="11000"
       destroy-on-close
       class="quick-add-dialog"
       @closed="resetAddCustomerForm"
@@ -625,8 +661,9 @@ function resolveSelectedId(raw: number | string | null): number | null {
   return Number.isFinite(id) ? id : null
 }
 
-// 获取选中的公司信息
-const selectedCompanyInfo = computed(() => {
+// 从用户配置解析当前选中的公司和客户。预览时会复制为临时可编辑数据，
+// 不直接修改这里的系统配置来源。
+const configuredCompanyInfo = computed(() => {
   const companyId = resolveSelectedId(selectedCompanyId.value)
   if (!companyId) {
     return {
@@ -657,7 +694,7 @@ const selectedCompanyInfo = computed(() => {
 })
 
 // 获取选中的客户信息
-const selectedCustomerInfo = computed(() => {
+const configuredCustomerInfo = computed(() => {
   const customerId = resolveSelectedId(selectedCustomerId.value)
   if (!customerId) {
     return {
@@ -683,6 +720,57 @@ const selectedCustomerInfo = computed(() => {
     contactPhone: ''
   }
 })
+
+const editableCompanyInfo = ref({
+  companyName: '',
+  contactName: '',
+  contactPhone: '',
+  department: '',
+  companyAddress: ''
+})
+const editableCustomerInfo = ref({
+  customerName: '',
+  customerAddress: '',
+  contactPerson: '',
+  contactPhone: ''
+})
+
+// 保留原有导出代码的数据接口，但返回本次预览的临时编辑副本。
+const selectedCompanyInfo = computed(() => editableCompanyInfo.value)
+const selectedCustomerInfo = computed(() => editableCustomerInfo.value)
+
+function resetEditablePartyInfo() {
+  editableCompanyInfo.value = { ...configuredCompanyInfo.value }
+  editableCustomerInfo.value = { ...configuredCustomerInfo.value }
+  nextTick(resizePartyTextareas)
+}
+
+function autoGrowTextarea(event: Event) {
+  const element = event.target as HTMLTextAreaElement
+  element.style.height = '0px'
+  element.style.height = `${element.scrollHeight}px`
+}
+
+function resizePartyTextareas() {
+  paperRef.value?.querySelectorAll<HTMLTextAreaElement>('.quote-wrap-field').forEach(element => {
+    element.style.height = '0px'
+    element.style.height = `${element.scrollHeight}px`
+  })
+}
+
+watch(configuredCompanyInfo, value => {
+  if (props.isOpen) {
+    editableCompanyInfo.value = { ...value }
+    nextTick(resizePartyTextareas)
+  }
+}, { deep: true })
+
+watch(configuredCustomerInfo, value => {
+  if (props.isOpen) {
+    editableCustomerInfo.value = { ...value }
+    nextTick(resizePartyTextareas)
+  }
+}, { deep: true })
 
 // 加载公司和客户数据
 async function loadCompaniesAndCustomers() {
@@ -765,10 +853,19 @@ async function loadServiceTerms() {
 // 当 modal 打开时加载数据
 watch(() => props.isOpen, (newVal) => {
   if (newVal) {
+    resetEditablePartyInfo()
     editableProjectLabel.value = '项目信息'
     editableProjectName.value = props.data?.projectName?.trim() || ''
+    nextTick(() => {
+      if (projectNameElement.value) {
+        projectNameElement.value.innerText = editableProjectName.value
+      }
+    })
     loadCompaniesAndCustomers()
     loadServiceTerms()
+  } else {
+    // 本次手工修改仅用于当前预览；关闭后立即丢弃。
+    resetEditablePartyInfo()
   }
 })
 
@@ -877,6 +974,8 @@ const currentServiceTermsLines = computed(() => {
 // 可编辑的项目信息（使用与客户信息相同的 p 标签样式，保证字体一致）
 const editableProjectLabel = ref('项目信息')
 const editableProjectName = ref('')
+const projectNameElement = ref<HTMLElement | null>(null)
+const isProjectNameComposing = ref(false)
 
 function blurEditableField(event: Event) {
   ;(event.target as HTMLElement)?.blur()
@@ -895,7 +994,17 @@ function onProjectNameBlur(event: FocusEvent) {
 }
 
 function onProjectNameInput(event: Event) {
-  editableProjectName.value = (event.target as HTMLElement).innerText.replace(/\n/g, '').trim()
+  if (isProjectNameComposing.value) return
+  editableProjectName.value = (event.target as HTMLElement).innerText.replace(/\n/g, '')
+}
+
+function onProjectNameCompositionStart() {
+  isProjectNameComposing.value = true
+}
+
+function onProjectNameCompositionEnd(event: CompositionEvent) {
+  isProjectNameComposing.value = false
+  editableProjectName.value = (event.target as HTMLElement).innerText.replace(/\n/g, '')
 }
 
 // Logo 上传相关
@@ -1152,6 +1261,11 @@ function toggleMaximize() {
 
 async function downloadQuotation() {
   if (isDownloading.value) return
+
+  // Remove the editing focus outline before capturing the quotation.
+  if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+  await nextTick()
+  resizePartyTextareas()
 
   if (exportFormat.value === 'excel') {
     await downloadExcel()
@@ -1548,7 +1662,7 @@ async function downloadExcel() {
     rowNum++
 
     ws.mergeCells(`A${rowNum}:C${rowNum}`)
-    ws.getCell(`A${rowNum}`).value = `联系人：${selectedCompanyInfo.value.contactName}${selectedCompanyInfo.value.department ? ` (${selectedCompanyInfo.value.department})` : ''}`
+    ws.getCell(`A${rowNum}`).value = `联系人：${selectedCompanyInfo.value.contactName}`
     ws.getCell(`A${rowNum}`).font = normalFont
     ws.mergeCells(`E${rowNum}:G${rowNum}`)
     ws.getCell(`E${rowNum}`).value = `地址：${selectedCustomerInfo.value.customerAddress}`
@@ -1642,7 +1756,7 @@ async function downloadExcel() {
         },
         {
           label: `${costCurrency.value}/CNY 汇率`,
-          value: `${props.data.calculatedAmounts?.exchangeRate || 0}${props.data.calculatedAmounts?.exchangeRateDate ? `（${props.data.calculatedAmounts.exchangeRateDate}）` : ''}`
+          value: `${props.data.calculatedAmounts?.exchangeRate || 0}${props.data.calculatedAmounts?.exchangeRateDate ? `（${props.data.calculatedAmounts.exchangeRateDate}）` : ''}${props.data.calculatedAmounts?.exchangeRateSource ? ` · ${props.data.calculatedAmounts.exchangeRateSource}` : ''}`
         },
         { label: '我方管理费率', value: `${props.data.calculatedAmounts?.managementRate || 0}%` }
       ] : []),
@@ -2085,7 +2199,7 @@ function sendEmail() {
 /* Info Grid */
 .info-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1.5rem;
   margin-bottom: 2.5rem;
 }
@@ -2094,6 +2208,7 @@ function sendEmail() {
   display: flex;
   flex-direction: column;
   gap: 0.375rem;
+  min-width: 0;
 }
 
 .info-item-right {
@@ -2124,6 +2239,67 @@ function sendEmail() {
   color: #0f172a;
   margin: 0;
   line-height: 1.4;
+}
+
+.quote-inline-input {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  box-sizing: border-box;
+  transition: border-color 0.2s, background-color 0.2s, box-shadow 0.2s;
+}
+
+.quote-wrap-field {
+  display: block;
+  min-height: 1.4em;
+  overflow: hidden;
+  resize: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.quote-inline-input:hover {
+  background: rgba(59, 130, 246, 0.06);
+}
+
+.quote-inline-input:focus {
+  background: #eff6ff;
+  box-shadow: inset 0 -1px 0 #60a5fa;
+}
+
+.editable-info-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  min-width: 0;
+  margin: 0;
+  white-space: normal;
+}
+
+.editable-info-row > span {
+  flex: 0 0 auto;
+}
+
+.editable-info-row .quote-inline-input {
+  flex: 1 1 0;
+  min-width: 2.5rem;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+}
+
+.editable-info-row .quote-inline-input.compact {
+  flex: 0 1 auto;
+  width: 7rem;
+  field-sizing: content;
 }
 
 /* 仅交互反馈，不改字体/颜色，与客户信息保持一致 */
@@ -2506,9 +2682,9 @@ function sendEmail() {
 }
 
 .quick-add-label {
-  color: #64748b;
+  color: #cbd5e1;
   font-size: 0.875rem;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .quick-add-label .required {
@@ -2520,6 +2696,142 @@ function sendEmail() {
   gap: 12px;
   align-items: center;
   justify-content: flex-end;
+}
+
+/* 快捷新增弹窗被 Teleport 到 body，需要使用全局选择器统一 Element Plus 样式 */
+:global(.quick-add-dialog.el-dialog) {
+  --el-dialog-bg-color: #151d2b;
+  --el-text-color-primary: #f8fafc;
+  --el-text-color-regular: #cbd5e1;
+  --el-border-color: #324467;
+  --el-color-primary: #135bec;
+  margin-top: 12vh;
+  overflow: hidden;
+  border: 1px solid #324467;
+  border-radius: 12px;
+  background: #151d2b;
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.62);
+  font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif;
+}
+
+:global(.quick-add-dialog .el-dialog__header) {
+  display: flex;
+  align-items: center;
+  min-height: 58px;
+  margin: 0;
+  padding: 0 22px;
+  border-bottom: 1px solid #2a3955;
+  background: #192233;
+}
+
+:global(.quick-add-dialog .el-dialog__title) {
+  color: #f8fafc;
+  font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+:global(.quick-add-dialog .el-dialog__headerbtn) {
+  top: 9px;
+  right: 12px;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+}
+
+:global(.quick-add-dialog .el-dialog__headerbtn:hover) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+:global(.quick-add-dialog .el-dialog__headerbtn .el-dialog__close) {
+  color: #94a3b8;
+  font-size: 18px;
+}
+
+:global(.quick-add-dialog .el-dialog__headerbtn:hover .el-dialog__close) {
+  color: #fff;
+}
+
+:global(.quick-add-dialog .el-dialog__body) {
+  padding: 22px;
+  color: #cbd5e1;
+  background: #151d2b;
+}
+
+:global(.quick-add-dialog .el-dialog__footer) {
+  padding: 14px 22px 18px;
+  border-top: 1px solid #2a3955;
+  background: #151d2b;
+}
+
+:global(.quick-add-dialog .el-input__wrapper),
+:global(.quick-add-dialog .el-textarea__inner) {
+  color: #f8fafc;
+  background: #0f1623;
+  border: 1px solid #324467;
+  border-radius: 8px;
+  box-shadow: none;
+  font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif;
+}
+
+:global(.quick-add-dialog .el-input__wrapper) {
+  min-height: 40px;
+  padding: 0 12px;
+}
+
+:global(.quick-add-dialog .el-input__wrapper:hover),
+:global(.quick-add-dialog .el-textarea__inner:hover) {
+  border-color: #4d6592;
+}
+
+:global(.quick-add-dialog .el-input__wrapper.is-focus),
+:global(.quick-add-dialog .el-textarea__inner:focus) {
+  border-color: #2f70f3;
+  box-shadow: 0 0 0 3px rgba(19, 91, 236, 0.14);
+}
+
+:global(.quick-add-dialog .el-input__inner),
+:global(.quick-add-dialog .el-textarea__inner) {
+  color: #f8fafc;
+  font-size: 0.875rem;
+}
+
+:global(.quick-add-dialog .el-input__inner::placeholder),
+:global(.quick-add-dialog .el-textarea__inner::placeholder) {
+  color: #64748b;
+}
+
+:global(.quick-add-dialog .el-button) {
+  min-width: 82px;
+  height: 38px;
+  border-color: #3b4d70;
+  border-radius: 8px;
+  color: #cbd5e1;
+  background: #202b40;
+  font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  font-weight: 600;
+}
+
+:global(.quick-add-dialog .el-button:hover) {
+  color: #fff;
+  border-color: #5874a8;
+  background: #293750;
+}
+
+:global(.quick-add-dialog .el-button--primary) {
+  color: #fff;
+  border-color: #135bec;
+  background: #135bec;
+}
+
+:global(.quick-add-dialog .el-button--primary:hover) {
+  border-color: #2f70f3;
+  background: #2f70f3;
+}
+
+:global(.el-overlay:has(.quick-add-dialog)) {
+  background-color: rgba(4, 8, 15, 0.7);
+  backdrop-filter: blur(2px);
 }
 
 .input-icon {
