@@ -1,9 +1,12 @@
+from datetime import date, datetime
+from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.exchange_rates import ExchangeRateError, fetch_exchange_rate
 from app.international_quote_rules import calculate_employer_rules
 from app.models.international_quote import InternationalCountryRule, InternationalJobSalary
 from app.schemas.international_quote import (
@@ -35,6 +38,51 @@ def update_country(country_code: str, payload: InternationalCountryRuleUpdate, d
         raise HTTPException(status_code=404, detail="国家报价规则不存在")
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(record, key, value)
+    if payload.exchange_rate_cny is not None:
+        record.exchange_rate_source = "manual"
+        record.exchange_rate_date = payload.exchange_rate_date or date.today()
+        record.exchange_rate_checked_at = datetime.now()
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+@router.post(
+    "/countries/{country_code}/exchange-rate/refresh",
+    response_model=InternationalCountryRuleOut,
+)
+async def refresh_country_exchange_rate(
+    country_code: str,
+    force: bool = Query(False),
+    db: Session = Depends(get_db),
+):
+    record = db.query(InternationalCountryRule).filter(
+        InternationalCountryRule.country_code == country_code
+    ).first()
+    if record is None:
+        raise HTTPException(status_code=404, detail="国家报价规则不存在")
+
+    checked_at = record.exchange_rate_checked_at
+    if (
+        not force
+        and checked_at is not None
+        and checked_at.date() == date.today()
+        and record.exchange_rate_source in {"frankfurter", "ecb", "identity"}
+    ):
+        return record
+
+    try:
+        quote = await fetch_exchange_rate(record.currency, "CNY")
+    except ExchangeRateError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"实时汇率获取失败，系统已保留上次汇率：{exc}",
+        ) from exc
+
+    record.exchange_rate_cny = quote.rate.quantize(Decimal("0.00000001"))
+    record.exchange_rate_date = quote.rate_date
+    record.exchange_rate_source = quote.source
+    record.exchange_rate_checked_at = datetime.now()
     db.commit()
     db.refresh(record)
     return record

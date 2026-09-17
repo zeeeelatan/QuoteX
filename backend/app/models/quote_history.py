@@ -11,9 +11,10 @@ class QuoteHistory(Base):
     user_id = Column(Integer, nullable=True, index=True)      # 关联用户ID（未登录为 None，用于数据隔离）
 
     # 基本信息
-    file_name = Column(String(255), nullable=False)           # 导入文件名称
+    file_name = Column(String(255), nullable=False)           # 导入文件名称 / 报价名称
     user_name = Column(String(100), nullable=False)           # 用户名称
     status = Column(String(20), nullable=False, default='completed')  # 状态: completed, processing, failed
+    quote_type = Column(String(32), nullable=False, default='maintenance', index=True)  # 报价类型: maintenance/onsite/relocation/lenovo
 
     # 价格信息
     total_amount = Column(Numeric(14, 2))                     # 报价总额

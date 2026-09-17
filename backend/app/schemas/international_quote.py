@@ -26,6 +26,8 @@ class InternationalCountryRuleOut(BaseModel):
     currency_precision: int
     exchange_rate_cny: float
     exchange_rate_date: date
+    exchange_rate_source: str
+    exchange_rate_checked_at: Optional[datetime] = None
     eor_rate: float
     management_rate: float
     profit_rate: float

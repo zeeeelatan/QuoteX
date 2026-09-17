@@ -304,6 +304,7 @@
                             class="config-select"
                             @change="onCustomerSelectChange"
                           >
+                            <option value="">请选择客户</option>
                             <option v-for="customer in customersList" :key="customer.id" :value="customer.id">
                               {{ customer.customer_name }}
                             </option>
@@ -361,14 +362,19 @@
                     </div>
                   </div>
                   <div class="sidebar-footer">
-                    <button class="btn-download" @click="downloadQuotation" :disabled="isDownloading">
+                    <button class="btn-download" @click="downloadQuotation" :disabled="isDownloading || completing">
                       <span v-if="isDownloading" class="material-symbols-outlined spinning">progress_activity</span>
                       <span v-else class="material-symbols-outlined">download</span>
                       {{ isDownloading ? '生成中...' : exportFormat === 'excel' ? '下载 Excel' : '下载 PDF' }}
                     </button>
-                    <button class="btn-email" @click="sendEmail">
+                    <button class="btn-email" @click="sendEmail" :disabled="completing">
                       <span class="material-symbols-outlined">send</span>
                       发送至邮件
+                    </button>
+                    <button class="btn-complete-quote" @click="requestCompleteQuote" :disabled="completing">
+                      <span v-if="completing" class="material-symbols-outlined spinning">progress_activity</span>
+                      <span v-else class="material-symbols-outlined">check_circle</span>
+                      {{ completing ? '保存中...' : '完成报价' }}
                     </button>
                   </div>
                 </div>
@@ -476,14 +482,19 @@ import { saveAs } from 'file-saver'
 
 const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5002'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   isOpen: boolean
   mode?: 'preview' | 'export'
   data: any
-}>()
+  completing?: boolean
+}>(), {
+  mode: 'preview',
+  completing: false
+})
 
 const emit = defineEmits<{
   close: []
+  complete: [snapshot: Record<string, any>]
 }>()
 
 const isOverseasQuote = computed(() => Boolean(props.data?.country && props.data.country !== 'china'))
@@ -529,7 +540,7 @@ const companiesList = ref<CompanyInfo[]>([])
 const customersList = ref<CustomerInfo[]>([])
 const userProfile = ref<UserProfile>({})
 const selectedCompanyId = ref<number | string | null>(null)
-const selectedCustomerId = ref<number | string | null>(null)
+const selectedCustomerId = ref<number | string | null>('')
 const previousCompanyId = ref<number | null>(null)
 const previousCustomerId = ref<number | null>(null)
 const serviceTermsList = ref<ServiceTerm[]>([])
@@ -698,24 +709,24 @@ const configuredCustomerInfo = computed(() => {
   const customerId = resolveSelectedId(selectedCustomerId.value)
   if (!customerId) {
     return {
-      customerName: props.data.customerName || '客户名称',
-      customerAddress: props.data.customerAddress || '客户地址',
-      contactPerson: props.data.customerContact || '',
-      contactPhone: props.data.customerPhone || ''
+      customerName: '',
+      customerAddress: '',
+      contactPerson: '',
+      contactPhone: ''
     }
   }
   const customer = customersList.value.find(c => c.id === customerId)
   if (customer) {
     return {
-      customerName: customer.customer_name,
-      customerAddress: customer.customer_address || '-',
+      customerName: customer.customer_name || '',
+      customerAddress: customer.customer_address || '',
       contactPerson: customer.contact_person || '',
       contactPhone: customer.contact_phone || ''
     }
   }
   return {
-    customerName: '客户名称',
-    customerAddress: '客户地址',
+    customerName: '',
+    customerAddress: '',
     contactPerson: '',
     contactPhone: ''
   }
@@ -810,13 +821,7 @@ async function loadCompaniesAndCustomers() {
 
     if (customersRes.data) {
       customersList.value = customersRes.data
-      // 默认选中第一个客户
-      if (customersRes.data.length > 0 && !resolveSelectedId(selectedCustomerId.value)) {
-        selectedCustomerId.value = customersRes.data[0].id
-        previousCustomerId.value = customersRes.data[0].id
-      } else {
-        previousCustomerId.value = resolveSelectedId(selectedCustomerId.value)
-      }
+      previousCustomerId.value = resolveSelectedId(selectedCustomerId.value)
     }
   } catch (err) {
     console.error('加载公司和客户数据失败', err)
@@ -853,6 +858,8 @@ async function loadServiceTerms() {
 // 当 modal 打开时加载数据
 watch(() => props.isOpen, (newVal) => {
   if (newVal) {
+    selectedCustomerId.value = ''
+    previousCustomerId.value = null
     resetEditablePartyInfo()
     editableProjectLabel.value = '项目信息'
     editableProjectName.value = props.data?.projectName?.trim() || ''
@@ -1212,6 +1219,45 @@ function getRowUnitPrice(row: any): number {
   return totalPrice / personnel / months
 }
 
+function buildQuoteSnapshot() {
+  const lineItems = (props.data.positionRows || []).map((row: any) => ({
+    model: row.position || '服务岗位',
+    city: row.city || '',
+    quantity: row.personnelCount || 1,
+    servicePeriod: getServiceMonths(row),
+    servicePeriodUnit: '月',
+    finalPrice: getRowUnitPrice(row),
+    totalPrice: getRowTotalPrice(row),
+    salary: row.salary || 0
+  }))
+
+  return {
+    country: props.data.country,
+    countryName: quoteCountryName.value,
+    projectName: editableProjectName.value.trim(),
+    projectLabel: editableProjectLabel.value,
+    quoteNumber: `Q${currentYear}${String(currentMonth).padStart(2, '0')}${String(currentDay).padStart(2, '0')}-XA009`,
+    quoteDate: quotationDate.value,
+    expiryDate: expiryDate.value,
+    validityPeriod: Number(validityPeriod.value) || 15,
+    company: { ...editableCompanyInfo.value },
+    customer: { ...editableCustomerInfo.value },
+    companyLogo: customLogoUrl.value || '',
+    serviceTerms: selectedServiceTermId.value,
+    serviceTermsName: selectedServiceTerm.value?.name || '',
+    serviceTermsContent: selectedServiceTerm.value?.content || '',
+    positionRows: props.data.positionRows || [],
+    lineItems,
+    globalParams: props.data.globalParams || {},
+    calculatedAmounts: props.data.calculatedAmounts || {},
+    finalAmount: getFinalProjectAmount()
+  }
+}
+
+function requestCompleteQuote() {
+  emit('complete', buildQuoteSnapshot())
+}
+
 const windowStyle = computed(() => {
   if (isMaximized.value) {
     return {
@@ -1305,6 +1351,24 @@ function createFooterImageDataUrl(pageNum: number, totalPages: number): string {
   return canvas.toDataURL('image/png', 1.0)
 }
 
+function flattenQuoteInputsForPdf(clonedDoc: Document, clonedEl: HTMLElement) {
+  clonedEl.querySelectorAll('textarea.quote-inline-input, input.quote-inline-input').forEach((el) => {
+    const source = el as HTMLTextAreaElement | HTMLInputElement
+    const shouldWrap = source instanceof HTMLTextAreaElement || source.classList.contains('quote-wrap-field')
+    const replacement = clonedDoc.createElement(shouldWrap ? 'div' : 'span')
+    replacement.className = source.className
+    replacement.textContent = source.value || ''
+    replacement.removeAttribute('rows')
+    replacement.style.height = 'auto'
+    replacement.style.minHeight = '0'
+    replacement.style.overflow = 'visible'
+    replacement.style.whiteSpace = shouldWrap ? 'pre-wrap' : 'nowrap'
+    replacement.style.overflowWrap = shouldWrap ? 'anywhere' : 'normal'
+    replacement.style.wordBreak = shouldWrap ? 'break-word' : 'normal'
+    source.replaceWith(replacement)
+  })
+}
+
 /**
  * PDF 导出：对齐「发起询价 → 生成报价单」流程
  * - onclone 脱离页面布局链，完整渲染条款与落款
@@ -1381,6 +1445,7 @@ async function downloadPDF() {
           node.classList.remove('project-name-placeholder')
           node.removeAttribute('data-placeholder')
         })
+        flattenQuoteInputsForPdf(clonedDoc, clonedEl)
 
         clonedEl.querySelectorAll('.logo-upload-hint').forEach(
           (el) => ((el as HTMLElement).style.display = 'none')
@@ -1459,6 +1524,24 @@ async function downloadPDF() {
           .data-table, .summary-section, .paper-header, .info-grid {
             page-break-inside: avoid !important;
             break-inside: avoid !important;
+          }
+          .quote-inline-input,
+          .quote-wrap-field {
+            display: block !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            height: auto !important;
+            min-height: 0 !important;
+            overflow: visible !important;
+            white-space: pre-wrap !important;
+            overflow-wrap: anywhere !important;
+            word-break: break-word !important;
+            field-sizing: content !important;
+          }
+          .editable-info-row .quote-inline-input {
+            display: inline !important;
+            width: auto !important;
+            flex: 1 1 auto !important;
           }
         `
         clonedDoc.head.appendChild(pdfStyle)
@@ -2914,7 +2997,8 @@ function sendEmail() {
 }
 
 .btn-download,
-.btn-email {
+.btn-email,
+.btn-complete-quote {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2961,10 +3045,27 @@ function sendEmail() {
   border: 1px solid #4b5563;
 }
 
-.btn-email:hover {
+.btn-email:hover:not(:disabled) {
   border-color: #9ca3af;
   background-color: rgba(255, 255, 255, 0.05);
   color: #fff;
+}
+
+.btn-email:disabled,
+.btn-complete-quote:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.btn-complete-quote {
+  background-color: #22c55e;
+  color: #fff;
+  border: none;
+  box-shadow: 0 0 15px rgba(34, 197, 94, 0.25);
+}
+
+.btn-complete-quote:hover:not(:disabled) {
+  background-color: #16a34a;
 }
 
 /* Transition */

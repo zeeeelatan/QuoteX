@@ -26,6 +26,8 @@ class InternationalCountryRule(Base):
     currency_precision = Column(Integer, nullable=False, default=2)
     exchange_rate_cny = Column(DECIMAL(18, 8), nullable=False)
     exchange_rate_date = Column(Date, nullable=False)
+    exchange_rate_source = Column(String(32), nullable=False, default="manual")
+    exchange_rate_checked_at = Column(DateTime, nullable=True)
     eor_rate = Column(DECIMAL(8, 4), nullable=False, default=12)
     management_rate = Column(DECIMAL(8, 4), nullable=False, default=12)
     profit_rate = Column(DECIMAL(8, 4), nullable=False, default=8)

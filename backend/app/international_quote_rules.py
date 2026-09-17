@@ -237,6 +237,7 @@ def calculate_employer_rules(country_code: str, salary: float, params: Dict[str,
 def country_seed_rows() -> List[dict]:
     common = {
         "exchange_rate_date": date(2026, 7, 1),
+        "exchange_rate_source": "static_seed",
         "eor_rate": 12,
         "management_rate": 12,
         "profit_rate": 8,

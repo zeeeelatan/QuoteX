@@ -29,6 +29,7 @@ export interface DraftData {
   file_name: string
   user_name: string
   status: 'draft'
+  quote_type?: string
   draft_stage: DraftStage
   device_count: number
   data_source: 'datacenter' | 'office' | 'hybrid'
@@ -116,6 +117,7 @@ function collectCurrentDraftData(stage: DraftStage): DraftData {
     file_name: fileName,
     user_name: userName,
     status: 'draft',
+    quote_type: 'maintenance',
     draft_stage: stage,
     device_count: deviceCount,
     data_source: dataSource,

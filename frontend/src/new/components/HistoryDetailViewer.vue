@@ -9,9 +9,9 @@
             <span class="material-symbols-outlined">history</span>
             历史记录 #{{ historyData?.id }}
           </div>
-          <h1 class="viewer-title">报价流程回溯</h1>
+          <h1 class="viewer-title">{{ isOnsiteQuote ? '驻场服务报价回溯' : '报价流程回溯' }}</h1>
           <p class="viewer-subtitle">
-            {{ historyData?.file_name }} · {{ formatDateTime(historyData?.created_at) }}
+            {{ getQuoteTypeLabel(historyQuoteType) }} · {{ historyData?.file_name }} · {{ formatDateTime(historyData?.created_at) }}
           </p>
         </div>
         <div class="header-right">
@@ -47,6 +47,59 @@
 
       <!-- 内容区域 -->
       <main class="viewer-content">
+        <!-- 驻场测算明细 -->
+        <div v-if="currentStep === 'detail'" class="step-content">
+          <div class="content-header">
+            <div class="content-title-area">
+              <span class="material-symbols-outlined content-icon">calculate</span>
+              <div>
+                <h2 class="content-title">测算明细</h2>
+                <p class="content-desc">驻场岗位、周期与报价构成</p>
+              </div>
+            </div>
+            <div class="content-stats">
+              <div class="stat-item">
+                <span class="stat-label">岗位数量</span>
+                <span class="stat-value">{{ onsiteLineItems.length }} 个</span>
+              </div>
+              <div class="stat-item highlight">
+                <span class="stat-label">报价总额</span>
+                <span class="stat-value amount">{{ formatPrice(historyData?.total_amount) }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="table-section">
+            <div class="table-wrapper">
+              <table class="data-table readonly">
+                <thead>
+                  <tr>
+                    <th>服务岗位</th>
+                    <th>驻场城市</th>
+                    <th>人数</th>
+                    <th>周期(月)</th>
+                    <th>综合单价</th>
+                    <th>总价</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(item, idx) in onsiteLineItems" :key="idx">
+                    <td>{{ item.model || '服务岗位' }}</td>
+                    <td>{{ item.city || '-' }}</td>
+                    <td>{{ getItemQuantity(item) }}</td>
+                    <td>{{ formatServicePeriodDisplay(item) }}</td>
+                    <td class="price-cell">{{ formatPrice(getItemUnitPrice(item)) }}</td>
+                    <td class="price-cell final-price">{{ formatPrice(item.totalPrice ?? getItemTotalPrice(item)) }}</td>
+                  </tr>
+                  <tr v-if="!onsiteLineItems.length">
+                    <td colspan="6" class="no-data-cell">暂无测算明细</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
         <!-- 步骤1: 导入数据 -->
         <div v-if="currentStep === 'import'" class="step-content">
           <div class="content-header">
@@ -279,8 +332,8 @@
             </div>
             <div class="content-stats">
               <div class="stat-item">
-                <span class="stat-label">设备数量</span>
-                <span class="stat-value">{{ historyTotalDeviceCount }} 台</span>
+                <span class="stat-label">{{ isOnsiteQuote ? '岗位人数' : '设备数量' }}</span>
+                <span class="stat-value">{{ historyTotalDeviceCount }} {{ isOnsiteQuote ? '人' : '台' }}</span>
               </div>
               <div class="stat-item highlight">
                 <span class="stat-label">报价总额</span>
@@ -354,10 +407,10 @@
                 <thead>
                   <tr>
                     <th class="col-no">序号</th>
-                    <th class="col-desc">项目描述</th>
-                    <th class="col-qty">数量</th>
-                    <th class="col-period">服务周期</th>
-                    <th class="col-price">单价</th>
+                    <th class="col-desc">{{ isOnsiteQuote ? '服务岗位' : '项目描述' }}</th>
+                    <th class="col-qty">{{ isOnsiteQuote ? '人数' : '数量' }}</th>
+                    <th class="col-period">{{ isOnsiteQuote ? '周期(月)' : '服务周期' }}</th>
+                    <th class="col-price">{{ isOnsiteQuote ? '综合单价' : '单价' }}</th>
                     <th class="col-total">总价</th>
                   </tr>
                 </thead>
@@ -368,11 +421,16 @@
                   <tr v-for="(item, index) in quoteMetadata?.table_data" :key="index" class="item-row">
                     <td class="text-center col-no">{{ index + 1 }}</td>
                     <td class="item-desc">
-                      <p class="item-name">{{ item.model || '未命名产品' }}</p>
+                      <p class="item-name">{{ item.model || (isOnsiteQuote ? '服务岗位' : '未命名产品') }}</p>
                       <p class="item-detail">
-                        厂商: {{ formatManufacturer(item.matchedManufacturer) || '-' }}
-                        <span v-if="item.matchedSeries"> | 系列: {{ item.matchedSeries }}</span>
-                        <span v-if="item.serviceLevel"> | 服务级别: {{ item.serviceLevel }}</span>
+                        <template v-if="isOnsiteQuote">
+                          驻场城市: {{ item.city || '-' }}
+                        </template>
+                        <template v-else>
+                          厂商: {{ formatManufacturer(item.matchedManufacturer) || '-' }}
+                          <span v-if="item.matchedSeries"> | 系列: {{ item.matchedSeries }}</span>
+                          <span v-if="item.serviceLevel"> | 服务级别: {{ item.serviceLevel }}</span>
+                        </template>
                       </p>
                     </td>
                     <td class="text-center">{{ getItemQuantity(item) }}</td>
@@ -388,8 +446,8 @@
             <div class="summary-section">
               <div class="summary-content">
                 <div class="summary-row">
-                  <span class="summary-label">设备数量</span>
-                  <span class="summary-value">{{ historyTotalDeviceCount }} 台</span>
+                  <span class="summary-label">{{ isOnsiteQuote ? '岗位人数' : '设备数量' }}</span>
+                  <span class="summary-value">{{ historyTotalDeviceCount }} {{ isOnsiteQuote ? '人' : '台' }}</span>
                 </div>
                 <div class="summary-row">
                   <span class="summary-label">小计</span>
@@ -423,7 +481,7 @@
           </span>
           <span class="info-item">
             <span class="material-symbols-outlined">devices</span>
-            {{ historyData?.device_count || 0 }} 台设备
+            {{ isOnsiteQuote ? `${historyData?.device_count || 0} 个岗位` : `${historyData?.device_count || 0} 台设备` }}
           </span>
           <span class="info-item amount-badge">
             <span class="material-symbols-outlined">payments</span>
@@ -433,7 +491,7 @@
         <div class="footer-nav">
           <button 
             @click="prevStep" 
-            :disabled="currentStep === 'import'"
+            :disabled="currentStep === steps[0]?.key"
             class="nav-btn prev"
           >
             <span class="material-symbols-outlined">arrow_back</span>
@@ -441,7 +499,7 @@
           </button>
           <button 
             @click="nextStep" 
-            :disabled="currentStep === 'quote'"
+            :disabled="currentStep === steps[steps.length - 1]?.key"
             class="nav-btn next"
           >
             下一步
@@ -454,9 +512,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import * as XLSX from 'xlsx'
 import { saveAs } from 'file-saver'
+import { getQuoteTypeLabel, QUOTE_TYPE_ONSITE } from '../utils/quoteTypes'
 
 interface Props {
   historyData: any
@@ -467,15 +526,34 @@ defineEmits<{
   close: []
 }>()
 
-// 步骤定义
-const steps = [
-  { key: 'import', label: '导入数据' },
-  { key: 'match', label: '智能匹配' },
-  { key: 'adjust', label: '价格调整' },
-  { key: 'quote', label: '生成报价' }
-]
+const historyQuoteType = computed(() =>
+  props.historyData?.quote_type
+  || props.historyData?.quote_metadata?.quote_type
+  || 'maintenance'
+)
+const isOnsiteQuote = computed(() => historyQuoteType.value === QUOTE_TYPE_ONSITE)
 
-const currentStep = ref('import')
+// 步骤定义
+const steps = computed(() => {
+  if (isOnsiteQuote.value) {
+    return [
+      { key: 'detail', label: '测算明细' },
+      { key: 'quote', label: '生成报价' }
+    ]
+  }
+  return [
+    { key: 'import', label: '导入数据' },
+    { key: 'match', label: '智能匹配' },
+    { key: 'adjust', label: '价格调整' },
+    { key: 'quote', label: '生成报价' }
+  ]
+})
+
+const currentStep = ref(isOnsiteQuote.value ? 'detail' : 'import')
+
+watch(isOnsiteQuote, (onsite) => {
+  currentStep.value = onsite ? 'detail' : 'import'
+}, { immediate: true })
 const quoteView = ref('original')
 const quotationDocRef = ref<HTMLElement | null>(null)  // 报价单预览区域引用
 const isExporting = ref(false)  // 导出状态
@@ -519,6 +597,11 @@ const matchData = computed(() => props.historyData?.match_data)
 const adjustData = computed(() => props.historyData?.price_adjust_data)
 const quoteData = computed(() => props.historyData?.quote_data)
 const quoteMetadata = computed(() => props.historyData?.quote_metadata)
+const onsiteLineItems = computed(() => {
+  if (quoteData.value?.lineItems?.length) return quoteData.value.lineItems
+  if (quoteMetadata.value?.table_data?.length) return quoteMetadata.value.table_data
+  return []
+})
 
 function getItemUnitPrice(item: any): number {
   return Number(item?.finalPrice ?? item?.suggestedPrice ?? 0) || 0
@@ -692,7 +775,7 @@ const lowMatchCount = computed(() =>
 
 // 方法
 function getStepIndex(key: string): number {
-  return steps.findIndex(s => s.key === key)
+  return steps.value.findIndex(s => s.key === key)
 }
 
 function getStepDataCount(key: string): number {
@@ -700,7 +783,11 @@ function getStepDataCount(key: string): number {
     case 'import': return importConvertedData.value?.length || 0
     case 'match': return matchData.value?.length || 0
     case 'adjust': return adjustData.value?.length || 0
-    case 'quote': return (quoteData.value?.original?.length || 0) + (quoteData.value?.converted?.length || 0)
+    case 'detail': return onsiteLineItems.value.length
+    case 'quote': return quoteMetadata.value?.table_data?.length
+      || quoteData.value?.lineItems?.length
+      || (quoteData.value?.original?.length || 0) + (quoteData.value?.converted?.length || 0)
+      || 0
     default: return 0
   }
 }
@@ -708,14 +795,14 @@ function getStepDataCount(key: string): number {
 function prevStep() {
   const idx = getStepIndex(currentStep.value)
   if (idx > 0) {
-    currentStep.value = steps[idx - 1].key
+    currentStep.value = steps.value[idx - 1].key
   }
 }
 
 function nextStep() {
   const idx = getStepIndex(currentStep.value)
-  if (idx < steps.length - 1) {
-    currentStep.value = steps[idx + 1].key
+  if (idx < steps.value.length - 1) {
+    currentStep.value = steps.value[idx + 1].key
   }
 }
 

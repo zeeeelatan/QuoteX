@@ -162,7 +162,7 @@
         </div>
 
         <!-- Onsite Service Calculator View -->
-        <OnsiteServiceCalculator v-if="currentView === 'onsite-calculator'" />
+        <OnsiteServiceCalculator v-if="currentView === 'onsite-calculator'" @quote-completed="currentView = 'quote-history'" />
 
         <!-- Relocation Service Calculator View -->
         <RelocationServiceCalculator v-if="currentView === 'relocation-calculator'" />

@@ -865,7 +865,19 @@
                 </div>
               </div>
               <div v-if="isOverseas" class="global-param-item">
-                <label class="param-label">{{ costCurrencyCode }}/CNY 汇率</label>
+                <div class="exchange-rate-label-row">
+                  <label class="param-label">{{ costCurrencyCode }}/CNY 汇率</label>
+                  <button
+                    class="exchange-rate-refresh-btn"
+                    type="button"
+                    :disabled="exchangeRateRefreshing"
+                    title="从公开汇率服务获取最新参考汇率"
+                    @click="refreshCurrentExchangeRate(true)"
+                  >
+                    <span class="material-symbols-outlined" :class="{ spinning: exchangeRateRefreshing }">refresh</span>
+                    {{ exchangeRateRefreshing ? '更新中' : '更新汇率' }}
+                  </button>
+                </div>
                 <div class="input-with-suffix">
                   <input
                     v-model.number="globalParams.exchangeRate"
@@ -873,7 +885,7 @@
                     type="number"
                     min="0"
                     step="0.000001"
-                    @input="calculateAll"
+                    @input="onExchangeRateManualInput"
                   />
                   <span class="input-suffix">CNY</span>
                 </div>
@@ -882,7 +894,7 @@
             <div v-if="isOverseas" class="dual-currency-summary">
               <span>当地币种成本 <strong>{{ formatCurrency(baseSubtotal) }}</strong></span>
               <span>折合人民币成本 <strong>{{ formatQuoteCurrency(totalSubtotal) }}</strong></span>
-              <small>汇率日期：{{ currentCountryRule?.exchange_rate_date || '-' }}</small>
+              <small>汇率日期：{{ currentExchangeRateDate || '-' }} · 来源：{{ currentExchangeRateSourceLabel }}</small>
             </div>
           </div>
 
@@ -970,7 +982,9 @@
       :is-open="isPreviewModalOpen"
       :mode="previewModalMode"
       :data="previewData"
+      :completing="isCompletingQuote"
       @close="closePreviewModal"
+      @complete="handleCompleteQuote"
     />
 
     <Teleport to="body">
@@ -1098,16 +1112,23 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import QuotationPreviewModal from '../QuotationPreviewModal.vue'
+import api from '../../../api/index'
+import { getUserId, getUserName } from '../../stores/authStore'
+import { QUOTE_TYPE_ONSITE } from '../../utils/quoteTypes'
 
 const props = withDefaults(defineProps<{
   embedded?: boolean
 }>(), {
   embedded: false
 })
+
+const emit = defineEmits<{
+  'quote-completed': []
+}>()
 
 const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5002'
 type CountryMode = string
@@ -1137,6 +1158,8 @@ interface InternationalCountryRule {
   currency_precision: number
   exchange_rate_cny: number
   exchange_rate_date: string
+  exchange_rate_source: string
+  exchange_rate_checked_at?: string | null
   eor_rate: number
   management_rate: number
   profit_rate: number
@@ -1157,6 +1180,31 @@ const internationalCountryRules = ref<InternationalCountryRule[]>([])
 const currentCountryRule = computed(() =>
   internationalCountryRules.value.find(item => item.country_code === selectedCountry.value)
 )
+const exchangeRateRefreshing = ref(false)
+const exchangeRateManualOverrides = ref<Record<string, boolean>>({})
+const isCurrentExchangeRateManual = computed(() => Boolean(exchangeRateManualOverrides.value[selectedCountry.value]))
+const localToday = () => {
+  const now = new Date()
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000)
+  return local.toISOString().slice(0, 10)
+}
+const currentExchangeRateDate = computed(() =>
+  isCurrentExchangeRateManual.value ? localToday() : currentCountryRule.value?.exchange_rate_date || ''
+)
+const currentExchangeRateSource = computed(() =>
+  isCurrentExchangeRateManual.value ? 'manual_quote' : currentCountryRule.value?.exchange_rate_source || 'manual'
+)
+const currentExchangeRateSourceLabel = computed(() => {
+  const labels: Record<string, string> = {
+    frankfurter: 'Frankfurter',
+    ecb: '欧洲央行 ECB',
+    identity: '人民币基准',
+    manual_quote: '本次报价手动调整',
+    manual: '后台手动维护',
+    static_seed: '系统初始参考值'
+  }
+  return labels[currentExchangeRateSource.value] || currentExchangeRateSource.value
+})
 const countryOptions = computed(() => [
   { label: '中国大陆', value: 'china' },
   ...internationalCountryRules.value.map(item => ({ label: item.country_name, value: item.country_code }))
@@ -1175,10 +1223,12 @@ const hardCostRuleUpdateText = computed(() => {
 
 // Router
 const router = useRouter()
+const route = useRoute()
 
 // Preview Modal State
 const isPreviewModalOpen = ref(false)
 const previewModalMode = ref<'preview' | 'export'>('preview')
+const isCompletingQuote = ref(false)
 const previewData = ref<any>({
   positionRows: [],
   globalParams: {},
@@ -3891,6 +3941,61 @@ async function fetchInternationalCountries() {
   }
 }
 
+function applyRefreshedCountryRule(payload: any) {
+  const refreshed: InternationalCountryRule = {
+    ...payload,
+    exchange_rate_cny: Number(payload.exchange_rate_cny),
+    eor_rate: Number(payload.eor_rate),
+    management_rate: Number(payload.management_rate),
+    profit_rate: Number(payload.profit_rate),
+    vat_rate: Number(payload.vat_rate),
+    local_vat_rate: Number(payload.local_vat_rate)
+  }
+  const index = internationalCountryRules.value.findIndex(
+    item => item.country_code === refreshed.country_code
+  )
+  if (index >= 0) internationalCountryRules.value[index] = refreshed
+
+  const savedParams = countryGlobalParams[refreshed.country_code]
+  if (savedParams) savedParams.exchangeRate = refreshed.exchange_rate_cny
+  if (selectedCountry.value === refreshed.country_code) {
+    globalParams.value.exchangeRate = refreshed.exchange_rate_cny
+  }
+  exchangeRateManualOverrides.value[refreshed.country_code] = false
+  calculateAll()
+}
+
+async function refreshCurrentExchangeRate(force = true, silent = false) {
+  if (!isOverseas.value || !currentCountryRule.value || exchangeRateRefreshing.value) return
+  exchangeRateRefreshing.value = true
+  try {
+    const response = await axios.post(
+      `${API_URL}/international-quote/countries/${selectedCountry.value}/exchange-rate/refresh`,
+      null,
+      { params: { force } }
+    )
+    applyRefreshedCountryRule(response.data)
+    if (!silent) {
+      ElMessage.success(`${costCurrencyCode.value}/CNY 汇率已更新为 ${globalParams.value.exchangeRate}`)
+    }
+  } catch (error: any) {
+    console.error('获取实时汇率失败:', error)
+    if (!silent) {
+      ElMessage.warning(error.response?.data?.detail || '实时汇率获取失败，已保留当前汇率')
+    }
+  } finally {
+    exchangeRateRefreshing.value = false
+  }
+}
+
+function onExchangeRateManualInput() {
+  if (isOverseas.value) {
+    exchangeRateManualOverrides.value[selectedCountry.value] = true
+    countryGlobalParams[selectedCountry.value] = { ...globalParams.value }
+  }
+  calculateAll()
+}
+
 async function fetchInternationalPositions(countryCode: string) {
   try {
     const response = await axios.get(`${API_URL}/international-quote/salaries/options`, {
@@ -4056,6 +4161,9 @@ async function onCountryChange() {
     : [createPositionRow(nextCountry)]
   activeCountryState = nextCountry
   resetSelectedIndexes()
+  if (nextCountry !== 'china' && !exchangeRateManualOverrides.value[nextCountry]) {
+    await refreshCurrentExchangeRate(false, true)
+  }
   calculateAll()
 }
 
@@ -4146,8 +4254,8 @@ async function startCalculation() {
       }
     }),
     globalParams: globalParams.value,
-    customerName: '客户名称',
-    customerAddress: '客户地址',
+    customerName: '',
+    customerAddress: '',
     projectName: '',
     // 报价公司信息（从个人设置读取）
     quoteCompanyInfo: {
@@ -4168,7 +4276,8 @@ async function startCalculation() {
       costTotalLocal: isOverseas.value ? baseSubtotal.value : null,
       costTotalKrw: isKorea.value ? baseSubtotal.value : null,
       exchangeRate: isOverseas.value ? globalParams.value.exchangeRate : null,
-      exchangeRateDate: currentCountryRule.value?.exchange_rate_date || null,
+      exchangeRateDate: isOverseas.value ? currentExchangeRateDate.value : null,
+      exchangeRateSource: isOverseas.value ? currentExchangeRateSourceLabel.value : null,
       eorRate: isWorkbookInternational.value ? globalParams.value.eorRate : null,
       managementRate: isOverseas.value ? globalParams.value.managementRate : null
     }
@@ -4185,6 +4294,92 @@ function closePreviewModal() {
 function exportQuotation() {
   previewModalMode.value = 'export'
   startCalculation()
+}
+
+function buildOnsiteHistoryFileName(snapshot: Record<string, any>): string {
+  const projectName = String(snapshot.projectName || '').trim() || '驻场服务报价单'
+  const datePart = String(snapshot.quoteDate || '').replace(/-/g, '')
+  return `${projectName}_${datePart || '报价'}.xlsx`
+}
+
+async function handleCompleteQuote(snapshot: Record<string, any>) {
+  try {
+    await ElMessageBox.confirm(
+      '确认完成报价？完成后将写入历史记录。',
+      '完成报价',
+      {
+        confirmButtonText: '确认完成',
+        cancelButtonText: '返回修改',
+        type: 'warning',
+        appendTo: document.body,
+        customClass: 'onsite-complete-quote-box',
+        modalClass: 'onsite-complete-quote-overlay'
+      }
+    )
+  } catch {
+    return
+  }
+
+  if (!getUserId()) {
+    ElMessage.warning('请先登录后再完成报价')
+    return
+  }
+
+  const lineItems = snapshot.lineItems || []
+  const positionCount = lineItems.length || (snapshot.positionRows || []).length
+  const historyData = {
+    file_name: buildOnsiteHistoryFileName(snapshot),
+    user_name: getUserName() || snapshot.company?.contactName || '系统用户',
+    status: 'completed',
+    quote_type: QUOTE_TYPE_ONSITE,
+    total_amount: Number(snapshot.finalAmount) || 0,
+    device_count: positionCount,
+    data_source: 'datacenter',
+    quote_data: {
+      positionRows: snapshot.positionRows || [],
+      lineItems,
+      globalParams: snapshot.globalParams || {},
+      calculatedAmounts: snapshot.calculatedAmounts || {}
+    },
+    quote_metadata: {
+      quote_type: QUOTE_TYPE_ONSITE,
+      quote_number: snapshot.quoteNumber,
+      quote_date: snapshot.quoteDate,
+      project_name: snapshot.projectName,
+      customer_name: snapshot.customer?.customerName || '',
+      valid_days: snapshot.validityPeriod,
+      validity_date: snapshot.expiryDate,
+      service_terms: snapshot.serviceTerms,
+      service_terms_content: snapshot.serviceTermsContent || '',
+      company_name: snapshot.company?.companyName || '',
+      company_address: snapshot.company?.companyAddress || '',
+      company_logo: snapshot.companyLogo || '',
+      contact_name: snapshot.company?.contactName || '',
+      contact_phone: snapshot.company?.contactPhone || '',
+      customer_company: snapshot.customer?.customerName || '',
+      customer_address: snapshot.customer?.customerAddress || '',
+      customer_contact_person: snapshot.customer?.contactPerson || '',
+      customer_contact_phone: snapshot.customer?.contactPhone || '',
+      country: snapshot.country,
+      country_name: snapshot.countryName,
+      table_data: lineItems
+    }
+  }
+
+  isCompletingQuote.value = true
+  try {
+    await api.post('/quote-history/', historyData)
+    closePreviewModal()
+    ElMessage.success('报价已完成，已写入历史记录')
+    emit('quote-completed')
+    if (route.path === '/onsite-calculator') {
+      router.push('/quote-history')
+    }
+  } catch (error) {
+    console.error('完成驻场报价失败:', error)
+  } finally {
+    isCompletingQuote.value = false
+  }
 }
 
 // Close all dropdowns when clicking outside
@@ -6075,6 +6270,42 @@ input:checked + .slider:before {
   color: #94a3b8;
 }
 
+.exchange-rate-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.exchange-rate-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #60a5fa;
+  font-size: 0.67rem;
+  cursor: pointer;
+}
+
+.exchange-rate-refresh-btn:disabled {
+  color: #64748b;
+  cursor: wait;
+}
+
+.exchange-rate-refresh-btn .material-symbols-outlined {
+  font-size: 0.9rem;
+}
+
+.exchange-rate-refresh-btn .spinning {
+  animation: exchange-rate-spin 0.8s linear infinite;
+}
+
+@keyframes exchange-rate-spin {
+  to { transform: rotate(360deg); }
+}
+
 .param-input {
   width: 100%;
   padding: 0.5rem;
@@ -6766,5 +6997,13 @@ input:checked + .slider:before {
     border: none;
     cursor: pointer;
   }
+}
+</style>
+
+<style>
+/* MessageBox 挂到 body，需高于预览报价单弹窗 (z-index: 9999) */
+.onsite-complete-quote-overlay,
+.el-overlay.is-message-box:has(.onsite-complete-quote-box) {
+  z-index: 20000 !important;
 }
 </style>

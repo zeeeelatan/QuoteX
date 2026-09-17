@@ -8,6 +8,7 @@ class QuoteHistoryCreate(BaseModel):
     file_name: str
     user_name: str
     status: str = 'completed'
+    quote_type: str = 'maintenance'
     total_amount: Optional[float] = None
     import_data: Optional[Dict[str, Any]] = None
     match_data: Optional[List[Dict[str, Any]]] = None
@@ -23,6 +24,7 @@ class QuoteHistoryCreate(BaseModel):
 class QuoteHistoryUpdate(BaseModel):
     """更新历史记录"""
     status: Optional[str] = None
+    quote_type: Optional[str] = None
     total_amount: Optional[float] = None
     import_data: Optional[Dict[str, Any]] = None
     match_data: Optional[List[Dict[str, Any]]] = None
@@ -41,6 +43,7 @@ class QuoteHistoryOut(BaseModel):
     file_name: str
     user_name: str
     status: str
+    quote_type: str = 'maintenance'
     total_amount: Optional[float] = None
     device_count: int
     created_at: datetime
@@ -81,6 +84,7 @@ class QuoteHistoryListItem(BaseModel):
     file_name: str
     user_name: str
     status: str
+    quote_type: str = 'maintenance'
     total_amount: Optional[float] = None
     device_count: int
     created_at: datetime

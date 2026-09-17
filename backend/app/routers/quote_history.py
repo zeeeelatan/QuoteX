@@ -33,6 +33,7 @@ def get_quote_history(
     skip: int = Query(0, ge=0, description="跳过记录数"),
     limit: int = Query(50, ge=1, le=200, description="返回记录数"),
     status: Optional[str] = Query(None, description="状态筛选: completed, processing, failed, draft"),
+    quote_type: Optional[str] = Query(None, description="报价类型: maintenance, onsite, relocation, lenovo"),
     search: Optional[str] = Query(None, description="搜索关键词: 文件名或用户名"),
     user_id: Optional[int] = Depends(get_current_user_id),
     db: Session = Depends(get_db),
@@ -41,6 +42,8 @@ def get_quote_history(
     query = _filter_by_user(db.query(QuoteHistory), user_id)
     if status:
         query = query.filter(QuoteHistory.status == status)
+    if quote_type:
+        query = query.filter(QuoteHistory.quote_type == quote_type)
     if search:
         search_pattern = f"%{search}%"
         query = query.filter(
@@ -68,6 +71,7 @@ def get_drafts(
 @router.get("/count")
 def get_quote_history_count(
     status: Optional[str] = Query(None, description="状态筛选"),
+    quote_type: Optional[str] = Query(None, description="报价类型"),
     search: Optional[str] = Query(None, description="搜索关键词"),
     user_id: Optional[int] = Depends(get_current_user_id),
     db: Session = Depends(get_db),
@@ -76,6 +80,8 @@ def get_quote_history_count(
     query = _filter_by_user(db.query(QuoteHistory), user_id)
     if status:
         query = query.filter(QuoteHistory.status == status)
+    if quote_type:
+        query = query.filter(QuoteHistory.quote_type == quote_type)
     if search:
         search_pattern = f"%{search}%"
         query = query.filter(
@@ -204,6 +210,7 @@ def create_quote_history(
         file_name=data.file_name,
         user_name=data.user_name,
         status=data.status,
+        quote_type=data.quote_type or 'maintenance',
         total_amount=data.total_amount,
         import_data=data.import_data,
         match_data=data.match_data,
@@ -236,6 +243,8 @@ def update_quote_history(
     # 更新字段
     if data.status is not None:
         history.status = data.status
+    if data.quote_type is not None:
+        history.quote_type = data.quote_type
     if data.total_amount is not None:
         history.total_amount = data.total_amount
     if data.import_data is not None:

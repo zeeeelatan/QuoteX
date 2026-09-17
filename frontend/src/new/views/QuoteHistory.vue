@@ -47,6 +47,15 @@
           </select>
         </div>
         <div class="filter-group">
+          <select v-model="quoteTypeFilter" class="filter-select">
+            <option value="all">全部类型</option>
+            <option value="maintenance">设备维保</option>
+            <option value="onsite">驻场服务</option>
+            <option value="relocation">搬迁服务</option>
+            <option value="lenovo">联想框架</option>
+          </select>
+        </div>
+        <div class="filter-group">
           <select v-model="statusFilter" class="filter-select">
             <option value="all">全部状态</option>
             <option value="completed">已生成</option>
@@ -67,6 +76,7 @@
               <tr>
                 <th class="col-id">ID</th>
                 <th>导入文件名称</th>
+                <th>报价类型</th>
                 <th>用户</th>
                 <th class="col-sortable" @click="toggleSort">
                   生成时间
@@ -92,6 +102,11 @@
                     </div>
                     <span class="file-name" :title="item.file_name">{{ truncateFileName(item.file_name) }}</span>
                   </div>
+                </td>
+                <td class="col-type">
+                  <span class="type-badge" :class="'type-' + (item.quote_type || 'maintenance')">
+                    {{ getQuoteTypeLabel(item.quote_type) }}
+                  </span>
                 </td>
                 <td class="col-user">
                   <div class="user-display">
@@ -137,7 +152,7 @@
                 </td>
               </tr>
               <tr v-if="historyList.length === 0" class="empty-row">
-                <td colspan="7" class="empty-cell">
+                <td colspan="8" class="empty-cell">
                   <div class="empty-state">
                     <span class="material-symbols-outlined empty-icon">folder_open</span>
                     <p>暂无历史记录</p>
@@ -197,6 +212,7 @@
 import { ref, computed, onMounted } from 'vue'
 import api from '../../api/index'
 import HistoryDetailViewer from '../components/HistoryDetailViewer.vue'
+import { getQuoteTypeLabel } from '../utils/quoteTypes'
 
 // 定义 emit
 const emit = defineEmits<{
@@ -212,6 +228,7 @@ const pageSize = ref(10)
 const searchKeyword = ref('')
 const dateRange = ref('all')
 const statusFilter = ref('all')
+const quoteTypeFilter = ref('all')
 const sortDesc = ref(true)
 
 // Modal
@@ -268,6 +285,10 @@ const fetchHistory = async () => {
       params.status = statusFilter.value
     }
 
+    if (quoteTypeFilter.value !== 'all') {
+      params.quote_type = quoteTypeFilter.value
+    }
+
     if (searchKeyword.value) {
       params.search = searchKeyword.value
     }
@@ -278,6 +299,7 @@ const fetchHistory = async () => {
     // Fetch total count
     const countParams: any = {}
     if (statusFilter.value !== 'all') countParams.status = statusFilter.value
+    if (quoteTypeFilter.value !== 'all') countParams.quote_type = quoteTypeFilter.value
     if (searchKeyword.value) countParams.search = searchKeyword.value
 
     const countResponse = await api.get('/quote-history/count', { params: countParams })
@@ -798,6 +820,40 @@ onMounted(() => {
 }
 
 /* Status Badge */
+.type-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.type-maintenance {
+  background-color: rgba(19, 91, 236, 0.1);
+  color: #60a5fa;
+  border: 1px solid rgba(19, 91, 236, 0.2);
+}
+
+.type-onsite {
+  background-color: rgba(34, 197, 94, 0.1);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+.type-relocation {
+  background-color: rgba(234, 179, 8, 0.1);
+  color: #eab308;
+  border: 1px solid rgba(234, 179, 8, 0.2);
+}
+
+.type-lenovo {
+  background-color: rgba(168, 85, 247, 0.1);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.2);
+}
+
 .status-badge {
   display: inline-flex;
   align-items: center;

@@ -1382,6 +1382,7 @@ const completeQuotation = async () => {
         file_name: sourceFileName.value || `${projectName.value}_${quoteNumber.value}.xlsx`,
         user_name: currentUserName.value,
         status: 'completed',
+        quote_type: 'maintenance',
         total_amount: totalAmount,
         import_data: importData,
         match_data: matchedData || null,
@@ -1391,6 +1392,7 @@ const completeQuotation = async () => {
         data_source: 'datacenter',
         device_count: tableData.value.length,
         quote_metadata: {
+          quote_type: 'maintenance',
           // 外部系统集成：若本次询价由第三方系统（如 TopSales）发起，
           // 携带其引用令牌，供对方按 GET /quote-history/by-ref/{ref} 查询本次报价结果
           external_ref: getExternalRef() || undefined,
